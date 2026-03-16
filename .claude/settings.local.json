@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import pandas; print\\(''pandas ok''\\)\")",
+      "Bash(py --version)",
+      "Bash(pip install:*)",
+      "Read(//c/Users/keato/Downloads/**)",
+      "Bash(python -c \":*)",
+      "Bash(npm --version)",
+      "Bash(pip --version)",
+      "Bash(docker --version)",
+      "Bash(python -c \"from app.main import app; print\\(''App imports OK''\\)\")",
+      "Bash(alembic upgrade:*)",
+      "Bash(python seed/seed_data.py)"
+    ]
+  }
+}
