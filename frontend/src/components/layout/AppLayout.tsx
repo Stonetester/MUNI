@@ -16,6 +16,7 @@ const pageTitles: Record<string, string> = {
   '/forecast': 'Forecast',
   '/events': 'Life Events',
   '/scenarios': 'What-If Scenarios',
+  '/alerts': 'Alerts',
 }
 
 // Toast notification system

@@ -13,6 +13,7 @@ import type {
   TransactionFilters,
   PaginatedTransactions,
   BudgetSummary,
+  AlertItem,
 } from './types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -224,5 +225,15 @@ export async function changePassword(currentPassword: string, newPassword: strin
 export async function getBudgetSummary(month?: string): Promise<BudgetSummary[]> {
   const params = month ? `?month=${month}` : ''
   const res: AxiosResponse<BudgetSummary[]> = await api.get(`/budget/summary${params}`)
+  return res.data
+}
+
+
+// Alerts
+export async function getAlerts(month?: string, lookaheadDays = 30): Promise<AlertItem[]> {
+  const params = new URLSearchParams()
+  if (month) params.append('month', month)
+  params.append('lookahead_days', String(lookaheadDays))
+  const res: AxiosResponse<AlertItem[]> = await api.get(`/alerts?${params.toString()}`)
   return res.data
 }
