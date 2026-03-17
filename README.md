@@ -4,6 +4,21 @@ Personal finance forecasting tool for Keaton & Katherine. Tracks expenses, incom
 
 ## Features
 
+## Proxmox Deployment Guide
+
+For a production deployment on Proxmox (Ubuntu LXC), see **`PROXMOX_SETUP.md`**.
+
+---
+
+
+
+## Full User Guide
+
+For complete, step-by-step usage instructions (all pages and workflows), see **`USER_GUIDE.md`**.
+
+---
+
+
 - **Dashboard**: Net worth, monthly cash flow, account balances, spending by category
 - **Transactions**: Import from CSV/XLSX, auto-categorize, search & filter
 - **Forecast**: 60-month projections with what-if scenarios
