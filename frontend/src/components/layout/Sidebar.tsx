@@ -10,9 +10,11 @@ import {
   TrendingUp,
   Calendar,
   FlaskConical,
+  BellRing,
   Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { APP_VERSION } from '@/lib/version'
 
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
@@ -22,6 +24,7 @@ const navItems = [
   { label: 'Forecast', icon: TrendingUp, href: '/forecast' },
   { label: 'Life Events', icon: Calendar, href: '/events' },
   { label: 'What-If', icon: FlaskConical, href: '/scenarios' },
+  { label: 'Alerts', icon: BellRing, href: '/alerts' },
   { label: 'Settings', icon: Settings, href: '/settings' },
 ]
 
@@ -63,7 +66,7 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div className="p-4 border-t border-[#2d3748]">
-        <p className="text-xs text-muted text-center">FinanceTrack v0.1</p>
+        <p className="text-xs text-muted text-center">FinanceTrack v{APP_VERSION}</p>
       </div>
     </aside>
   )
