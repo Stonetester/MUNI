@@ -228,7 +228,7 @@ const sections: Section[] = [
     iconColor: 'text-blue-400',
     iconBg: 'bg-blue-400/10',
     title: 'Step 3 — Enter Account Balances (Investments & Loans)',
-    subtitle: 'Don't try to import these from a spreadsheet — manual balance snapshots are the right approach for savings, 401k, IRA, and student loans.',
+    subtitle: "Don't try to import these from a spreadsheet — manual balance snapshots are the right approach for savings, 401k, IRA, and student loans.",
     steps: [
       {
         title: 'Why manual snapshots instead of CSV import?',
