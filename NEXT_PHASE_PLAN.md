@@ -396,6 +396,75 @@ backend/app/routers/investment_statements.py  — GET, POST, PUT, DELETE
 
 ---
 
+### Feature D — Compensation History (Bonuses, Raises, Awards)
+
+**Where it lives:** Financial Profile page → new "Compensation" tab (alongside Salary, Loans, 401k, etc.)
+
+**What you can log:**
+
+| Type | What gets recorded | Effect on app |
+|---|---|---|
+| **Raise** | Effective date, old salary, new salary | Forecast updates from that date; salary in profile updates automatically |
+| **Bonus** | Date, gross amount, net amount (estimated after tax), bonus type | Shown in income history; optionally creates an income transaction |
+| **Spot Award** | Date, description, cash value (if any) | Tracked in compensation history; monetary awards flow into income |
+| **Stipend / Allowance** | Date, amount, frequency (one-time or recurring) | Recurring stipends add to forecast as additional income |
+
+**UI — Compensation History timeline:**
+```
+2025-01-15   Raise        $116,500 → $130,935/yr  (+12.4%)
+2025-06-01   Bonus        $3,500 gross / $2,450 net  "Mid-year performance"
+2026-01-10   Spot Award   $500  "Q4 recognition"
+2026-03-01   Raise        $130,935 → ??? (add when it happens)
+```
+
+- Quick-add button: pick type → fill small form → save
+- Edit/delete any entry
+- Raise entries show % change and annualized impact
+- Bonus/award entries show gross + estimated net (user can enter actual net from paystub)
+
+**How raises affect the forecast:**
+- When a raise is logged with an effective date, the forecast engine uses the new salary from that date forward
+- Old salary used for periods before the raise date (accurate historical projections)
+- Employer Safe Harbor 401k recalculates automatically (6% of new salary)
+
+**New model: `CompensationEvent`**
+```python
+class CompensationEvent(Base):
+    __tablename__ = "compensation_events"
+    id, user_id
+    event_type       # "raise", "bonus", "spot_award", "stipend", "other"
+    effective_date
+    # Raise fields
+    old_salary       # nullable — only for raises
+    new_salary       # nullable — only for raises
+    # Bonus/award fields
+    gross_amount     # nullable — for bonuses/awards
+    net_amount       # nullable — user enters actual net from paystub
+    # Meta
+    description      # "Q4 performance bonus", "spot award — project X", etc.
+    notes
+    created_at
+```
+
+**New backend files:**
+```
+backend/app/models/compensation_event.py
+backend/app/routers/compensation.py    — GET, POST, PUT, DELETE /compensation
+```
+
+**New frontend:**
+```
+/financial-profile → "Compensation" tab
+  CompensationTimeline.tsx   — chronological list of all events
+  CompensationForm.tsx       — quick-add / edit form (type changes which fields show)
+```
+
+**Integration with paystub parser:**
+- When a paystub is parsed and gross pay is noticeably higher than the last stub → app flags: "Looks like a bonus or raise — want to log it in Compensation History?"
+- Not automatic, just a prompt
+
+---
+
 ### Feature C — Joint HYSA (Shared Account Between Keaton + Katherine)
 
 **The situation:**
@@ -448,19 +517,24 @@ ALTER TABLE accounts ADD COLUMN joint_user_id INTEGER REFERENCES users(id);
 ```
 backend/app/models/paystub.py
 backend/app/models/investment_statement.py
+backend/app/models/compensation_event.py
 backend/app/routers/paystubs.py
 backend/app/routers/investment_statements.py
-backend/app/services/paystub_parser.py     ← Claude Vision API call
-backend/uploads/paystubs/                  ← image storage (gitignored)
+backend/app/routers/compensation.py
+backend/app/services/paystub_parser.py     ← pdfplumber extraction
+backend/uploads/paystubs/                  ← PDF storage (gitignored)
 
-frontend/src/app/paystubs/page.tsx          ← upload + history + stats
-frontend/src/app/paystubs/review/page.tsx   ← post-parse review + confirm form
+frontend/src/app/paystubs/page.tsx
+frontend/src/app/paystubs/review/page.tsx
 frontend/src/components/paystubs/
   PaystubUploadZone.tsx
   PaystubReviewForm.tsx
   PaystubTimeline.tsx
   PaystubSummaryStats.tsx
   InvestmentStatementForm.tsx
+frontend/src/components/profile/
+  CompensationTimeline.tsx
+  CompensationForm.tsx
 ```
 
 ### Phase 4 — New Dependencies
@@ -483,6 +557,7 @@ backend/uploads/               # paystub images (personal data)
 - [ ] Install pdfplumber: `pip install pdfplumber` in backend venv
 - [ ] Build Feature C (joint HYSA) first — smallest DB change, highest daily impact
   - Katherine's HYSA contribution: **$1,600/month** (same as Keaton — changeable in Financial Profile)
+- [ ] Build Feature D (compensation history) — no new dependencies, pure CRUD
 - [ ] Build Feature A (paystub parser) — no API key needed, just pdfplumber
   - Test with `C:\Users\keato\Downloads\March6PayStub.pdf` (Paylocity format confirmed working)
 - [ ] Build Feature B (historical statement entry) — manual form, no dependencies

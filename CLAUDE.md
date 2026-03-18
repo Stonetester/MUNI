@@ -138,6 +138,14 @@ _See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
 - **Investment statements**: manual entry form for 401k/IRA quarterly statements (beginning balance, ending balance, contributions, gains, fund breakdown)
 - Once entered: projections use actual historical return rates instead of assumed percentages
 
+### D. Compensation History (Bonuses, Raises, Awards)
+- Log raises (old salary → new salary, effective date → forecast updates from that date automatically)
+- Log spot bonuses, performance bonuses, awards (gross + net after tax)
+- Log stipends/allowances (recurring or one-time)
+- Timeline view on Financial Profile → Compensation tab
+- When paystub gross is unusually high vs previous stub, app prompts: "Log a bonus or raise?"
+- New model: `CompensationEvent` (event_type, effective_date, old_salary, new_salary, gross_amount, net_amount, description)
+
 ### C. Joint HYSA (Keaton + Katherine)
 - Add `is_joint` + `joint_user_id` columns to `accounts` table
 - Joint accounts visible to both users; "Joint" badge in UI
