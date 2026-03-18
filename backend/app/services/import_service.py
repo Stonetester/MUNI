@@ -11,14 +11,20 @@ Supported formats:
 
 3. Credit card export:
    Transaction Date, Description, Amount, Category
+
+Deduplication:
+  Uses the same SHA-256 hash of (date|description|amount) as the Google Sheets
+  sync service, so re-importing a CSV or syncing the same data from Sheets will
+  never create duplicate transactions regardless of which source came first.
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 from datetime import date, datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set
 
 import pandas as pd
 
@@ -29,6 +35,20 @@ from app.schemas.transaction import ImportResult
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+
+
+def _dedup_hash(txn_date: date, description: str, amount: float) -> str:
+    """Must stay in sync with google_sheets_sync._dedup_hash."""
+    key = f"{txn_date}|{description.strip().lower()}|{round(amount, 2)}"
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def _load_existing_hashes(user_id: int, db: Session) -> Set[str]:
+    """Load dedup hashes for all existing transactions for this user."""
+    txns = db.query(Transaction.description, Transaction.date, Transaction.amount).filter(
+        Transaction.user_id == user_id
+    ).all()
+    return {_dedup_hash(t.date, t.description, t.amount) for t in txns}
 
 # Column aliases → canonical column name
 COLUMN_ALIASES: Dict[str, str] = {
@@ -135,26 +155,6 @@ def _get_or_create_category(
     return cat
 
 
-def _check_duplicate(
-    user_id: int,
-    txn_date: date,
-    amount: float,
-    description: str,
-    db: Session,
-) -> bool:
-    existing = (
-        db.query(Transaction)
-        .filter(
-            Transaction.user_id == user_id,
-            Transaction.date == txn_date,
-            Transaction.amount == amount,
-            Transaction.description == description,
-        )
-        .first()
-    )
-    return existing is not None
-
-
 def import_transactions(
     content: bytes,
     filename: str,
@@ -165,6 +165,10 @@ def import_transactions(
     errors: List[str] = []
     imported = 0
     duplicates = 0
+
+    # Load all existing hashes upfront — one query instead of one per row.
+    # Uses the same hash as the Sheets sync, so CSV ↔ Sheets dedup works both ways.
+    existing_hashes: Set[str] = _load_existing_hashes(user.id, db)
 
     try:
         if filename.endswith(".xlsx") or filename.endswith(".xls"):
@@ -237,10 +241,12 @@ def import_transactions(
                     str(category_name).strip(), user, db, category_cache
                 )
 
-            # Duplicate check
-            if _check_duplicate(user.id, txn_date, amount, description, db):
+            # Duplicate check — same hash as Sheets sync; catches cross-source dupes
+            h = _dedup_hash(txn_date, description, amount)
+            if h in existing_hashes:
                 duplicates += 1
                 continue
+            existing_hashes.add(h)
 
             txn = Transaction(
                 user_id=user.id,

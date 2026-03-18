@@ -3,13 +3,19 @@ Google Sheets → Transactions sync service.
 
 Reads monthly tab data from the user's spending Google Sheet and
 imports new transactions, deduplicating by (date + description + amount).
+
+Rules:
+- Only ADDS new transactions — never modifies or deletes existing ones.
+- CSV-imported transactions are protected: same dedup hash check applies,
+  so a Sheets row that matches an existing CSV row is silently skipped.
+- import_source is set to "sheets:{tab}" so you can always tell the origin.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -35,12 +41,18 @@ CATEGORY_NORMALIZE = {
     "discretionary": "Discretionary",
     "family": "Family",
     "rent/utilities": "Rent/Utilities",
+    "rent": "Rent/Utilities",
+    "utilities": "Rent/Utilities",
     "medical": "Medical",
+    "health": "Medical",
     "groceries": "Groceries",
+    "grocery": "Groceries",
     "subscriptions": "Subscriptions",
+    "subscription": "Subscriptions",
     "gas": "Gas",
     "required": "Required",
     "gifts": "Gifts",
+    "gift": "Gifts",
     "shopping": "Shopping",
     "student loans": "Student Loans",
     "student loan": "Student Loans",
@@ -52,9 +64,26 @@ CATEGORY_NORMALIZE = {
     "shoppi": "Shopping",
     "kat": "Kat",
     "savings": "Savings Transfer",
+    "saving": "Savings Transfer",
+    "transfer": "Savings Transfer",
     "tax": "Tax",
+    "taxes": "Tax",
     "uncategorized": "Discretionary",
     "expense": "Discretionary",
+    "expenses": "Discretionary",
+    "other": "Discretionary",
+    "misc": "Discretionary",
+    "miscellaneous": "Discretionary",
+    "entertainment": "Going Out",
+    "dining": "Eating Out",
+    "restaurant": "Eating Out",
+    "travel": "Vacation",
+    "vacation": "Vacation",
+    "housing": "Rent/Utilities",
+    "personal": "Discretionary",
+    "clothing": "Shopping",
+    "pharmacy": "Medical",
+    "fitness": "Discretionary",
 }
 
 PAYMENT_NORMALIZE = {
@@ -62,13 +91,78 @@ PAYMENT_NORMALIZE = {
     "debit card": "debit_card",
     "debit": "debit_card",
     "credit": "credit_card",
+    "cash": "cash",
+    "transfer": "transfer",
+    "ach": "transfer",
+    "check": "check",
 }
 
-# Sheets tab name patterns that look like months (JUL24, JAN2025, MARCH2025, etc.)
+# All known aliases for each canonical column name
+COLUMN_ALIASES = {
+    # date
+    "date": "date",
+    "transaction date": "date",
+    "trans date": "date",
+    "posted date": "date",
+    "posting date": "date",
+    "post date": "date",
+    "txn date": "date",
+    "purchase date": "date",
+    # description / merchant
+    "description": "description",
+    "expense": "description",
+    "expenses": "description",
+    "merchant": "description",
+    "payee": "description",
+    "memo": "description",
+    "name": "description",
+    "column 1": "description",
+    "item": "description",
+    "details": "description",
+    "transaction": "description",
+    "note": "description",
+    "notes": "description",
+    "vendor": "description",
+    "store": "description",
+    # amount
+    "amount": "amount",
+    "price": "amount",
+    "cost": "amount",
+    "total": "amount",
+    "charge": "amount",
+    "debit": "amount",
+    "transaction amount": "amount",
+    "spend": "amount",
+    "spending": "amount",
+    "value": "amount",
+    "sum": "amount",
+    "$": "amount",
+    # category
+    "category": "category",
+    "type": "category",
+    "transaction type": "category",
+    "cat": "category",
+    "label": "category",
+    "tag": "category",
+    "tags": "category",
+    "budget category": "category",
+    # payment method
+    "status": "payment_method",
+    "payment method": "payment_method",
+    "payment type": "payment_method",
+    "method": "payment_method",
+    "paid via": "payment_method",
+    "pay method": "payment_method",
+}
+
+# Sheets tab name patterns that look like months
 MONTH_TAB_RE = re.compile(
-    r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s*\d{2,4}$",
+    r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\s\-]*\d{2,4}$",
     re.IGNORECASE,
 )
+
+# Looks like a date value (for header-row auto-detection)
+DATE_PATTERN = re.compile(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{4}[/\-]\d{2}[/\-]\d{2}")
 
 
 def _get_sheets_service():
@@ -99,7 +193,8 @@ def _parse_date(raw: str) -> Optional[date]:
     if not raw:
         return None
     raw = str(raw).strip()
-    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y", "%B %d, %Y", "%b %d, %Y"):
+    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y", "%B %d, %Y", "%b %d, %Y",
+                "%m-%d-%Y", "%d/%m/%Y", "%d-%m-%Y"):
         try:
             return datetime.strptime(raw, fmt).date()
         except ValueError:
@@ -107,22 +202,58 @@ def _parse_date(raw: str) -> Optional[date]:
     # Excel serial date (float as string)
     try:
         serial = float(raw)
-        from datetime import timedelta
-        return (datetime(1899, 12, 30) + timedelta(days=serial)).date()
+        if 20000 < serial < 60000:  # sanity check: reasonable Excel serial range
+            return (datetime(1899, 12, 30) + timedelta(days=int(serial))).date()
     except (ValueError, OverflowError):
         pass
     return None
 
 
 def _dedup_hash(txn_date: date, description: str, amount: float) -> str:
+    """Stable hash used by BOTH the Sheets sync AND the CSV import dedup."""
     key = f"{txn_date}|{description.strip().lower()}|{round(amount, 2)}"
     return hashlib.sha256(key.encode()).hexdigest()
+
+
+def _find_header_row(rows: list[list]) -> tuple[int, dict]:
+    """
+    Scan the first 10 rows to find the one that contains recognizable column headers.
+    Returns (header_row_index, col_map) where col_map maps canonical name → column index.
+    Falls back to row 0 if nothing looks like a header.
+    """
+    for row_idx, row in enumerate(rows[:10]):
+        if not row:
+            continue
+        cells = [str(c).strip().lower() for c in row]
+        col_map = {}
+        for i, cell in enumerate(cells):
+            canonical = COLUMN_ALIASES.get(cell)
+            if canonical and canonical not in col_map:
+                col_map[canonical] = i
+
+        # A valid header row must have at least date AND amount
+        if "date" in col_map and "amount" in col_map:
+            logger.debug(f"Found header at row {row_idx}: {col_map}")
+            return row_idx, col_map
+
+    # Nothing matched — return empty map so the tab is skipped with a useful message
+    return 0, {}
+
+
+def _load_existing_hashes(user_id: int, db: Session) -> set:
+    """Load dedup hashes for ALL existing transactions for this user."""
+    txns = db.query(Transaction.description, Transaction.date, Transaction.amount).filter(
+        Transaction.user_id == user_id
+    ).all()
+    return {_dedup_hash(t.date, t.description, t.amount) for t in txns}
 
 
 def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
     """
     Sync all monthly tabs from the given Google Sheet for the given user.
     Returns {"imported": N, "skipped": N, "errors": [...]}
+
+    NEVER modifies or deletes existing transactions (CSV or otherwise).
     """
     try:
         service = _get_sheets_service()
@@ -139,7 +270,15 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
     month_tabs = [t for t in tabs if MONTH_TAB_RE.match(t.strip())]
 
     if not month_tabs:
-        return {"imported": 0, "skipped": 0, "errors": ["No monthly tabs found (expected names like JUL24, JAN2025)"]}
+        all_tabs = ", ".join(tabs[:10])
+        return {
+            "imported": 0,
+            "skipped": 0,
+            "errors": [
+                f"No monthly tabs found. Tabs in sheet: {all_tabs}. "
+                "Expected names like JUL24, JAN2025, MARCH2025."
+            ],
+        }
 
     # Get user's categories and default checking account
     user = db.query(User).filter(User.id == user_id).first()
@@ -149,20 +288,14 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
     categories = {c.name: c for c in db.query(Category).filter(Category.user_id == user_id).all()}
     default_cat = categories.get("Discretionary")
 
-    # Find default checking account
     checking = (
         db.query(Account)
         .filter(Account.user_id == user_id, Account.account_type == "checking")
         .first()
     )
 
-    # Load existing dedup hashes
-    existing_hashes = set()
-    existing_txns = db.query(Transaction.description, Transaction.date, Transaction.amount).filter(
-        Transaction.user_id == user_id
-    ).all()
-    for t in existing_txns:
-        existing_hashes.add(_dedup_hash(t.date, t.description, t.amount))
+    # Load ALL existing transaction hashes upfront (includes CSV-imported rows)
+    existing_hashes = _load_existing_hashes(user_id, db)
 
     imported = 0
     skipped = 0
@@ -177,37 +310,24 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                 .execute()
             )
             rows = result.get("values", [])
-            if len(rows) < 2:
+            if not rows:
                 continue
 
-            # Find headers (first non-empty row)
-            headers = [str(h).strip().lower() for h in rows[0]]
-
-            # Map headers to canonical names
-            col_map = {}
-            ALIASES = {
-                "expense": "description",
-                "column 1": "description",
-                "description": "description",
-                "merchant": "description",
-                "transaction date": "date",
-                "date": "date",
-                "type": "category",
-                "category": "category",
-                "price": "amount",
-                "amount": "amount",
-                "status": "payment_method",
-            }
-            for i, h in enumerate(headers):
-                canonical = ALIASES.get(h)
-                if canonical and canonical not in col_map:
-                    col_map[canonical] = i
+            # Auto-detect which row contains the column headers
+            header_row_idx, col_map = _find_header_row(rows)
 
             if "date" not in col_map or "amount" not in col_map:
-                errors.append(f"Tab '{tab}': missing required columns (date, amount)")
+                # Show what we actually found to help debug
+                first_row_cells = [str(c).strip() for c in (rows[0] if rows else [])]
+                errors.append(
+                    f"Tab '{tab}': could not find date/amount columns. "
+                    f"First row contents: {first_row_cells[:8]}"
+                )
                 continue
 
-            for row in rows[1:]:
+            data_rows = rows[header_row_idx + 1:]
+
+            for row in data_rows:
                 if not row:
                     continue
                 try:
@@ -223,7 +343,13 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                     raw_cat = get_col("category")
                     raw_pay = get_col("payment_method")
 
+                    # Skip rows where date looks like a header or is empty
                     if not raw_date or not raw_amount:
+                        skipped += 1
+                        continue
+
+                    # Skip rows where the date cell looks like a column label
+                    if raw_date.lower() in COLUMN_ALIASES:
                         skipped += 1
                         continue
 
@@ -233,15 +359,22 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                         continue
 
                     try:
-                        amount = float(str(raw_amount).replace(",", "").replace("$", ""))
+                        amount_str = str(raw_amount).replace(",", "").replace("$", "").replace("(", "-").replace(")", "")
+                        amount = float(amount_str)
                     except ValueError:
                         skipped += 1
                         continue
 
-                    # Spending sheet has positive amounts = expenses; negate
+                    # Skip summary/total rows (very large amounts)
+                    if abs(amount) > 50000:
+                        skipped += 1
+                        continue
+
+                    # Spending sheet: positive amounts = expenses; negate them
                     if amount > 0:
                         amount = -amount
 
+                    # Dedup check — same hash used for CSV imports so no cross-source dupes
                     h = _dedup_hash(txn_date, raw_desc, amount)
                     if h in existing_hashes:
                         skipped += 1
@@ -250,7 +383,7 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                     cat_name = CATEGORY_NORMALIZE.get(raw_cat.strip().lower(), "Discretionary")
                     category = categories.get(cat_name) or default_cat
 
-                    payment = PAYMENT_NORMALIZE.get(raw_pay.strip().lower(), "debit_card")
+                    payment = PAYMENT_NORMALIZE.get(raw_pay.strip().lower()) or "debit_card"
 
                     txn = Transaction(
                         user_id=user_id,
@@ -261,7 +394,7 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                         description=raw_desc,
                         payment_method=payment,
                         is_verified=False,
-                        import_source=f"Google Sheets:{tab}",
+                        import_source=f"sheets:{tab}",
                     )
                     db.add(txn)
                     existing_hashes.add(h)
@@ -297,7 +430,7 @@ def sync_all_users() -> None:
                     cfg.last_sync_status = "error"
                     cfg.last_sync_message = "; ".join(result["errors"])
                 else:
-                    cfg.last_sync_status = "success"
+                    cfg.last_sync_status = "ok"
                     cfg.last_sync_message = f"Imported {result['imported']}, skipped {result['skipped']}"
                 db.commit()
                 logger.info(f"Sync user {cfg.user_id}: {cfg.last_sync_message}")
