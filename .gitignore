@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python virtual environments
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+# Next.js
+.next/
+out/
+
+# Build outputs
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.suo
+*.user
+
+# Claude local settings
+.claude/settings.local.json
