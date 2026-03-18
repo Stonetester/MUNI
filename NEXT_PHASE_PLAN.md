@@ -247,75 +247,89 @@ _Planned 2026-03-18. Build after Phase 3 Google Sheets + Financial Profile._
 
 ---
 
-### Feature A — Paystub Screenshot Parser
+### Feature A — Paystub PDF Parser
 
 **How it works:**
-1. User uploads a paystub screenshot (JPG, PNG, or PDF) from `/paystubs` page
-2. Backend sends the image to the **Claude Vision API** with a structured extraction prompt
-3. Claude returns a JSON object with every field parsed off the paystub
+1. User uploads a paystub PDF (or JPG/PNG) from `/paystubs` page
+2. Backend uses **pdfplumber** to extract all text directly from the PDF (no AI API needed, no cost)
+3. Regex patterns map extracted text to structured fields
 4. User sees a pre-filled review form — can correct any field before saving
-5. Confirmed paystub is saved to the database and feeds into tax tracking, income history, and projections
+5. Confirmed paystub saved to DB; feeds income history, tax tracking, deduction trends
 
-**Why Claude Vision instead of Tesseract/OCR:**
-- Paystubs have wildly different layouts by employer — Claude handles any format
-- It understands context ("this is FICA" → maps to Social Security + Medicare correctly)
-- Handles PDFs, poor photo quality, rotated images
-- Already in the Claude ecosystem
+**Why pdfplumber (not Claude API, not Tesseract):**
+- Keaton's paystubs are Paylocity **digital PDFs** — all text is machine-readable, no OCR needed
+- pdfplumber extracts text and tables with 100% accuracy on digital PDFs, for free
+- No API key, no internet dependency, no cost per upload
+- If a scanned/image PDF is uploaded: automatic fallback to `pytesseract` (also free)
+- Tesseract install on Windows: `winget install UB-Mannheim.TesseractOCR`
 
-**Requires:** `ANTHROPIC_API_KEY` in `backend/.env` — add this:
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
+**Paylocity format — what we know from the March 6 2026 stub:**
+The Paylocity layout is consistent. Targeted regex patterns will reliably extract:
 
-**Fields extracted from every paystub:**
-
-| Group | Fields |
+| Group | Fields parsed |
 |---|---|
-| Period | pay_date, period_start, period_end |
-| Earnings | gross_pay, regular_pay, overtime_pay, bonus |
-| Pre-tax deductions | 401k, health_insurance, dental, vision, hsa, fsa, life_insurance |
-| Taxes | federal, state, social_security (6.2%), medicare (1.45%), local |
-| Post-tax | roth_401k, other post-tax deductions |
-| Employer side | employer_401k_match, employer_health_contribution |
-| Net | net_pay |
-| YTD | ytd_gross, ytd_net, ytd_401k, ytd_federal_tax, ytd_state_tax |
-| Meta | employer name, parse_confidence score (0–1) |
+| Header | employer, employee_name, pay_date, period_start, period_end, voucher_number |
+| Earnings | gross_pay, regular_pay, holiday_pay, overtime_pay, pto_ytd |
+| Employer 401k | safe_harbor_contribution (the "401 Safe H" line — e.g. $327.34/period) |
+| Taxes | federal (FITW), md_state (MD), md_county (MD-CAL1), social_security (SS), medicare (MED) |
+| Deductions | deduction_401k ($380), dental, vision (VISN), life_insurance (GTL+VLIFE), ad_and_d, std_ltd (ER STD/LTD) |
+| Net | net_pay, fed_taxable_income |
+| YTD | ytd_gross, ytd_net, ytd_401k, ytd_federal_tax, ytd_state_tax, ytd_ss, ytd_medicare |
+
+**Important discovery from the March 6 stub:**
+"401 Safe H" = employer Safe Harbor 401k contribution ($327.34 this period, $1,623.99 YTD).
+This is ON TOP of the 6% you mentioned — it's separate. The app will track both:
+- Employee 401k deduction: $380/period
+- Employer Safe Harbor: $327.34/period  ← this was previously untracked
 
 **New frontend page: `/paystubs`**
-- Upload zone (drag & drop or click to browse)
-- "Parsing…" loading state while Claude processes
-- Review form: all extracted fields editable, color-coded (green = high confidence, yellow = review suggested)
-- History tab: all saved paystubs in a timeline
-- Summary stats: YTD income, YTD taxes paid, effective tax rate, YTD 401k contributions
-- Trend charts: net pay over time, tax burden over time, deduction breakdown per check
+- Upload zone (drag & drop or click to browse, PDF or image)
+- "Parsing…" spinner while pdfplumber runs
+- Review form: all extracted fields editable, grouped by section
+- History tab: all saved paystubs as a timeline by date
+- Summary stats card: YTD gross, YTD net, YTD taxes paid, effective tax rate %, YTD 401k total (employee + employer Safe Harbor)
+- Trend charts: net pay over time, deduction breakdown per check, tax burden %
 
 **New backend files:**
 ```
-backend/app/models/paystub.py          — Paystub model (all fields above)
-backend/app/routers/paystubs.py        — POST /parse (upload+AI), POST / (save), GET /
-backend/app/services/paystub_parser.py — Claude Vision API call + JSON extraction logic
-backend/uploads/paystubs/              — image storage (add to .gitignore)
+backend/app/models/paystub.py          — Paystub model
+backend/app/routers/paystubs.py        — POST /parse (upload+extract), POST / (save confirmed), GET /
+backend/app/services/paystub_parser.py — pdfplumber extraction + regex patterns for Paylocity format
+backend/uploads/paystubs/              — PDF storage (gitignored)
 ```
 
-**New dependency:**
+**New dependencies:**
 ```
-anthropic>=0.25.0    # Claude API SDK
+pdfplumber>=0.10.0      # digital PDF text + table extraction (primary)
+pytesseract>=0.3.10     # fallback OCR for scanned/image PDFs
+pdf2image>=1.16.0       # converts PDF pages to images for pytesseract fallback
+Pillow>=10.0.0          # image processing (likely already installed)
 ```
 
-**Paystub model sketch:**
+**Paystub model:**
 ```python
 class Paystub(Base):
     __tablename__ = "paystubs"
-    id, user_id, pay_date, period_start, period_end
-    gross_pay, regular_pay, overtime_pay, bonus
-    deduction_401k, deduction_health, deduction_dental, deduction_vision
-    deduction_hsa, deduction_fsa, deduction_life_insurance
-    tax_federal, tax_state, tax_social_security, tax_medicare, tax_local
-    deduction_roth_401k
-    employer_401k_match, employer_health_contribution
+    id, user_id, pay_date, period_start, period_end, voucher_number, employer
+    # Earnings
+    gross_pay, regular_pay, holiday_pay, overtime_pay
+    # Employer contributions (tracked separately)
+    employer_safe_harbor_401k    # the "401 Safe H" line
+    employer_std_ltd             # ER STD/LTD disability coverage
+    # Taxes
+    tax_federal, tax_state, tax_county, tax_social_security, tax_medicare
+    tax_total, fed_taxable_income
+    # Employee deductions
+    deduction_401k, deduction_dental, deduction_vision
+    deduction_life_insurance, deduction_ad_and_d, deduction_std_ltd
+    deduction_total
+    # Net
     net_pay
+    # YTD
     ytd_gross, ytd_net, ytd_401k, ytd_federal_tax, ytd_state_tax
-    employer, raw_image_path, parse_confidence, notes, created_at
+    ytd_ss, ytd_medicare, ytd_taxes_total
+    # Meta
+    raw_pdf_path, parse_method ("pdfplumber" or "tesseract"), notes, created_at
 ```
 
 ---
@@ -451,8 +465,12 @@ frontend/src/components/paystubs/
 
 ### Phase 4 — New Dependencies
 ```
-anthropic>=0.25.0              # Claude Vision API (paystub parsing)
-python-multipart>=0.0.12       # already in requirements, needed for file uploads
+pdfplumber>=0.10.0             # paystub + statement PDF parsing (primary, free)
+pytesseract>=0.3.10            # fallback OCR for scanned PDFs (free, needs Tesseract binary)
+pdf2image>=1.16.0              # PDF→image conversion for tesseract fallback
+Pillow>=10.0.0                 # image handling (likely already present)
+# Tesseract binary (Windows): winget install UB-Mannheim.TesseractOCR
+# NOTE: No ANTHROPIC_API_KEY needed — Claude API NOT used for paystubs
 ```
 
 ### Phase 4 — .gitignore Additions
@@ -462,12 +480,14 @@ backend/uploads/               # paystub images (personal data)
 
 ### Phase 4 — Resume Checklist
 - [ ] Phase 3 (Google Sheets + Financial Profile) complete first
-- [ ] Add ANTHROPIC_API_KEY to `backend/.env`
-- [ ] Ask Katherine what her monthly HYSA contribution is
-- [ ] Build Feature C (joint HYSA) — smallest change, highest impact
-- [ ] Build Feature A (paystub parser) — depends on Anthropic key being set
-- [ ] Build Feature B (historical statements) — manual entry, no dependencies
-- [ ] Test: upload a real paystub screenshot, verify all fields parse correctly
+- [ ] Install pdfplumber: `pip install pdfplumber` in backend venv
+- [ ] Build Feature C (joint HYSA) first — smallest DB change, highest daily impact
+  - Katherine's HYSA contribution: **$1,600/month** (same as Keaton — changeable in Financial Profile)
+- [ ] Build Feature A (paystub parser) — no API key needed, just pdfplumber
+  - Test with `C:\Users\keato\Downloads\March6PayStub.pdf` (Paylocity format confirmed working)
+- [ ] Build Feature B (historical statement entry) — manual form, no dependencies
+- [ ] Test: upload March6PayStub.pdf, verify all fields parse correctly
+- [ ] (Optional) Install Tesseract for scanned fallback: `winget install UB-Mannheim.TesseractOCR`
 
 ---
 

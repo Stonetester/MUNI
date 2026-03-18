@@ -124,12 +124,14 @@ _Used when building projections, profile defaults, loan trackers._
 ## Phase 4 — Planned Features (NOT YET BUILT)
 _See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
 
-### A. Paystub Screenshot Parser
-- Upload paystub image (JPG/PNG/PDF) → Claude Vision API parses every field
-- Extracts: gross pay, all deductions (401k, health, dental, vision, HSA), all taxes (federal, state, SS, Medicare), employer match, net pay, YTD figures
+### A. Paystub PDF Parser
+- Upload paystub PDF (or image) → **pdfplumber** extracts all text (free, no API needed)
+- Regex patterns map text to structured fields (Paylocity format confirmed working from March 6 2026 stub)
+- Extracts: gross pay, regular/holiday/OT pay, all taxes (FITW/MD/MD-CAL1/SS/MED), all deductions (401k $380, dental $1.84, vision $0.39, life, AD&D, STD/LTD), **employer Safe Harbor 401k** ($327.34/period — separate from the 6% match), net pay, all YTD figures
 - User reviews pre-filled form → confirms → saves to DB
-- `/paystubs` page: upload, timeline, summary stats (YTD income, effective tax rate, YTD 401k)
-- **Requires:** `ANTHROPIC_API_KEY` in `backend/.env`
+- `/paystubs` page: upload, timeline, summary stats (YTD income, effective tax rate, YTD 401k employee + employer)
+- **No API key required** — pdfplumber is free and local
+- Fallback to pytesseract for scanned PDFs (requires `winget install UB-Mannheim.TesseractOCR`)
 
 ### B. Historical Data Entry
 - **Past paystubs**: same upload+parse flow, any date; multi-file batch upload
@@ -139,20 +141,21 @@ _See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
 ### C. Joint HYSA (Keaton + Katherine)
 - Add `is_joint` + `joint_user_id` columns to `accounts` table
 - Joint accounts visible to both users; "Joint" badge in UI
-- Each user has their own recurring rule pointing to the joint account (different contribution amounts)
-- Katherine's HYSA contribution amount TBD (she'll enter in Financial Profile)
+- Each user has their own recurring rule pointing to the joint account
+- **Keaton contribution: $1,600/month | Katherine contribution: $1,600/month** (changeable per user in Financial Profile)
 - Net worth: both users see full balance; couple combined view counts it once (future)
 
 ### New models needed (Phase 4):
-- `Paystub` — all paystub fields (35+ columns)
+- `Paystub` — all paystub fields (~30 columns, Paylocity-tuned)
 - `InvestmentStatement` — quarterly statement data per account
 
 ### New dependencies (Phase 4):
-- `anthropic>=0.25.0` — Claude Vision API for paystub parsing
+- `pdfplumber>=0.10.0` — paystub + statement PDF parsing (free, no API key)
+- `pytesseract` + `pdf2image` — scanned PDF fallback (optional)
 
 ### Build order for Phase 4:
-1. Joint HYSA (DB migration + API + UI badge)
-2. Paystub parser (needs ANTHROPIC_API_KEY first)
+1. Joint HYSA (DB migration + API + UI badge) — no new dependencies
+2. Paystub parser (pip install pdfplumber first)
 3. Historical statement entry (manual form, no dependencies)
 
 ---
