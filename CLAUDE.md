@@ -121,6 +121,42 @@ _Used when building projections, profile defaults, loan trackers._
 
 ---
 
+## Phase 4 — Planned Features (NOT YET BUILT)
+_See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
+
+### A. Paystub Screenshot Parser
+- Upload paystub image (JPG/PNG/PDF) → Claude Vision API parses every field
+- Extracts: gross pay, all deductions (401k, health, dental, vision, HSA), all taxes (federal, state, SS, Medicare), employer match, net pay, YTD figures
+- User reviews pre-filled form → confirms → saves to DB
+- `/paystubs` page: upload, timeline, summary stats (YTD income, effective tax rate, YTD 401k)
+- **Requires:** `ANTHROPIC_API_KEY` in `backend/.env`
+
+### B. Historical Data Entry
+- **Past paystubs**: same upload+parse flow, any date; multi-file batch upload
+- **Investment statements**: manual entry form for 401k/IRA quarterly statements (beginning balance, ending balance, contributions, gains, fund breakdown)
+- Once entered: projections use actual historical return rates instead of assumed percentages
+
+### C. Joint HYSA (Keaton + Katherine)
+- Add `is_joint` + `joint_user_id` columns to `accounts` table
+- Joint accounts visible to both users; "Joint" badge in UI
+- Each user has their own recurring rule pointing to the joint account (different contribution amounts)
+- Katherine's HYSA contribution amount TBD (she'll enter in Financial Profile)
+- Net worth: both users see full balance; couple combined view counts it once (future)
+
+### New models needed (Phase 4):
+- `Paystub` — all paystub fields (35+ columns)
+- `InvestmentStatement` — quarterly statement data per account
+
+### New dependencies (Phase 4):
+- `anthropic>=0.25.0` — Claude Vision API for paystub parsing
+
+### Build order for Phase 4:
+1. Joint HYSA (DB migration + API + UI badge)
+2. Paystub parser (needs ANTHROPIC_API_KEY first)
+3. Historical statement entry (manual form, no dependencies)
+
+---
+
 ## Phase 3 — Planned Features (NOT YET BUILT)
 _See NEXT_PHASE_PLAN.md for full details, exact steps, and file plan._
 

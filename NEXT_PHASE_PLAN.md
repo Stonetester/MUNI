@@ -240,6 +240,237 @@ When picking back up, do these in order:
 
 ---
 
+---
+
+## Phase 4 — Paystub Parser, Historical Data Entry, Joint HYSA
+_Planned 2026-03-18. Build after Phase 3 Google Sheets + Financial Profile._
+
+---
+
+### Feature A — Paystub Screenshot Parser
+
+**How it works:**
+1. User uploads a paystub screenshot (JPG, PNG, or PDF) from `/paystubs` page
+2. Backend sends the image to the **Claude Vision API** with a structured extraction prompt
+3. Claude returns a JSON object with every field parsed off the paystub
+4. User sees a pre-filled review form — can correct any field before saving
+5. Confirmed paystub is saved to the database and feeds into tax tracking, income history, and projections
+
+**Why Claude Vision instead of Tesseract/OCR:**
+- Paystubs have wildly different layouts by employer — Claude handles any format
+- It understands context ("this is FICA" → maps to Social Security + Medicare correctly)
+- Handles PDFs, poor photo quality, rotated images
+- Already in the Claude ecosystem
+
+**Requires:** `ANTHROPIC_API_KEY` in `backend/.env` — add this:
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**Fields extracted from every paystub:**
+
+| Group | Fields |
+|---|---|
+| Period | pay_date, period_start, period_end |
+| Earnings | gross_pay, regular_pay, overtime_pay, bonus |
+| Pre-tax deductions | 401k, health_insurance, dental, vision, hsa, fsa, life_insurance |
+| Taxes | federal, state, social_security (6.2%), medicare (1.45%), local |
+| Post-tax | roth_401k, other post-tax deductions |
+| Employer side | employer_401k_match, employer_health_contribution |
+| Net | net_pay |
+| YTD | ytd_gross, ytd_net, ytd_401k, ytd_federal_tax, ytd_state_tax |
+| Meta | employer name, parse_confidence score (0–1) |
+
+**New frontend page: `/paystubs`**
+- Upload zone (drag & drop or click to browse)
+- "Parsing…" loading state while Claude processes
+- Review form: all extracted fields editable, color-coded (green = high confidence, yellow = review suggested)
+- History tab: all saved paystubs in a timeline
+- Summary stats: YTD income, YTD taxes paid, effective tax rate, YTD 401k contributions
+- Trend charts: net pay over time, tax burden over time, deduction breakdown per check
+
+**New backend files:**
+```
+backend/app/models/paystub.py          — Paystub model (all fields above)
+backend/app/routers/paystubs.py        — POST /parse (upload+AI), POST / (save), GET /
+backend/app/services/paystub_parser.py — Claude Vision API call + JSON extraction logic
+backend/uploads/paystubs/              — image storage (add to .gitignore)
+```
+
+**New dependency:**
+```
+anthropic>=0.25.0    # Claude API SDK
+```
+
+**Paystub model sketch:**
+```python
+class Paystub(Base):
+    __tablename__ = "paystubs"
+    id, user_id, pay_date, period_start, period_end
+    gross_pay, regular_pay, overtime_pay, bonus
+    deduction_401k, deduction_health, deduction_dental, deduction_vision
+    deduction_hsa, deduction_fsa, deduction_life_insurance
+    tax_federal, tax_state, tax_social_security, tax_medicare, tax_local
+    deduction_roth_401k
+    employer_401k_match, employer_health_contribution
+    net_pay
+    ytd_gross, ytd_net, ytd_401k, ytd_federal_tax, ytd_state_tax
+    employer, raw_image_path, parse_confidence, notes, created_at
+```
+
+---
+
+### Feature B — Historical Data Entry (Past Paystubs + Investment Statements)
+
+Two sub-features under the same `/paystubs` and `/financial-profile` pages.
+
+#### B1 — Past Paystub History
+- Same upload + parse flow as Feature A, just with past dates
+- User can upload multiple at once — each gets queued and parsed sequentially
+- Or: manual entry form with all fields pre-populated to 0 (for paystubs where user doesn't have the image)
+- Once past paystubs are entered, the app can show:
+  - Accurate YTD figures at any point in time
+  - Effective tax rate history (did your withholding change?)
+  - 401k contribution accuracy (did employer match come through every period?)
+  - Annual income history across years
+
+**UI on `/paystubs`:**
+- "Upload Past Paystubs" button → multi-file picker
+- Progress list: file 1 ✓ parsed, file 2 ⏳ parsing, file 3 ⏰ queued
+- All paystubs shown on a timeline, filterable by year
+
+#### B2 — Investment Statement History (401k, IRA, Brokerage)
+- Manual entry form (no OCR for statements — too many formats, values matter more than speed)
+- One form per statement: select account, enter dates + values
+- Fields:
+  - Statement date (quarter end typically)
+  - Beginning balance, ending balance
+  - Employee contributions this period
+  - Employer contributions this period
+  - Investment gains/losses (ending minus beginning minus contributions)
+  - Dividends reinvested
+  - Fees
+  - Optional: fund-level breakdown (ticker, shares, value, gain/loss)
+- Once entered, the projection engine uses **actual historical return rates** instead of assumed %
+- Charts: account balance over time (true history + projected future), actual vs assumed return rate
+
+**New model: `InvestmentStatement`**
+```python
+class InvestmentStatement(Base):
+    __tablename__ = "investment_statements"
+    id, account_id, statement_date, period_start
+    beginning_balance, ending_balance
+    employee_contributions, employer_contributions
+    investment_gains, dividends, fees
+    fund_holdings   # JSON: [{ticker, shares, value, gain_loss}]
+    notes, raw_image_path, created_at
+```
+
+**New backend files:**
+```
+backend/app/models/investment_statement.py
+backend/app/routers/investment_statements.py  — GET, POST, PUT, DELETE
+```
+
+**New frontend:**
+```
+/financial-profile → "Statement History" tab per account
+  - Timeline of past statements
+  - "Add Statement" form (manual entry)
+  - Balance chart: actual past + projected future stitched together
+```
+
+---
+
+### Feature C — Joint HYSA (Shared Account Between Keaton + Katherine)
+
+**The situation:**
+- Keaton and Katherine share one EverBank HYSA
+- Keaton contributes $1,600/month
+- Katherine contributes a different amount (she'll enter this in her Financial Profile)
+- Both are on the account; balance is shared
+- Both should see it in their app, but it should not be double-counted in a couple's combined net worth view
+
+**Implementation approach: `is_joint` flag + `joint_user_id` on Account**
+
+The account lives under Keaton's user (primary owner). Two fields are added:
+```python
+is_joint = Column(Boolean, default=False)
+joint_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+```
+
+**What changes in the API:**
+- `GET /accounts` now returns: (user's own accounts) UNION (accounts where joint_user_id = current_user.id)
+- Joint accounts are returned to both users — Katherine sees the HYSA in her accounts list
+- Both users can add balance snapshots to the joint account
+- Account shows a "Joint" badge in the UI
+
+**Contribution tracking (per user):**
+- Each user has their own recurring rule pointing to the joint account:
+  - Keaton: `+$1,600/mo → EverBank HYSA`
+  - Katherine: `+$X/mo → EverBank HYSA`
+- Financial Profile HYSA section shows: "Your contribution: $1,600/mo | Partner's contribution: $X/mo | Total: $(1,600+X)/mo"
+
+**Net worth handling:**
+- Individual view: both users see full HYSA balance (it's joint money, both are entitled to it)
+- Couple's combined view (future toggle): HYSA counted once, not twice
+- The couple's combined view is a stretch goal — individual views (each user sees full balance) is Phase 4
+
+**DB migration needed:**
+```sql
+ALTER TABLE accounts ADD COLUMN is_joint BOOLEAN DEFAULT FALSE;
+ALTER TABLE accounts ADD COLUMN joint_user_id INTEGER REFERENCES users(id);
+```
+
+**New frontend:**
+- Account creation modal: "Make this a joint account?" toggle → select partner user
+- Joint accounts show a "👥 Joint" badge in accounts list and dashboard
+- HYSA section of Financial Profile: shows both users' contribution amounts + combined total
+
+---
+
+### Phase 4 — New Files Summary
+
+```
+backend/app/models/paystub.py
+backend/app/models/investment_statement.py
+backend/app/routers/paystubs.py
+backend/app/routers/investment_statements.py
+backend/app/services/paystub_parser.py     ← Claude Vision API call
+backend/uploads/paystubs/                  ← image storage (gitignored)
+
+frontend/src/app/paystubs/page.tsx          ← upload + history + stats
+frontend/src/app/paystubs/review/page.tsx   ← post-parse review + confirm form
+frontend/src/components/paystubs/
+  PaystubUploadZone.tsx
+  PaystubReviewForm.tsx
+  PaystubTimeline.tsx
+  PaystubSummaryStats.tsx
+  InvestmentStatementForm.tsx
+```
+
+### Phase 4 — New Dependencies
+```
+anthropic>=0.25.0              # Claude Vision API (paystub parsing)
+python-multipart>=0.0.12       # already in requirements, needed for file uploads
+```
+
+### Phase 4 — .gitignore Additions
+```
+backend/uploads/               # paystub images (personal data)
+```
+
+### Phase 4 — Resume Checklist
+- [ ] Phase 3 (Google Sheets + Financial Profile) complete first
+- [ ] Add ANTHROPIC_API_KEY to `backend/.env`
+- [ ] Ask Katherine what her monthly HYSA contribution is
+- [ ] Build Feature C (joint HYSA) — smallest change, highest impact
+- [ ] Build Feature A (paystub parser) — depends on Anthropic key being set
+- [ ] Build Feature B (historical statements) — manual entry, no dependencies
+- [ ] Test: upload a real paystub screenshot, verify all fields parse correctly
+
+---
+
 ## Known Issues / Bugs Fixed This Session
 
 - `bcrypt==5.x` incompatible with `passlib==1.7.4` → pinned `bcrypt==4.0.1` in `requirements.txt`
