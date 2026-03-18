@@ -1,110 +1,111 @@
-# FinanceTrack Deployment Guide for Proxmox (Ubuntu LXC)
+# Muni — Proxmox Deployment Guide (Ubuntu LXC)
 
-This document gives exact instructions to deploy FinanceTrack on a Proxmox host using an **Ubuntu LXC container** (recommended).
+Deploy Muni on your Proxmox server using an **Ubuntu 24.04 LXC container**.
 
 ---
 
-## 1) Recommended Architecture
+## Your Server Specs
 
-For this app, use:
-- **Proxmox VE** host
-- **Unprivileged Ubuntu 24.04 LXC** container
-- App stack inside container:
-  - FastAPI backend (Uvicorn, port `8000`, localhost only)
-  - Next.js frontend (port `3000`, localhost only)
-  - Nginx reverse proxy (port `80/443` public)
-  - SQLite database (`backend/finance.db`)
-  - systemd services for backend/frontend
+| Spec | Value |
+|---|---|
+| Machine | Dell OptiPlex Micro (5xxx gen) |
+| CPU | Intel Core i5/i7 9th Gen, 35W T-series |
+| RAM | 16 GB DDR4 |
+| Storage | Internal SSD |
+| Existing containers | CT 100 (modoGusto-server), CT 101 (cloudflared) |
 
-Why LXC here:
-- Lighter than full VM
-- Easy backups with Proxmox `vzdump`
-- Great fit for this single-node app
+---
+
+## 1) Architecture
+
+```
+Proxmox host
+├── CT 100  modoGusto-server   (food app)
+├── CT 101  cloudflared        (food app tunnel)
+└── CT 102  muni               ← new container for this app
+             ├── FastAPI backend   → 127.0.0.1:8000
+             ├── Next.js frontend  → 127.0.0.1:3000
+             └── Nginx             → :80 (or Tailscale only)
+```
+
+SQLite database lives inside the container at `/opt/muni/app/backend/finance.db`.
 
 ---
 
 ## 2) Create the LXC in Proxmox
 
-In Proxmox UI:
+### Download the Ubuntu template (if not already present)
 
-1. **Download template**
-   - Node → local (`pve`) → CT Templates → Templates
-   - Get: `ubuntu-24.04-standard_*.tar.zst`
+Proxmox UI → Node → local storage → CT Templates → Templates → search `ubuntu-24.04` → Download.
 
-2. **Create CT**
-   - Hostname: `financetrack`
-   - Unprivileged container: ✅ yes
-   - Password: set a strong root password
+### Create the container
 
-3. **Disk/CPU/RAM suggestion**
-   - Disk: `25 GB` (or more)
-   - vCPU: `2`
-   - RAM: `4096 MB`
-   - Swap: `1024 MB`
+| Setting | Value |
+|---|---|
+| CT ID | `102` (next available after 101) |
+| Hostname | `muni` (note: if your Proxmox **node** is also named `muni`, use `muniapp` instead to avoid confusion) |
+| Template | `ubuntu-24.04-standard_*.tar.zst` |
+| Unprivileged | ✅ Yes |
+| Root password | Set a strong password |
+| Disk | `16 GB` |
+| CPU cores | `2` |
+| RAM | `2048 MiB` |
+| Swap | `512 MiB` |
+| Network bridge | `vmbr0` |
+| IPv4 | DHCP (Tailscale handles the stable IP) |
+| Features | `nesting=1` |
 
-4. **Network**
-   - Bridge: `vmbr0`
-   - IPv4: static (recommended), example `192.168.1.80/24`
-   - Gateway: your LAN gateway, example `192.168.1.1`
-
-5. **Features (Options → Features)**
-   - `nesting=1` (recommended)
-
-6. Start the container.
+Start the container after creating it.
 
 ---
 
-## 3) Initial OS Setup in Container
+## 3) Initial OS Setup
 
-Enter container shell from Proxmox, then run:
+Enter the container shell from the Proxmox UI (Console tab) or via SSH, then run:
 
 ```bash
 apt update && apt upgrade -y
-apt install -y git curl unzip build-essential nginx certbot python3-certbot-nginx \
-  python3 python3-venv python3-pip
+apt install -y git curl build-essential nginx python3 python3-venv python3-pip
+
+# Node.js 20
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt install -y nodejs
-node -v
-npm -v
-python3 --version
+
+# Verify
+node -v && npm -v && python3 --version
 ```
 
 ---
 
-## 4) Create Application User and Directory
+## 4) Create App User and Directory
 
 ```bash
-adduser --disabled-password --gecos "" financetrack
-usermod -aG www-data financetrack
-mkdir -p /opt/financetrack
-chown -R financetrack:financetrack /opt/financetrack
+adduser --disabled-password --gecos "" muni
+usermod -aG www-data muni
+mkdir -p /opt/muni
+chown -R muni:muni /opt/muni
 ```
 
 ---
 
-## 5) Pull Project Code
-
-If your repo is public:
+## 5) Clone the Repo
 
 ```bash
-sudo -u financetrack -H bash -lc '
-cd /opt/financetrack
-git clone <YOUR_REPO_URL> app
+sudo -u muni -H bash -lc '
+cd /opt/muni
+git clone https://github.com/Stonetester/MUNI.git app
 '
 ```
 
-If private repo, set SSH key for `financetrack` user first, then clone via SSH.
-
-From now on repo path is:
-- `/opt/financetrack/app`
+All paths from here are relative to `/opt/muni/app`.
 
 ---
 
 ## 6) Backend Setup (FastAPI + SQLite)
 
 ```bash
-sudo -u financetrack -H bash -lc '
-cd /opt/financetrack/app/backend
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/backend
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
@@ -114,65 +115,66 @@ python seed/seed_data.py
 '
 ```
 
-### Backend environment file
+### Backend `.env` file
 
-Create `/opt/financetrack/app/backend/.env`:
+Create `/opt/muni/app/backend/.env`:
 
 ```env
 SECRET_KEY=REPLACE_WITH_LONG_RANDOM_SECRET
 ACCESS_TOKEN_EXPIRE_MINUTES=43200
 DATABASE_URL=sqlite:///./finance.db
-CORS_ORIGINS=["https://finance.yourdomain.com"]
+CORS_ORIGINS=["http://localhost:3000","http://100.x.y.z:3000"]
 ```
 
-Generate secret example:
+Replace `100.x.y.z` with your Tailscale IP after step 10.
+
+Generate a secret key:
 
 ```bash
-python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(64))
-PY
+python3 -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
 ---
 
 ## 7) Frontend Setup (Next.js)
 
-Create frontend env file `/opt/financetrack/app/frontend/.env.local`:
+Create `/opt/muni/app/frontend/.env.local`:
 
 ```env
-NEXT_PUBLIC_API_URL=https://finance.yourdomain.com
+NEXT_PUBLIC_API_URL=http://100.x.y.z
 ```
 
-Build frontend:
+Replace `100.x.y.z` with your Tailscale IP after step 10. If using Nginx on port 80 you can omit the port.
+
+Build the frontend:
 
 ```bash
-sudo -u financetrack -H bash -lc '
-cd /opt/financetrack/app/frontend
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/frontend
 npm install
 npm run build
 '
 ```
 
+The build will use ~700 MB RAM at peak — well within the 2 GB allocation.
+
 ---
 
-## 8) Create systemd Services
+## 8) systemd Services
 
-### Backend service
-
-Create `/etc/systemd/system/financetrack-backend.service`:
+### Backend — `/etc/systemd/system/muni-backend.service`
 
 ```ini
 [Unit]
-Description=FinanceTrack FastAPI Backend
+Description=Muni FastAPI Backend
 After=network.target
 
 [Service]
-User=financetrack
+User=muni
 Group=www-data
-WorkingDirectory=/opt/financetrack/app/backend
-EnvironmentFile=/opt/financetrack/app/backend/.env
-ExecStart=/opt/financetrack/app/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+WorkingDirectory=/opt/muni/app/backend
+EnvironmentFile=/opt/muni/app/backend/.env
+ExecStart=/opt/muni/app/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=3
 
@@ -180,21 +182,19 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-### Frontend service
-
-Create `/etc/systemd/system/financetrack-frontend.service`:
+### Frontend — `/etc/systemd/system/muni-frontend.service`
 
 ```ini
 [Unit]
-Description=FinanceTrack Next.js Frontend
+Description=Muni Next.js Frontend
 After=network.target
 
 [Service]
-User=financetrack
+User=muni
 Group=www-data
-WorkingDirectory=/opt/financetrack/app/frontend
+WorkingDirectory=/opt/muni/app/frontend
 Environment=NODE_ENV=production
-EnvironmentFile=-/opt/financetrack/app/frontend/.env.local
+EnvironmentFile=-/opt/muni/app/frontend/.env.local
 ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1 --port 3000
 Restart=always
 RestartSec=3
@@ -203,29 +203,30 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-Enable/start both:
+Enable and start both:
 
 ```bash
 systemctl daemon-reload
-systemctl enable --now financetrack-backend
-systemctl enable --now financetrack-frontend
-systemctl status financetrack-backend --no-pager
-systemctl status financetrack-frontend --no-pager
+systemctl enable --now muni-backend
+systemctl enable --now muni-frontend
+systemctl status muni-backend --no-pager
+systemctl status muni-frontend --no-pager
 ```
 
 ---
 
 ## 9) Nginx Reverse Proxy
 
-Create `/etc/nginx/sites-available/financetrack`:
+Create `/etc/nginx/sites-available/muni`:
 
 ```nginx
 server {
     listen 80;
-    server_name finance.yourdomain.com;
+    server_name _;
 
     client_max_body_size 25M;
 
+    # API
     location /api/ {
         proxy_pass http://127.0.0.1:8000/api/;
         proxy_set_header Host $host;
@@ -239,6 +240,7 @@ server {
         proxy_set_header Host $host;
     }
 
+    # Frontend
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -250,88 +252,100 @@ server {
 }
 ```
 
-Enable site:
+Enable it:
 
 ```bash
-ln -s /etc/nginx/sites-available/financetrack /etc/nginx/sites-enabled/financetrack
+ln -s /etc/nginx/sites-available/muni /etc/nginx/sites-enabled/muni
+rm -f /etc/nginx/sites-enabled/default
 nginx -t
-systemctl reload nginx
+systemctl enable --now nginx
 ```
 
 ---
 
-## 10) DNS + TLS (Let’s Encrypt)
+## 10) Tailscale (Remote Access from Phone + Laptop)
 
-1. Create DNS A record:
-   - `finance.yourdomain.com -> <your_public_ip>`
-2. Port-forward router:
-   - `80 -> LXC_IP:80`
-   - `443 -> LXC_IP:443`
-3. Request cert:
+Tailscale gives every device a permanent `100.x.y.z` IP that works from anywhere — home WiFi, mobile data, anywhere — with no port forwarding and no public exposure.
 
-```bash
-certbot --nginx -d finance.yourdomain.com --redirect --agree-tos -m you@example.com
-```
-
-Test renewal:
-
-```bash
-certbot renew --dry-run
-```
-
----
-
-## 11) Tailscale Setup for Remote Access
-
-Tailscale provides secure remote access without opening ports 80/443 publicly.
-
-Install Tailscale on the LXC container:
+### Install on the container
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 tailscale up
 ```
 
-After authenticating, access the app via the Tailscale IP (e.g. `http://100.x.y.z:3000` for frontend or `http://100.x.y.z:8000` for backend directly).
+Open the auth URL it prints, sign in with your Tailscale account.
 
-**When using Tailscale only:**
-- No need to open ports 80/443 on your router
-- No public DNS or Let's Encrypt cert required
-- Access is restricted to devices on your Tailnet
-
-To expose via Nginx over Tailscale, bind Nginx to the Tailscale interface IP instead of a public IP.
-
----
-
-## 12) Verify Deployment
-
-Run checks:
+### Get the container's Tailscale IP
 
 ```bash
-curl -I http://127.0.0.1:3000
-curl -I http://127.0.0.1:8000/health
-curl -I https://finance.yourdomain.com
+tailscale ip -4
+# example output: 100.64.1.42
 ```
 
-Open browser:
-- `https://finance.yourdomain.com`
+### Update your env files with the real Tailscale IP
 
-Login default users (if seeded):
-- `keaton / finance123`
-- `katherine / finance123`
+```bash
+# Backend CORS
+sed -i 's|100.x.y.z|100.64.1.42|g' /opt/muni/app/backend/.env
 
-Immediately change passwords.
+# Frontend API URL
+sed -i 's|100.x.y.z|100.64.1.42|g' /opt/muni/app/frontend/.env.local
+
+# Rebuild frontend with real URL
+sudo -u muni -H bash -lc 'cd /opt/muni/app/frontend && npm run build'
+systemctl restart muni-backend muni-frontend
+```
+
+### Install Tailscale on your devices
+
+- **iPhone/Android** — Tailscale app from App Store / Play Store
+- **Mac/Windows** — Tailscale desktop app
+
+Sign into the same Tailscale account. You will then be able to reach:
+
+| What | URL |
+|---|---|
+| Muni app | `http://100.64.1.42` |
+| Backend API | `http://100.64.1.42/api/v1` |
+
+No open ports, no public DNS record needed.
 
 ---
 
-## 13) Update / Redeploy Procedure
-
-Whenever you update code:
+## 11) Verify the Deployment
 
 ```bash
-sudo -u financetrack -H bash -lc '
-cd /opt/financetrack/app
-git pull
+# Check services
+systemctl status muni-backend --no-pager
+systemctl status muni-frontend --no-pager
+
+# Check ports
+curl -s http://127.0.0.1:8000/health
+curl -I http://127.0.0.1:3000
+
+# Check through Nginx
+curl -I http://localhost
+```
+
+Open `http://<tailscale-ip>` on your phone or laptop.
+
+Default login accounts (created by seed script):
+- `keaton` / `finance123`
+- `katherine` / `finance123`
+
+**Change passwords immediately after first login** (Settings → Change Password).
+
+---
+
+## 12) Update / Redeploy
+
+When you push new code to GitHub:
+
+```bash
+sudo -u muni -H bash -lc '
+cd /opt/muni/app
+git pull origin feature/insights
 cd backend
 source venv/bin/activate
 pip install -r requirements.txt
@@ -341,95 +355,115 @@ npm install
 npm run build
 '
 
-systemctl restart financetrack-backend
-systemctl restart financetrack-frontend
-systemctl status financetrack-backend --no-pager
-systemctl status financetrack-frontend --no-pager
+systemctl restart muni-backend muni-frontend
+systemctl status muni-backend --no-pager
+systemctl status muni-frontend --no-pager
 ```
 
 ---
 
-## 14) Backups (Important)
+## 13) Backups
 
-### A) Proxmox snapshot/backup
-- Use scheduled `vzdump` for the LXC container.
+### A) Proxmox container snapshot
 
-### B) App-level SQLite backup
+From Proxmox UI: CT 102 → Backup → Backup now. Schedule weekly with `vzdump`.
 
-Create script `/usr/local/bin/financetrack-db-backup.sh`:
+### B) SQLite database backup (daily cron)
+
+Create `/usr/local/bin/muni-backup.sh`:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-mkdir -p /opt/backups/financetrack
-cp /opt/financetrack/app/backend/finance.db /opt/backups/financetrack/finance-$(date +%F-%H%M).db
-find /opt/backups/financetrack -type f -mtime +14 -delete
+mkdir -p /opt/backups/muni
+sqlite3 /opt/muni/app/backend/finance.db ".backup /opt/backups/muni/finance-$(date +%F-%H%M).db"
+find /opt/backups/muni -type f -mtime +14 -delete
 ```
 
 ```bash
-chmod +x /usr/local/bin/financetrack-db-backup.sh
+chmod +x /usr/local/bin/muni-backup.sh
+apt install -y sqlite3
 ```
 
-Add cron (`crontab -e` as root):
+Add to cron (`crontab -e`):
 
 ```cron
-15 2 * * * /usr/local/bin/financetrack-db-backup.sh
+15 2 * * * /usr/local/bin/muni-backup.sh
 ```
 
 ---
 
-## 15) Security Hardening Checklist
+## 14) Security Checklist
 
-- Use strong root and app-user passwords
-- Disable password SSH login; use SSH keys only
-- Keep system updated: `apt update && apt upgrade -y`
-- Configure Proxmox firewall and/or UFW
-- Restrict backend/frontend to localhost only (already done)
-- Expose only Nginx 80/443 publicly
-- Rotate secrets if leaked
+- [ ] Change default `keaton` and `katherine` passwords after first login
+- [ ] Use a strong root password on the LXC
+- [ ] Disable password SSH — use SSH keys only
+- [ ] Keep system updated: `apt update && apt upgrade -y`
+- [ ] Backend and frontend bound to `127.0.0.1` only — only Nginx/Tailscale is exposed
+- [ ] Rotate `SECRET_KEY` in `.env` if it is ever exposed
+- [ ] Don't commit `.env` or `finance.db` to Git (`.gitignore` already covers these)
 
-Optional UFW:
+Optional UFW (if you want an extra firewall layer):
 
 ```bash
 apt install -y ufw
 ufw allow OpenSSH
 ufw allow 80
-ufw allow 443
 ufw enable
 ufw status
 ```
 
 ---
 
-## 16) Troubleshooting
+## 15) Troubleshooting
 
-### Services won’t start
+### Services won't start
+
 ```bash
-journalctl -u financetrack-backend -n 200 --no-pager
-journalctl -u financetrack-frontend -n 200 --no-pager
+journalctl -u muni-backend -n 100 --no-pager
+journalctl -u muni-frontend -n 100 --no-pager
 ```
 
-### Nginx errors
+### Frontend can't reach the API
+
+- Check `NEXT_PUBLIC_API_URL` in `.env.local` — must match the Tailscale IP
+- Confirm Nginx is running: `systemctl status nginx`
+- Confirm backend is running: `curl http://127.0.0.1:8000/health`
+
+### Nginx config error
+
 ```bash
 nginx -t
-journalctl -u nginx -n 200 --no-pager
+journalctl -u nginx -n 50 --no-pager
 ```
 
-### Frontend can’t reach API
-- Confirm `NEXT_PUBLIC_API_URL=https://finance.yourdomain.com`
-- Confirm Nginx `/api/` proxy block exists
-- Confirm backend service is running
+### File upload / import fails
 
-### Import uploads fail
-- Increase `client_max_body_size` in Nginx
-- Reload Nginx
+- Increase `client_max_body_size` in the Nginx config (default is 25M, raise if needed)
+- `systemctl reload nginx`
+
+### "alembic upgrade head" says "table already exists"
+
+The DB was created by `create_all()` before Alembic ran. Fix:
+
+```bash
+cd /opt/muni/app/backend
+source venv/bin/activate
+alembic stamp head
+```
 
 ---
 
-## 17) Alternative: Ubuntu VM Instead of LXC
+## 16) Resource Usage Reference
 
-If you strongly prefer full isolation:
-- Use Ubuntu 24.04 VM
-- Repeat the same app/service/Nginx steps inside VM
+With 2 GB RAM allocated:
 
-But for this app, LXC is usually simpler and lighter.
+| Component | Idle RAM | Peak RAM |
+|---|---|---|
+| Ubuntu OS | ~150 MB | — |
+| FastAPI (uvicorn) | ~80 MB | ~150 MB |
+| Next.js (runtime) | ~200 MB | ~400 MB |
+| `npm run build` (one-time) | — | ~700 MB |
+| **Total at rest** | **~430 MB** | — |
+
+Your existing containers (modoGusto + cloudflared) use ~21% of 16 GB combined, leaving plenty of headroom.
