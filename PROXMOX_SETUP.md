@@ -338,14 +338,90 @@ Default login accounts (created by seed script):
 
 ---
 
-## 12) Update / Redeploy
+## 12) Pulling Updates from GitHub (Production Workflow)
 
-When you push new code to GitHub:
+### Branch strategy
+
+| Branch | Purpose |
+|---|---|
+| `main` | Stable, production-ready code — **deploy this to the server** |
+| `feature/insights` | Active development — do NOT deploy until merged to main |
+
+When a feature branch is ready, merge it to `main` on GitHub (pull request or direct merge), then pull `main` on the server.
+
+---
+
+### Standard update — pull latest main and redeploy
+
+Run this on the server whenever `main` has new commits:
 
 ```bash
 sudo -u muni -H bash -lc '
 cd /opt/muni/app
-git pull origin feature/insights
+
+# Pull latest production code
+git fetch origin
+git checkout main
+git pull origin main
+
+# Backend — install any new dependencies and run migrations
+cd backend
+source venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head
+
+# Frontend — install and rebuild
+cd ../frontend
+npm install
+npm run build
+'
+
+# Restart both services
+systemctl restart muni-backend muni-frontend
+
+# Confirm they came back up
+systemctl status muni-backend --no-pager
+systemctl status muni-frontend --no-pager
+```
+
+---
+
+### Check what version is currently deployed
+
+```bash
+cd /opt/muni/app && git log --oneline -5
+```
+
+This shows the last 5 commits on the server so you can confirm the right code is running.
+
+---
+
+### Check if there are new commits to pull
+
+```bash
+cd /opt/muni/app
+git fetch origin
+git log HEAD..origin/main --oneline
+```
+
+If it prints nothing, you are already up to date. If it lists commits, those are waiting to be pulled.
+
+---
+
+### One-liner deploy script (optional)
+
+Save this as `/usr/local/bin/muni-deploy` for convenience:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "==> Pulling latest main..."
+sudo -u muni -H bash -lc '
+cd /opt/muni/app
+git fetch origin
+git checkout main
+git pull origin main
 cd backend
 source venv/bin/activate
 pip install -r requirements.txt
@@ -355,9 +431,49 @@ npm install
 npm run build
 '
 
+echo "==> Restarting services..."
 systemctl restart muni-backend muni-frontend
+sleep 2
 systemctl status muni-backend --no-pager
 systemctl status muni-frontend --no-pager
+echo "==> Deploy complete."
+```
+
+```bash
+chmod +x /usr/local/bin/muni-deploy
+```
+
+Then updating the server is just:
+
+```bash
+muni-deploy
+```
+
+---
+
+### Rollback to a previous version
+
+If a new deployment breaks something:
+
+```bash
+# See recent commits
+sudo -u muni -H bash -lc 'cd /opt/muni/app && git log --oneline -10'
+
+# Roll back to a specific commit (replace abc1234 with the commit hash you want)
+sudo -u muni -H bash -lc '
+cd /opt/muni/app
+git checkout abc1234
+cd frontend
+npm run build
+'
+
+systemctl restart muni-backend muni-frontend
+```
+
+To get back to the latest after a rollback:
+
+```bash
+sudo -u muni -H bash -lc 'cd /opt/muni/app && git checkout main && git pull origin main'
 ```
 
 ---
