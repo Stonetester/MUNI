@@ -1,5 +1,5 @@
 # FinanceTrack — Claude Project Context
-_Last updated: 2026-03-18. See NEXT_PHASE_PLAN.md for the full next-phase build plan._
+_Last updated: 2026-03-18 (session 3). See NEXT_PHASE_PLAN.md for the full build plan._
 
 ---
 
@@ -104,7 +104,8 @@ _Used when building projections, profile defaults, loan trackers._
   - Payments tracked via "Student Loans" category transactions
 - **401k** (Fidelity):
   - Employee contribution: $380/paycheck
-  - Employer contribution: 6% of gross salary regardless of employee contribution ($291.25/paycheck)
+  - Employer Safe Harbor: 6% of gross salary = **$327.34/paycheck** (verified from March 2026 stub; $130,935 × 6% ÷ 24 = $327.34 exactly)
+  - Note: Safe Harbor IS the 6% employer contribution — not a separate line
   - Starting balance: $68,534.76
   - Fund allocations: to be entered by user in Financial Profile page (not yet built)
 - **IRA** (Schwab funds):
@@ -127,7 +128,7 @@ _See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
 ### A. Paystub PDF Parser
 - Upload paystub PDF (or image) → **pdfplumber** extracts all text (free, no API needed)
 - Regex patterns map text to structured fields (Paylocity format confirmed working from March 6 2026 stub)
-- Extracts: gross pay, regular/holiday/OT pay, all taxes (FITW/MD/MD-CAL1/SS/MED), all deductions (401k $380, dental $1.84, vision $0.39, life, AD&D, STD/LTD), **employer Safe Harbor 401k** ($327.34/period — separate from the 6% match), net pay, all YTD figures
+- Extracts: gross pay, regular/holiday/OT pay, all taxes (FITW/MD/MD-CAL1/SS/MED), all deductions (401k $380, dental $1.84, vision $0.39, GTL/VLIFE life ins, AD&D, ER STD/LTD), employer Safe Harbor 401k ($327.34/period = the 6%), net pay, all YTD figures
 - User reviews pre-filled form → confirms → saves to DB
 - `/paystubs` page: upload, timeline, summary stats (YTD income, effective tax rate, YTD 401k employee + employer)
 - **No API key required** — pdfplumber is free and local
@@ -156,6 +157,7 @@ _See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
 ### New models needed (Phase 4):
 - `Paystub` — all paystub fields (~30 columns, Paylocity-tuned)
 - `InvestmentStatement` — quarterly statement data per account
+- `CompensationEvent` — raises, bonuses, awards, stipends
 
 ### New dependencies (Phase 4):
 - `pdfplumber>=0.10.0` — paystub + statement PDF parsing (free, no API key)
@@ -163,8 +165,9 @@ _See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
 
 ### Build order for Phase 4:
 1. Joint HYSA (DB migration + API + UI badge) — no new dependencies
-2. Paystub parser (pip install pdfplumber first)
-3. Historical statement entry (manual form, no dependencies)
+2. Compensation History (raises/bonuses/awards — pure CRUD, no new dependencies)
+3. Paystub parser (`pip install pdfplumber` first; test with `March6PayStub.pdf`)
+4. Historical statement entry (manual form, no dependencies)
 
 ---
 
