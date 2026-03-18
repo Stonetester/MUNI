@@ -28,7 +28,7 @@ from app.routers import (
     budget,
     alerts,
 )
-from app.routers import google_sheets, financial_profile, paystubs
+from app.routers import google_sheets, financial_profile, paystubs, joint
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,7 @@ app.include_router(alerts.router, prefix=PREFIX)
 app.include_router(google_sheets.router, prefix=PREFIX)
 app.include_router(financial_profile.router, prefix=PREFIX)
 app.include_router(paystubs.router, prefix=PREFIX)
+app.include_router(joint.router, prefix=PREFIX)
 
 # Serve Next.js static export if it exists
 FRONTEND_BUILD = os.path.join(

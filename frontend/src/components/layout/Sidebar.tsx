@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   Layers,
+  RefreshCw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { APP_VERSION, APP_NAME } from '@/lib/version'
@@ -35,6 +36,7 @@ const primaryItems = [
   { label: 'Accounts', icon: Wallet, href: '/accounts' },
   { label: 'Forecast', icon: TrendingUp, href: '/forecast' },
   { label: 'Life Events', icon: Calendar, href: '/events' },
+  { label: 'Recurring', icon: RefreshCw, href: '/recurring' },
   { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
   { label: 'Paystubs', icon: FileText, href: '/paystubs' },
   { label: 'Settings', icon: Settings, href: '/settings' },
@@ -80,7 +82,10 @@ export default function Sidebar() {
         <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
           <Layers size={15} className="text-white" />
         </div>
-        <span className="font-bold text-text-primary text-base tracking-wide">{APP_NAME}</span>
+        <div className="flex flex-col">
+          <span className="font-bold text-text-primary text-base tracking-wide">{APP_NAME}</span>
+          <span className="text-[10px] text-text-secondary italic leading-none mt-0.5">track dat shit</span>
+        </div>
       </div>
 
       {/* Nav */}

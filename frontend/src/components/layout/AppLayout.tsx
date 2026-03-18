@@ -8,6 +8,7 @@ import Sidebar from './Sidebar'
 import MobileNavBar from './MobileNavBar'
 import ProfileSwitcher from './ProfileSwitcher'
 import { cn } from '@/lib/utils'
+import { useViewMode } from '@/lib/viewMode'
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -46,6 +47,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [mounted, setMounted] = useState(false)
+  const { mode, toggle } = useViewMode()
 
   useEffect(() => {
     setMounted(true)
@@ -89,6 +91,18 @@ export default function AppLayout({ children }: AppLayoutProps) {
         <header className="sticky top-0 z-30 h-14 bg-background/80 backdrop-blur border-b border-[#2d3748] flex items-center px-4 md:px-6 justify-between">
           <h1 className="text-base font-semibold text-text-primary">{title}</h1>
           <div className="flex items-center gap-2">
+            <button
+              onClick={toggle}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors border',
+                mode === 'joint'
+                  ? 'bg-primary/20 border-primary/40 text-primary'
+                  : 'bg-surface border-[#2d3748] text-text-secondary hover:text-text-primary'
+              )}
+              title={mode === 'joint' ? 'Switch to solo view' : 'Switch to joint household view'}
+            >
+              {mode === 'joint' ? '👥 Joint' : '👤 Solo'}
+            </button>
             <ProfileSwitcher currentUser={username} />
           <div className="relative">
             <button

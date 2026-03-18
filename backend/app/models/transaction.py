@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Date, ForeignKey
 from sqlalchemy.orm import relationship
@@ -30,3 +31,11 @@ class Transaction(Base):
     account = relationship("Account", back_populates="transactions")
     category = relationship("Category", back_populates="transactions")
     scenario = relationship("Scenario", back_populates="transactions")
+
+    @property
+    def category_name(self) -> "Optional[str]":
+        return self.category.name if self.category else None
+
+    @property
+    def account_name(self) -> "Optional[str]":
+        return self.account.name if self.account else None

@@ -48,11 +48,10 @@ function renderCustomLabel({
 }) {
   if (mode === 'hover') return null
   const RADIAN = Math.PI / 180
-  const radius = outerRadius + 20
+  const radius = outerRadius + 24
   const x = cx + radius * Math.cos(-midAngle * RADIAN)
   const y = cy + radius * Math.sin(-midAngle * RADIAN)
   const pct = ((value / total) * 100).toFixed(0)
-  if (parseFloat(pct) < 4) return null // skip tiny slices
   const label = mode === 'amount' ? formatCurrency(value) : `${pct}%`
   return (
     <text x={x} y={y} fill="#94a3b8" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" fontSize={10}>

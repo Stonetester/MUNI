@@ -21,11 +21,19 @@ const MONTH_OPTIONS = [
   { value: 60, label: '60 months' },
 ]
 
+const PAST_OPTIONS = [
+  { value: 0, label: 'From now' },
+  { value: 3, label: '3mo history' },
+  { value: 6, label: '6mo history' },
+  { value: 12, label: '12mo history' },
+]
+
 export default function ForecastPage() {
   const [data, setData] = useState<ForecastResponse | null>(null)
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [scenarioId, setScenarioId] = useState<number | undefined>()
   const [months, setMonths] = useState(12)
+  const [pastMonths, setPastMonths] = useState(0)
   const [showEvents, setShowEvents] = useState(true)
   const [loading, setLoading] = useState(true)
 
@@ -33,7 +41,7 @@ export default function ForecastPage() {
     setLoading(true)
     try {
       const [forecastData, scenarioList] = await Promise.all([
-        getForecast(scenarioId, months),
+        getForecast(scenarioId, months, pastMonths),
         getScenarios(),
       ])
       setData(forecastData)
@@ -43,7 +51,7 @@ export default function ForecastPage() {
     } finally {
       setLoading(false)
     }
-  }, [scenarioId, months])
+  }, [scenarioId, months, pastMonths])
 
   useEffect(() => { load() }, [load])
 
@@ -61,6 +69,21 @@ export default function ForecastPage() {
             onChange={(e) => setScenarioId(e.target.value ? Number(e.target.value) : undefined)}
             className="w-48"
           />
+          <div className="flex items-center gap-2 bg-surface border border-[#2d3748] rounded-xl p-1">
+            {PAST_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setPastMonths(opt.value)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  pastMonths === opt.value
+                    ? 'bg-primary text-white'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <div className="flex items-center gap-2 bg-surface border border-[#2d3748] rounded-xl p-1">
             {MONTH_OPTIONS.map((opt) => (
               <button

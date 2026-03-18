@@ -216,10 +216,11 @@ export async function cloneScenario(id: number, name: string): Promise<Scenario>
 }
 
 // Forecast
-export async function getForecast(scenarioId?: number, months?: number): Promise<ForecastResponse> {
+export async function getForecast(scenarioId?: number, months?: number, pastMonths?: number): Promise<ForecastResponse> {
   const params = new URLSearchParams()
   if (scenarioId) params.append('scenario_id', String(scenarioId))
   if (months) params.append('months', String(months))
+  if (pastMonths) params.append('past_months', String(pastMonths))
   const res: AxiosResponse<ForecastResponse> = await api.get(`/forecast?${params.toString()}`)
   return res.data
 }
@@ -346,6 +347,36 @@ export async function updateCompensationEvent(id: number, data: Partial<Compensa
 
 export async function deleteCompensationEvent(id: number): Promise<void> {
   await api.delete(`/financial-profile/compensation/${id}`)
+}
+
+// Joint household view
+export async function getJointSummary(): Promise<{
+  net_worth: number
+  total_assets: number
+  total_liabilities: number
+  this_month_income: number
+  this_month_spending: number
+}> {
+  const res = await api.get('/joint/summary')
+  return res.data
+}
+
+export async function getJointAccounts(): Promise<Array<{
+  id: number
+  name: string
+  account_type: string
+  balance: number
+  institution?: string
+  owner: string
+  is_active: boolean
+}>> {
+  const res = await api.get('/joint/accounts')
+  return res.data
+}
+
+export async function getJointTransactions(limit = 50, offset = 0): Promise<PaginatedTransactions> {
+  const res = await api.get(`/joint/transactions?limit=${limit}&offset=${offset}`)
+  return res.data as PaginatedTransactions
 }
 
 // Paystubs

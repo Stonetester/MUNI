@@ -319,18 +319,21 @@ export default function CalendarPage() {
         )}
 
         {/* Legend */}
-        {!loading && categories.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {categories
-              .filter((c) => c.kind === 'expense' && !c.parent_id)
-              .map((c) => (
+        {!loading && categories.length > 0 && (() => {
+          const usedNames = new Set(transactions.map(t => t.category_name).filter(Boolean))
+          const legendCats = categories.filter(c => usedNames.has(c.name))
+          if (legendCats.length === 0) return null
+          return (
+            <div className="flex flex-wrap gap-2">
+              {legendCats.map((c) => (
                 <div key={c.id} className="flex items-center gap-1.5 text-xs text-text-secondary">
                   <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c.color }} />
                   {c.name}
                 </div>
               ))}
-          </div>
-        )}
+            </div>
+          )
+        })()}
       </div>
 
       {selectedDay && (

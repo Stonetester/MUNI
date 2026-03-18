@@ -39,6 +39,8 @@ class TransactionOut(TransactionBase):
     user_id: int
     import_source: Optional[str] = None
     created_at: datetime
+    category_name: Optional[str] = None
+    account_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
