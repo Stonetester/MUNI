@@ -1,8 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import { ForecastPoint } from '@/lib/types'
 import { formatCurrency, formatMonth } from '@/lib/utils'
 import Card from '@/components/ui/Card'
+import MonthDetailModal from '@/components/ui/MonthDetailModal'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -38,6 +40,7 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
 }
 
 export default function NetWorthForecastChart({ points, showEvents = true }: NetWorthForecastChartProps) {
+  const [selectedPoint, setSelectedPoint] = useState<ForecastPoint | null>(null)
   const chartData = points.map((p) => ({
     month: formatMonth(p.month),
     net_worth: p.net_worth,
@@ -52,11 +55,20 @@ export default function NetWorthForecastChart({ points, showEvents = true }: Net
   const maxVal = Math.max(...allValues)
   const padding = (maxVal - minVal) * 0.1 || 10000
 
+  function handleClick(data: { activeLabel?: string }) {
+    const label = data?.activeLabel
+    if (!label) return
+    const point = points.find((p) => formatMonth(p.month) === label)
+    if (point) setSelectedPoint(point)
+  }
+
   return (
+    <>
     <Card title="Net Worth Projection">
+      <p className="text-xs text-muted mb-2">Click any month for details</p>
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData}>
+          <AreaChart data={chartData} onClick={handleClick} style={{ cursor: 'pointer' }}>
             <defs>
               <linearGradient id="nwGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
@@ -132,5 +144,7 @@ export default function NetWorthForecastChart({ points, showEvents = true }: Net
         )}
       </div>
     </Card>
+    {selectedPoint && <MonthDetailModal point={selectedPoint} onClose={() => setSelectedPoint(null)} />}
+    </>
   )
 }

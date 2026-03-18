@@ -6,6 +6,7 @@ import { LogOut, User, ChevronDown } from 'lucide-react'
 import { isAuthenticated, getUser, logout } from '@/lib/auth'
 import Sidebar from './Sidebar'
 import MobileNavBar from './MobileNavBar'
+import ProfileSwitcher from './ProfileSwitcher'
 import { cn } from '@/lib/utils'
 
 const pageTitles: Record<string, string> = {
@@ -17,6 +18,8 @@ const pageTitles: Record<string, string> = {
   '/events': 'Life Events',
   '/scenarios': 'What-If Scenarios',
   '/alerts': 'Alerts',
+  '/calendar': 'Spending Calendar',
+  '/insights': 'Spending Insights',
 }
 
 // Toast notification system
@@ -85,6 +88,8 @@ export default function AppLayout({ children }: AppLayoutProps) {
         {/* Top bar */}
         <header className="sticky top-0 z-30 h-14 bg-background/80 backdrop-blur border-b border-[#2d3748] flex items-center px-4 md:px-6 justify-between">
           <h1 className="text-base font-semibold text-text-primary">{title}</h1>
+          <div className="flex items-center gap-2">
+            <ProfileSwitcher currentUser={username} />
           <div className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
@@ -115,6 +120,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 </div>
               </>
             )}
+          </div>
           </div>
         </header>
 

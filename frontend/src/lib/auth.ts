@@ -2,6 +2,8 @@
 
 const TOKEN_KEY = 'finance_token'
 const USER_KEY = 'finance_user'
+const ALT_TOKEN_KEY = 'finance_token_alt'
+const ALT_USER_KEY = 'finance_user_alt'
 
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null
@@ -32,6 +34,42 @@ export function logout(): void {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
   window.location.href = '/login'
+}
+
+export function getAltToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(ALT_TOKEN_KEY)
+}
+
+export function getAltUser(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(ALT_USER_KEY)
+}
+
+export function storeAltProfile(token: string, username: string): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(ALT_TOKEN_KEY, token)
+  localStorage.setItem(ALT_USER_KEY, username)
+}
+
+export function clearAltProfile(): void {
+  if (typeof window === 'undefined') return
+  localStorage.removeItem(ALT_TOKEN_KEY)
+  localStorage.removeItem(ALT_USER_KEY)
+}
+
+export function switchProfiles(): void {
+  if (typeof window === 'undefined') return
+  const mainToken = localStorage.getItem(TOKEN_KEY)
+  const mainUser = localStorage.getItem(USER_KEY)
+  const altToken = localStorage.getItem(ALT_TOKEN_KEY)
+  const altUser = localStorage.getItem(ALT_USER_KEY)
+  if (!altToken || !altUser) return
+  localStorage.setItem(TOKEN_KEY, altToken)
+  localStorage.setItem(USER_KEY, altUser)
+  localStorage.setItem(ALT_TOKEN_KEY, mainToken || '')
+  localStorage.setItem(ALT_USER_KEY, mainUser || '')
+  window.location.reload()
 }
 
 export async function login(username: string, password: string): Promise<void> {

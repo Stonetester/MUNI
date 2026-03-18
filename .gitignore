@@ -37,6 +37,14 @@ Thumbs.db
 # Claude local settings
 .claude/settings.local.json
 
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Next.js build output
+frontend/.next/
+
 # Database files (personal data)
 backend/finance.db
 backend/finance.db-shm

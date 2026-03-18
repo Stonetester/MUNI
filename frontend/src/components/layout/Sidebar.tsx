@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useState } from 'react'
 import {
   LayoutDashboard,
   ArrowUpDown,
@@ -9,16 +10,22 @@ import {
   Target,
   TrendingUp,
   Calendar,
+  CalendarDays,
   FlaskConical,
   BellRing,
   Settings,
+  HelpCircle,
+  Lightbulb,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { APP_VERSION } from '@/lib/version'
+import TutorialModal from './TutorialModal'
 
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
   { label: 'Transactions', icon: ArrowUpDown, href: '/transactions' },
+  { label: 'Calendar', icon: CalendarDays, href: '/calendar' },
+  { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Accounts', icon: Wallet, href: '/accounts' },
   { label: 'Budget', icon: Target, href: '/budget' },
   { label: 'Forecast', icon: TrendingUp, href: '/forecast' },
@@ -30,6 +37,7 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const [showTutorial, setShowTutorial] = useState(false)
 
   return (
     <aside className="hidden md:flex flex-col w-[220px] min-h-screen bg-surface border-r border-[#2d3748] fixed left-0 top-0 z-40">
@@ -65,9 +73,18 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-[#2d3748]">
-        <p className="text-xs text-muted text-center">FinanceTrack v{APP_VERSION}</p>
+      <div className="p-4 border-t border-[#2d3748] flex items-center justify-between">
+        <p className="text-xs text-muted">FinanceTrack v{APP_VERSION}</p>
+        <button
+          onClick={() => setShowTutorial(true)}
+          title="How to use FinanceTrack"
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-text-secondary hover:text-primary hover:bg-surface-2 transition-colors"
+        >
+          <HelpCircle size={16} />
+        </button>
       </div>
+
+      {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
     </aside>
   )
 }

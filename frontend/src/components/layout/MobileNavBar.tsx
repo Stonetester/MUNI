@@ -11,12 +11,16 @@ import {
   MoreHorizontal,
   Target,
   Calendar,
+  CalendarDays,
   FlaskConical,
   BellRing,
   Settings,
   X,
+  HelpCircle,
+  Lightbulb,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import TutorialModal from './TutorialModal'
 
 const mainItems = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
@@ -26,6 +30,8 @@ const mainItems = [
 ]
 
 const moreItems = [
+  { label: 'Calendar', icon: CalendarDays, href: '/calendar' },
+  { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },
   { label: 'Life Events', icon: Calendar, href: '/events' },
   { label: 'What-If', icon: FlaskConical, href: '/scenarios' },
@@ -36,6 +42,7 @@ const moreItems = [
 export default function MobileNavBar() {
   const pathname = usePathname()
   const [showMore, setShowMore] = useState(false)
+  const [showTutorial, setShowTutorial] = useState(false)
 
   const isMoreActive = moreItems.some((i) => pathname === i.href || pathname.startsWith(i.href + '/'))
 
@@ -48,9 +55,17 @@ export default function MobileNavBar() {
           <div className="absolute bottom-16 left-0 right-0 bg-surface border-t border-[#2d3748] rounded-t-2xl p-4 pb-safe">
             <div className="flex items-center justify-between mb-4">
               <span className="text-sm font-semibold text-text-secondary">More</span>
-              <button onClick={() => setShowMore(false)} className="p-1 text-text-secondary">
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setShowMore(false); setShowTutorial(true) }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-text-secondary hover:text-primary hover:bg-surface-2 transition-colors"
+                >
+                  <HelpCircle size={14} /> Tutorial
+                </button>
+                <button onClick={() => setShowMore(false)} className="p-1 text-text-secondary">
+                  <X size={18} />
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
               {moreItems.map((item) => {
@@ -77,6 +92,8 @@ export default function MobileNavBar() {
           </div>
         </div>
       )}
+
+      {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
 
       {/* Bottom Nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface border-t border-[#2d3748] pb-safe">
