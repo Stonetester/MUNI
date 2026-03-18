@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import AppLayout from '@/components/layout/AppLayout'
-import { getDashboard } from '@/lib/api'
-import { DashboardData } from '@/lib/types'
+import { getAlerts, getDashboard } from '@/lib/api'
+import { AlertItem, DashboardData } from '@/lib/types'
 import { formatCurrency } from '@/lib/utils'
 import Card from '@/components/ui/Card'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -14,6 +14,7 @@ import SpendingByCategoryChart from '@/components/dashboard/SpendingByCategoryCh
 import ForecastPreviewChart from '@/components/dashboard/ForecastPreviewChart'
 import UpcomingEventsCard from '@/components/dashboard/UpcomingEventsCard'
 import RecentTransactions from '@/components/dashboard/RecentTransactions'
+import AlertsCard from '@/components/dashboard/AlertsCard'
 import { TrendingUp, TrendingDown, DollarSign, CreditCard } from 'lucide-react'
 
 function QuickStat({
@@ -44,12 +45,14 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [alerts, setAlerts] = useState<AlertItem[]>([])
 
   useEffect(() => {
     async function load() {
       try {
-        const d = await getDashboard()
+        const [d, a] = await Promise.all([getDashboard(), getAlerts()])
         setData(d)
+        setAlerts(a)
       } catch (e) {
         setError('Failed to load dashboard data. Is the API running?')
       } finally {
@@ -109,9 +112,10 @@ export default function DashboardPage() {
         </div>
 
         {/* Forecast + Events */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <ForecastPreviewChart forecastPreview={data.forecast_preview} />
           <UpcomingEventsCard events={data.upcoming_events} />
+          <AlertsCard alerts={alerts} />
         </div>
 
         {/* Recent Transactions */}

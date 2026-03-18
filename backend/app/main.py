@@ -24,6 +24,7 @@ from app.routers import (
     import_data,
     dashboard,
     budget,
+    alerts,
 )
 
 
@@ -65,6 +66,7 @@ app.include_router(forecast.router, prefix=PREFIX)
 app.include_router(import_data.router, prefix=PREFIX)
 app.include_router(dashboard.router, prefix=PREFIX)
 app.include_router(budget.router, prefix=PREFIX)
+app.include_router(alerts.router, prefix=PREFIX)
 
 # Serve Next.js static export if it exists
 FRONTEND_BUILD = os.path.join(

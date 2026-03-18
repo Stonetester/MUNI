@@ -174,3 +174,17 @@ export interface BudgetSummary {
   remaining: number
   percentage: number
 }
+
+
+export type AlertType = 'budget' | 'event'
+export type AlertSeverity = 'critical' | 'warning' | 'info'
+
+export interface AlertItem {
+  type: AlertType
+  severity: AlertSeverity
+  title: string
+  message: string
+  amount?: number
+  due_date?: string
+  meta: Record<string, unknown>
+}

@@ -12,6 +12,7 @@ import {
   Target,
   Calendar,
   FlaskConical,
+  BellRing,
   Settings,
   X,
 } from 'lucide-react'
@@ -28,6 +29,7 @@ const moreItems = [
   { label: 'Budget', icon: Target, href: '/budget' },
   { label: 'Life Events', icon: Calendar, href: '/events' },
   { label: 'What-If', icon: FlaskConical, href: '/scenarios' },
+  { label: 'Alerts', icon: BellRing, href: '/alerts' },
   { label: 'Settings', icon: Settings, href: '/settings' },
 ]
 
