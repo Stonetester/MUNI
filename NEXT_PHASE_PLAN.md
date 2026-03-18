@@ -100,7 +100,7 @@ One page per user. Each section has a **visibility toggle** — hide sections fo
 #### 401(k) (hideable)
 - Employee contribution per paycheck: `$380`
 - Employer contribution: `6% of salary regardless of employee contribution`
-  - Keaton: 6% × $116,500 ÷ 24 = **$291.25/paycheck** employer contribution
+  - Keaton: 6% × $130,935 ÷ 24 = **$327.34/paycheck** employer Safe Harbor contribution (verified from March 2026 stub — previous $291.25 estimate was based on stale $116,500 salary)
 - Fund allocations: enter ticker, fund name, current value, and % weight
   - Updatable anytime (you check your statement quarterly and update)
 - Projects balance using each fund's historical return rate

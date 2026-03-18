@@ -97,7 +97,7 @@ _Last updated: 2026-03-18. See NEXT_PHASE_PLAN.md for the full next-phase build 
 ## User Financial Data (Keaton)
 _Used when building projections, profile defaults, loan trackers._
 
-- **Salary**: $116,500/yr gross; net ~$3,037.35/paycheck; semi-monthly (24 pay periods/yr)
+- **Salary**: ~$130,935/yr gross ($5,455.63/period × 24 — verified from March 2026 paystub); net ~$3,503.78/paycheck; semi-monthly (24 pay periods/yr). Old figure $116,500 was stale.
 - **Student Loans** (two loans, remaining balances as of 2026-03-18):
   - Loan 1: **$343.35** @ 4.80% — nearly paid off
   - Loan 2: **$1,921.40** @ 4.28% — nearly paid off
