@@ -152,7 +152,7 @@ export default function CalendarPage() {
     setLoading(true)
     try {
       const [txns, cats] = await Promise.all([
-        getTransactions({ from_date: fromDate, to_date: toDate, limit: 1000 }),
+        getTransactions({ from_date: fromDate, to_date: toDate, limit: 2000 }),
         getCategories(),
       ])
       setTransactions(txns.items)

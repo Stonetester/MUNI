@@ -1,11 +1,15 @@
 'use client'
 
-import { Transaction, Account, Category } from '@/lib/types'
+import { useState } from 'react'
+import { Transaction } from '@/lib/types'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { deleteTransaction } from '@/lib/api'
-import { Edit2, Trash2, CheckCircle2 } from 'lucide-react'
+import { Edit2, Trash2, CheckCircle2, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
+
+type SortKey = 'date' | 'description' | 'category' | 'amount'
+type SortDir = 'asc' | 'desc'
 
 interface TransactionListProps {
   transactions: Transaction[]
@@ -13,7 +17,33 @@ interface TransactionListProps {
   onDeleted: () => void
 }
 
+function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; sortDir: SortDir }) {
+  if (col !== sortKey) return <ChevronsUpDown size={12} className="opacity-30" />
+  return sortDir === 'asc' ? <ChevronUp size={12} className="text-primary" /> : <ChevronDown size={12} className="text-primary" />
+}
+
 export default function TransactionList({ transactions, onEdit, onDeleted }: TransactionListProps) {
+  const [sortKey, setSortKey] = useState<SortKey>('date')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  const handleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir(key === 'amount' ? 'asc' : 'asc')
+    }
+  }
+
+  const sorted = [...transactions].sort((a, b) => {
+    let cmp = 0
+    if (sortKey === 'date') cmp = a.date.localeCompare(b.date)
+    else if (sortKey === 'description') cmp = (a.merchant || a.description).localeCompare(b.merchant || b.description)
+    else if (sortKey === 'category') cmp = (a.category_name || '').localeCompare(b.category_name || '')
+    else if (sortKey === 'amount') cmp = a.amount - b.amount
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+
   const handleDelete = async (id: number) => {
     if (!window.confirm('Delete this transaction?')) return
     try {
@@ -34,6 +64,21 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
     )
   }
 
+  const ColHeader = ({ col, label, align = 'left' }: { col: SortKey; label: string; align?: 'left' | 'right' }) => (
+    <th
+      className={cn(
+        'py-3 px-3 text-text-secondary font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-text-primary transition-colors group',
+        align === 'right' ? 'text-right' : 'text-left'
+      )}
+      onClick={() => handleSort(col)}
+    >
+      <span className="flex items-center gap-1.5" style={{ justifyContent: align === 'right' ? 'flex-end' : 'flex-start' }}>
+        {label}
+        <SortIcon col={col} sortKey={sortKey} sortDir={sortDir} />
+      </span>
+    </th>
+  )
+
   return (
     <>
       {/* Desktop table */}
@@ -41,16 +86,16 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[#2d3748]">
-              <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs uppercase tracking-wider">Date</th>
-              <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs uppercase tracking-wider">Description</th>
-              <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs uppercase tracking-wider">Category</th>
+              <ColHeader col="date" label="Date" />
+              <ColHeader col="description" label="Description" />
+              <ColHeader col="category" label="Category" />
               <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs uppercase tracking-wider">Account</th>
-              <th className="text-right py-3 px-3 text-text-secondary font-medium text-xs uppercase tracking-wider">Amount</th>
-              <th className="py-3 px-3"></th>
+              <ColHeader col="amount" label="Amount" align="right" />
+              <th className="py-3 px-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#2d3748]">
-            {transactions.map((tx) => (
+            {sorted.map((tx) => (
               <tr key={tx.id} className="hover:bg-surface-2 transition-colors group">
                 <td className="py-3 px-3 text-text-secondary text-xs whitespace-nowrap">{formatDate(tx.date)}</td>
                 <td className="py-3 px-3">
@@ -73,16 +118,10 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
                 </td>
                 <td className="py-3 px-3">
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => onEdit(tx)}
-                      className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors"
-                    >
+                    <button onClick={() => onEdit(tx)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors">
                       <Edit2 size={14} />
                     </button>
-                    <button
-                      onClick={() => handleDelete(tx.id)}
-                      className="p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-colors"
-                    >
+                    <button onClick={() => handleDelete(tx.id)} className="p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-colors">
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -95,7 +134,7 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
 
       {/* Mobile cards */}
       <div className="md:hidden flex flex-col divide-y divide-[#2d3748]">
-        {transactions.map((tx) => (
+        {sorted.map((tx) => (
           <div key={tx.id} className="py-3 flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 mb-0.5">
@@ -116,10 +155,7 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
               <span className={cn('text-sm font-semibold', tx.amount >= 0 ? 'text-primary' : 'text-danger')}>
                 {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
               </span>
-              <button
-                onClick={() => onEdit(tx)}
-                className="p-1.5 rounded-lg text-text-secondary hover:text-primary"
-              >
+              <button onClick={() => onEdit(tx)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary">
                 <Edit2 size={14} />
               </button>
             </div>

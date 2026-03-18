@@ -19,6 +19,7 @@ import {
   createRecurringRule,
   updateRecurringRule,
   deleteRecurringRule,
+  getRecurringSuggestions,
 } from '@/lib/api'
 import {
   Category,
@@ -27,6 +28,17 @@ import {
   Frequency,
   BudgetSummary,
 } from '@/lib/types'
+
+interface RecurringSuggestion {
+  description: string
+  amount: number
+  frequency: string
+  occurrences: number
+  last_date: string
+  category_id?: number
+  account_id?: number
+  median_gap_days: number
+}
 import {
   formatCurrency,
   getCurrentMonth,
@@ -34,7 +46,7 @@ import {
   clampPercentage,
   frequencyLabel,
 } from '@/lib/utils'
-import { Plus, Edit2, Trash2, Target, RefreshCw } from 'lucide-react'
+import { Plus, Edit2, Trash2, Target, RefreshCw, Sparkles, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // ---- Category Form ----
@@ -227,6 +239,10 @@ export default function BudgetPage() {
   const [editCat, setEditCat] = useState<Category | undefined>()
   const [showRuleForm, setShowRuleForm] = useState(false)
   const [editRule, setEditRule] = useState<RecurringRule | undefined>()
+  const [suggestions, setSuggestions] = useState<RecurringSuggestion[]>([])
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set())
+  const [confirmingRule, setConfirmingRule] = useState<RecurringSuggestion | null>(null)
+  const [suggestionStartDate, setSuggestionStartDate] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -246,10 +262,47 @@ export default function BudgetPage() {
     }
   }, [month])
 
+  const loadSuggestions = useCallback(async () => {
+    try {
+      const s = await getRecurringSuggestions()
+      setSuggestions(s)
+    } catch {
+      // ignore — suggestions are optional
+    }
+  }, [])
+
   useEffect(() => { load() }, [load])
+  useEffect(() => { loadSuggestions() }, [loadSuggestions])
 
   const handleCatSuccess = () => { setShowCatForm(false); setEditCat(undefined); load() }
   const handleRuleSuccess = () => { setShowRuleForm(false); setEditRule(undefined); load() }
+
+  const handleConfirmSuggestion = async (s: RecurringSuggestion) => {
+    if (!suggestionStartDate) return
+    try {
+      await createRecurringRule({
+        name: s.description,
+        amount: -Math.abs(s.amount),
+        frequency: s.frequency as Frequency,
+        start_date: suggestionStartDate,
+        category_id: s.category_id,
+        is_active: true,
+      })
+      setDismissedSuggestions(prev => new Set(prev).add(s.description))
+      setConfirmingRule(null)
+      setSuggestionStartDate('')
+      load()
+    } catch {
+      alert('Failed to create rule.')
+    }
+  }
+
+  const dismissSuggestion = (s: RecurringSuggestion) => {
+    setDismissedSuggestions(prev => new Set(prev).add(s.description))
+    if (confirmingRule?.description === s.description) setConfirmingRule(null)
+  }
+
+  const visibleSuggestions = suggestions.filter(s => !dismissedSuggestions.has(s.description))
 
   const handleDeleteCat = async (cat: Category) => {
     if (!window.confirm(`Delete category "${cat.name}"?`)) return
@@ -433,7 +486,81 @@ export default function BudgetPage() {
                   </Card>
                 )}
 
-                {rules.length === 0 && (
+                {/* Recurring Suggestions */}
+                {visibleSuggestions.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                      <Sparkles size={15} className="text-primary" />
+                      Detected recurring transactions
+                      <span className="text-xs font-normal text-text-secondary">— based on your last 90 days</span>
+                    </div>
+                    {visibleSuggestions.map((s) => {
+                      const isConfirming = confirmingRule?.description === s.description
+                      return (
+                        <div
+                          key={s.description}
+                          className="bg-surface border border-primary/20 rounded-xl p-4 flex flex-col gap-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-text-primary truncate">{s.description}</p>
+                              <p className="text-xs text-text-secondary mt-0.5">
+                                {s.occurrences}x in last 90 days · every ~{s.median_gap_days} days ·{' '}
+                                <span className="capitalize">{s.frequency}</span> · last {s.last_date}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className="text-sm font-semibold text-danger">
+                                -{formatCurrency(Math.abs(s.amount))}
+                              </span>
+                              <button
+                                onClick={() => dismissSuggestion(s)}
+                                className="p-1 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-colors"
+                                title="Dismiss"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {!isConfirming ? (
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs text-text-secondary flex-1">Is this a recurring expense?</p>
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={() => {
+                                  setConfirmingRule(s)
+                                  setSuggestionStartDate(s.last_date)
+                                }}
+                              >
+                                <Check size={13} /> Yes, add rule
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs text-text-secondary whitespace-nowrap">Start date:</label>
+                              <input
+                                type="date"
+                                value={suggestionStartDate}
+                                onChange={(e) => setSuggestionStartDate(e.target.value)}
+                                className="flex-1 text-xs bg-surface-2 border border-[#2d3748] rounded-lg px-2 py-1.5 text-text-primary focus:outline-none focus:border-primary"
+                              />
+                              <Button variant="primary" size="sm" onClick={() => handleConfirmSuggestion(s)}>
+                                Confirm
+                              </Button>
+                              <Button variant="secondary" size="sm" onClick={() => setConfirmingRule(null)}>
+                                Cancel
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {rules.length === 0 && visibleSuggestions.length === 0 && (
                   <div className="text-center py-16 text-text-secondary">
                     <RefreshCw size={48} className="mx-auto mb-3 opacity-30" />
                     <p className="font-medium">No recurring rules</p>

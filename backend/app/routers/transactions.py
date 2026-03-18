@@ -43,7 +43,7 @@ def list_transactions(
     to_date: Optional[date] = None,
     search: Optional[str] = None,
     scenario_id: Optional[int] = Query(default=None),
-    limit: int = Query(default=50, le=500),
+    limit: int = Query(default=50, le=2000),
     offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

@@ -126,6 +126,153 @@ def _is_summary_row(amount: Optional[float], all_amounts: List[float]) -> bool:
     return abs_amount > median * 10
 
 
+# Keyword → category name rules (case-insensitive substring match).
+# Listed from most-specific to least-specific; first match wins.
+AUTO_CATEGORY_RULES: List[tuple[str, str]] = [
+    # Income
+    ("payroll", "Paycheck"),
+    ("direct dep", "Paycheck"),
+    ("ach credit", "Paycheck"),
+    # Housing
+    ("rent", "Rent"),
+    ("mortgage", "Mortgage"),
+    ("hoa", "HOA"),
+    # Groceries
+    ("whole foods", "Groceries"),
+    ("trader joe", "Groceries"),
+    ("kroger", "Groceries"),
+    ("safeway", "Groceries"),
+    ("aldi", "Groceries"),
+    ("publix", "Groceries"),
+    ("wegmans", "Groceries"),
+    ("sprouts", "Groceries"),
+    ("market", "Groceries"),
+    ("grocery", "Groceries"),
+    # Dining
+    ("doordash", "Dining"),
+    ("uber eats", "Dining"),
+    ("grubhub", "Dining"),
+    ("instacart", "Dining"),
+    ("chipotle", "Dining"),
+    ("mcdonald", "Dining"),
+    ("starbucks", "Dining"),
+    ("chick-fil", "Dining"),
+    ("panera", "Dining"),
+    ("domino", "Dining"),
+    ("pizza", "Dining"),
+    ("restaurant", "Dining"),
+    ("cafe", "Dining"),
+    # Transportation
+    ("uber", "Transportation"),
+    ("lyft", "Transportation"),
+    ("gas station", "Transportation"),
+    ("shell", "Transportation"),
+    ("bp ", "Transportation"),
+    ("chevron", "Transportation"),
+    ("exxon", "Transportation"),
+    ("sunoco", "Transportation"),
+    ("speedway", "Transportation"),
+    ("wawa", "Transportation"),
+    ("parking", "Transportation"),
+    ("toll", "Transportation"),
+    ("metro", "Transportation"),
+    ("mta ", "Transportation"),
+    # Shopping
+    ("amazon", "Shopping"),
+    ("walmart", "Shopping"),
+    ("target", "Shopping"),
+    ("costco", "Shopping"),
+    ("best buy", "Shopping"),
+    ("apple.com", "Shopping"),
+    ("ebay", "Shopping"),
+    ("etsy", "Shopping"),
+    # Subscriptions / Entertainment
+    ("netflix", "Subscriptions"),
+    ("spotify", "Subscriptions"),
+    ("hulu", "Subscriptions"),
+    ("disney+", "Subscriptions"),
+    ("apple one", "Subscriptions"),
+    ("amazon prime", "Subscriptions"),
+    ("youtube premium", "Subscriptions"),
+    ("hbo", "Subscriptions"),
+    ("peacock", "Subscriptions"),
+    ("paramount", "Subscriptions"),
+    # Health / Medical
+    ("cvs", "Health"),
+    ("walgreens", "Health"),
+    ("pharmacy", "Health"),
+    ("doctor", "Health"),
+    ("dental", "Health"),
+    ("vision", "Health"),
+    ("hospital", "Health"),
+    ("medical", "Health"),
+    ("health ins", "Health"),
+    # Utilities
+    ("electric", "Utilities"),
+    ("water bill", "Utilities"),
+    ("gas bill", "Utilities"),
+    ("internet", "Utilities"),
+    ("comcast", "Utilities"),
+    ("verizon", "Utilities"),
+    ("at&t", "Utilities"),
+    ("t-mobile", "Utilities"),
+    ("phone", "Utilities"),
+    # Insurance
+    ("insurance", "Insurance"),
+    ("geico", "Insurance"),
+    ("state farm", "Insurance"),
+    ("allstate", "Insurance"),
+    # Student loans / Education
+    ("student loan", "Student Loans"),
+    ("sallie mae", "Student Loans"),
+    ("mohela", "Student Loans"),
+    ("navient", "Student Loans"),
+    ("nelnet", "Student Loans"),
+    ("tuition", "Education"),
+    # Investments / Savings
+    ("fidelity", "Investments"),
+    ("vanguard", "Investments"),
+    ("charles schwab", "Investments"),
+    ("robinhood", "Investments"),
+    ("coinbase", "Investments"),
+    ("betterment", "Investments"),
+    ("401k", "Investments"),
+    ("ira contrib", "Investments"),
+    # Travel
+    ("airbnb", "Travel"),
+    ("hotel", "Travel"),
+    ("marriott", "Travel"),
+    ("hilton", "Travel"),
+    ("expedia", "Travel"),
+    ("delta", "Travel"),
+    ("united air", "Travel"),
+    ("southwest", "Travel"),
+    ("american air", "Travel"),
+    ("airline", "Travel"),
+    # Personal Care
+    ("haircut", "Personal Care"),
+    ("salon", "Personal Care"),
+    ("spa", "Personal Care"),
+    ("barber", "Personal Care"),
+    # Transfers
+    ("zelle", "Transfer"),
+    ("venmo", "Transfer"),
+    ("paypal", "Transfer"),
+    ("cash app", "Transfer"),
+    ("transfer", "Transfer"),
+    ("wire", "Transfer"),
+]
+
+
+def _auto_categorize(description: str) -> Optional[str]:
+    """Return a category name for description based on keyword rules, or None."""
+    desc_lower = description.strip().lower()
+    for keyword, category_name in AUTO_CATEGORY_RULES:
+        if keyword in desc_lower:
+            return category_name
+    return None
+
+
 def _get_or_create_category(
     name: str,
     user: User,
@@ -233,13 +380,17 @@ def import_transactions(
                 else:
                     payment_method = "other"
 
-            # Category
+            # Category — use CSV column first, fall back to keyword auto-detection
             category_name = row.get("category", "")
             category: Optional[Category] = None
             if category_name and not (isinstance(category_name, float) and pd.isna(category_name)):
                 category = _get_or_create_category(
                     str(category_name).strip(), user, db, category_cache
                 )
+            elif description:
+                auto_name = _auto_categorize(description)
+                if auto_name:
+                    category = _get_or_create_category(auto_name, user, db, category_cache)
 
             # Duplicate check — same hash as Sheets sync; catches cross-source dupes
             h = _dedup_hash(txn_date, description, amount)

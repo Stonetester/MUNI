@@ -35,13 +35,13 @@ const mainItems = [
 const moreItems = [
   { label: 'Get Started', icon: PlusCircle, href: '/getting-started' },
   { label: 'Calendar', icon: CalendarDays, href: '/calendar' },
-  { label: 'Insights', icon: Lightbulb, href: '/insights' },
-  { label: 'Budget', icon: Target, href: '/budget' },
   { label: 'Life Events', icon: Calendar, href: '/events' },
-  { label: 'What-If', icon: FlaskConical, href: '/scenarios' },
-  { label: 'Alerts', icon: BellRing, href: '/alerts' },
   { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
   { label: 'Paystubs', icon: FileText, href: '/paystubs' },
+  { label: 'Insights', icon: Lightbulb, href: '/insights' },
+  { label: 'Budget', icon: Target, href: '/budget' },
+  { label: 'What-If', icon: FlaskConical, href: '/scenarios' },
+  { label: 'Alerts', icon: BellRing, href: '/alerts' },
   { label: 'Settings', icon: Settings, href: '/settings' },
 ]
 

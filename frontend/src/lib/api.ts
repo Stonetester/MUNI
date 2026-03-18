@@ -246,6 +246,21 @@ export async function getAlerts(month?: string, lookaheadDays = 30): Promise<Ale
   return res.data
 }
 
+// Recurring rule suggestions
+export async function getRecurringSuggestions(): Promise<Array<{
+  description: string
+  amount: number
+  frequency: string
+  occurrences: number
+  last_date: string
+  category_id?: number
+  account_id?: number
+  median_gap_days: number
+}>> {
+  const res = await api.get('/recurring/suggestions')
+  return res.data
+}
+
 // Google Sheets Sync
 export async function getSyncConfig(): Promise<SyncConfig> {
   const res: AxiosResponse<SyncConfig> = await api.get('/sync/google-sheets/config')
