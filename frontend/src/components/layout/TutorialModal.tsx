@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { X, ChevronLeft, ChevronRight, LayoutDashboard, ArrowUpDown, Wallet, Target, TrendingUp, Calendar, FlaskConical, BellRing, Settings, HelpCircle } from 'lucide-react'
+import Link from 'next/link'
+import { X, ChevronLeft, ChevronRight, LayoutDashboard, ArrowUpDown, Wallet, Target, TrendingUp, Calendar, FlaskConical, BellRing, Settings, HelpCircle, PlusCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const steps = [
@@ -14,10 +15,15 @@ const steps = [
       <div className="flex flex-col gap-3 text-sm text-text-secondary">
         <p>FinanceTrack is your personal finance command center. It tracks your spending, projects your future net worth, and helps you plan for big life events.</p>
         <p>This walkthrough covers every section of the app. Use the arrows to go step by step, or click any dot to jump to a section.</p>
-        <div className="mt-2 p-3 rounded-xl bg-surface-2 text-xs">
-          <span className="text-text-primary font-semibold">Log in with:</span>
-          <div className="mt-1">keaton / finance123 &nbsp;·&nbsp; katherine / finance123</div>
-          <div className="text-muted mt-1">Change your password in Settings after first login.</div>
+        <div className="mt-2 p-3 rounded-xl bg-surface-2 text-xs flex flex-col gap-2">
+          <span className="text-text-primary font-semibold">New here? Start with the setup guide:</span>
+          <Link
+            href="/getting-started"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium text-sm"
+          >
+            <PlusCircle size={14} /> Getting Started Guide →
+          </Link>
+          <span className="text-muted">Step-by-step: add accounts, import transactions, set up forecast.</span>
         </div>
       </div>
     ),

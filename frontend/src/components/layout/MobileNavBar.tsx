@@ -18,6 +18,7 @@ import {
   X,
   HelpCircle,
   Lightbulb,
+  PlusCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import TutorialModal from './TutorialModal'
@@ -30,6 +31,7 @@ const mainItems = [
 ]
 
 const moreItems = [
+  { label: 'Get Started', icon: PlusCircle, href: '/getting-started' },
   { label: 'Calendar', icon: CalendarDays, href: '/calendar' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },

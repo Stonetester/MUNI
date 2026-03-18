@@ -16,12 +16,14 @@ import {
   Settings,
   HelpCircle,
   Lightbulb,
+  PlusCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { APP_VERSION } from '@/lib/version'
 import TutorialModal from './TutorialModal'
 
 const navItems = [
+  { label: 'Get Started', icon: PlusCircle, href: '/getting-started' },
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
   { label: 'Transactions', icon: ArrowUpDown, href: '/transactions' },
   { label: 'Calendar', icon: CalendarDays, href: '/calendar' },
