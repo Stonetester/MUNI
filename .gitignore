@@ -36,3 +36,14 @@ Thumbs.db
 
 # Claude local settings
 .claude/settings.local.json
+
+# Database files (personal data)
+backend/finance.db
+backend/finance.db-shm
+backend/finance.db-wal
+
+# Personal financial data
+seed_transactions.json
+
+# Log files
+backend_log.txt

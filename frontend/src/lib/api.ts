@@ -79,7 +79,7 @@ export async function getAccountSnapshots(accountId: number): Promise<BalanceSna
 }
 
 export async function createSnapshot(data: Partial<BalanceSnapshot>): Promise<BalanceSnapshot> {
-  const res: AxiosResponse<BalanceSnapshot> = await api.post('/snapshots', data)
+  const res: AxiosResponse<BalanceSnapshot> = await api.post('/balance-snapshots', data)
   return res.data
 }
 

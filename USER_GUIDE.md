@@ -7,8 +7,8 @@ This guide explains **everything you need to use FinanceTrack day-to-day**: setu
 ## 1) What FinanceTrack Is
 
 FinanceTrack is a personal finance forecasting app for:
-- **Keaton**
-- **Katherine**
+- **User 1**
+- **User 2**
 
 It combines:
 - Historical transactions

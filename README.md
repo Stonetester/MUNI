@@ -70,12 +70,11 @@ Open **http://localhost:3000**
 
 ## What's Pre-Loaded
 
-Your real financial data from your spreadsheets:
-- **1,799 transactions** (Jul 2024 – Mar 2026) from Keaton's monthly spending
-- **Accounts**: Chase Checking, Everbank HYSA, 401(k), IRA, Student Loans
+Sample data seeded by `seed/seed_data.py`:
+- **Transactions** — historical spending across multiple categories
+- **Accounts**: Checking, HYSA, 401(k), IRA, Student Loans
 - **Recurring rules**: Paychecks, 401k contributions, student loans, subscriptions
-- **Life event**: Wedding (Jun 2025 – Oct 2026, $62,702 total)
-- **Katherine's** accounts and paycheck data
+- **Life event**: Wedding example (multi-month cost breakdown)
 
 ---
 
@@ -142,20 +141,6 @@ The forecasting engine uses:
 5. **Investment growth**: 401k/IRA with configurable return rate (default 7%)
 
 Scenarios let you clone the baseline and ask "what if I cut dining out by 50%?" — the comparison view shows the impact on savings and net worth.
-
----
-
-## Key Account Numbers (as of Mar 2026)
-
-| Account | Balance |
-|---------|---------|
-| Chase Checking | $1,169.87 |
-| Everbank HYSA | $12,526.74 |
-| Keaton 401(k) | $68,534.76 |
-| Keaton IRA | $3,516.68 |
-| Student Loans | ~$24,000 |
-
-> Update these in Accounts → Add Balance Snapshot to keep forecasts accurate.
 
 ---
 

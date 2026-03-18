@@ -130,7 +130,6 @@ export default function SettingsPage() {
               <Info size={14} />
               <span>FinanceTrack v0.1 — Self-hosted personal finance tool</span>
             </div>
-            <p className="text-xs">Login: keaton / finance123 &nbsp;·&nbsp; katherine / finance123</p>
           </div>
         </Card>
       </div>

@@ -281,7 +281,29 @@ certbot renew --dry-run
 
 ---
 
-## 11) Verify Deployment
+## 11) Tailscale Setup for Remote Access
+
+Tailscale provides secure remote access without opening ports 80/443 publicly.
+
+Install Tailscale on the LXC container:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up
+```
+
+After authenticating, access the app via the Tailscale IP (e.g. `http://100.x.y.z:3000` for frontend or `http://100.x.y.z:8000` for backend directly).
+
+**When using Tailscale only:**
+- No need to open ports 80/443 on your router
+- No public DNS or Let's Encrypt cert required
+- Access is restricted to devices on your Tailnet
+
+To expose via Nginx over Tailscale, bind Nginx to the Tailscale interface IP instead of a public IP.
+
+---
+
+## 12) Verify Deployment
 
 Run checks:
 
@@ -302,7 +324,7 @@ Immediately change passwords.
 
 ---
 
-## 12) Update / Redeploy Procedure
+## 13) Update / Redeploy Procedure
 
 Whenever you update code:
 
@@ -327,7 +349,7 @@ systemctl status financetrack-frontend --no-pager
 
 ---
 
-## 13) Backups (Important)
+## 14) Backups (Important)
 
 ### A) Proxmox snapshot/backup
 - Use scheduled `vzdump` for the LXC container.
@@ -356,7 +378,7 @@ Add cron (`crontab -e` as root):
 
 ---
 
-## 14) Security Hardening Checklist
+## 15) Security Hardening Checklist
 
 - Use strong root and app-user passwords
 - Disable password SSH login; use SSH keys only
@@ -379,7 +401,7 @@ ufw status
 
 ---
 
-## 15) Troubleshooting
+## 16) Troubleshooting
 
 ### Services won’t start
 ```bash
@@ -404,7 +426,7 @@ journalctl -u nginx -n 200 --no-pager
 
 ---
 
-## 16) Alternative: Ubuntu VM Instead of LXC
+## 17) Alternative: Ubuntu VM Instead of LXC
 
 If you strongly prefer full isolation:
 - Use Ubuntu 24.04 VM
