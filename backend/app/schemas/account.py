@@ -12,6 +12,8 @@ class AccountBase(BaseModel):
     is_active: bool = True
     forecast_enabled: bool = True
     notes: Optional[str] = None
+    is_joint: bool = False
+    joint_user_id: Optional[int] = None
 
 
 class AccountCreate(AccountBase):
@@ -26,6 +28,8 @@ class AccountUpdate(BaseModel):
     is_active: Optional[bool] = None
     forecast_enabled: Optional[bool] = None
     notes: Optional[str] = None
+    is_joint: Optional[bool] = None
+    joint_user_id: Optional[int] = None
 
 
 class AccountOut(AccountBase):

@@ -1,14 +1,16 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app.config import settings
-from app.database import Base, engine
+from app.database import Base, engine, SessionLocal
 
-# Import all models so that Base.metadata knows about them before create_all
+# Import all models so Base.metadata knows about them before create_all
 import app.models  # noqa: F401
 
 from app.routers import (
@@ -26,13 +28,54 @@ from app.routers import (
     budget,
     alerts,
 )
+from app.routers import google_sheets, financial_profile, paystubs
+
+logger = logging.getLogger(__name__)
+
+
+def _apply_migrations():
+    """Safely add new columns to existing tables (SQLite-compatible)."""
+    migrations = [
+        "ALTER TABLE accounts ADD COLUMN is_joint BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE accounts ADD COLUMN joint_user_id INTEGER REFERENCES users(id)",
+    ]
+    with engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                pass  # Column already exists — safe to ignore
+
+
+def _start_scheduler():
+    """Start APScheduler background job for Google Sheets auto-sync."""
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from app.services.google_sheets_sync import sync_all_users
+
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(sync_all_users, "interval", minutes=30, id="sheets_sync")
+        scheduler.start()
+        logger.info("Google Sheets auto-sync scheduler started (every 30 min)")
+        return scheduler
+    except ImportError:
+        logger.warning("APScheduler not installed — auto-sync disabled. Run: pip install apscheduler")
+        return None
+
+
+_scheduler = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create all tables on startup
+    global _scheduler
     Base.metadata.create_all(bind=engine)
+    _apply_migrations()
+    _scheduler = _start_scheduler()
     yield
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -51,7 +94,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API routers – all under /api/v1
+# API routers — all under /api/v1
 PREFIX = "/api/v1"
 
 app.include_router(auth.router, prefix=PREFIX)
@@ -67,6 +110,9 @@ app.include_router(import_data.router, prefix=PREFIX)
 app.include_router(dashboard.router, prefix=PREFIX)
 app.include_router(budget.router, prefix=PREFIX)
 app.include_router(alerts.router, prefix=PREFIX)
+app.include_router(google_sheets.router, prefix=PREFIX)
+app.include_router(financial_profile.router, prefix=PREFIX)
+app.include_router(paystubs.router, prefix=PREFIX)
 
 # Serve Next.js static export if it exists
 FRONTEND_BUILD = os.path.join(

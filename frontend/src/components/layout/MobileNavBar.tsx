@@ -19,6 +19,8 @@ import {
   HelpCircle,
   Lightbulb,
   PlusCircle,
+  UserCircle,
+  FileText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import TutorialModal from './TutorialModal'
@@ -38,6 +40,8 @@ const moreItems = [
   { label: 'Life Events', icon: Calendar, href: '/events' },
   { label: 'What-If', icon: FlaskConical, href: '/scenarios' },
   { label: 'Alerts', icon: BellRing, href: '/alerts' },
+  { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
+  { label: 'Paystubs', icon: FileText, href: '/paystubs' },
   { label: 'Settings', icon: Settings, href: '/settings' },
 ]
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Enum
+    Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Enum, Text
 )
 from sqlalchemy.orm import relationship
 import enum
@@ -39,8 +39,13 @@ class Account(Base):
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Joint account support
+    is_joint = Column(Boolean, default=False, nullable=False)
+    joint_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     # Relationships
-    user = relationship("User", back_populates="accounts")
+    user = relationship("User", back_populates="accounts", foreign_keys="Account.user_id")
+    joint_user = relationship("User", foreign_keys="Account.joint_user_id")
     transactions = relationship("Transaction", back_populates="account")
     balance_snapshots = relationship("BalanceSnapshot", back_populates="account", cascade="all, delete-orphan")
     recurring_rules = relationship("RecurringRule", back_populates="account")

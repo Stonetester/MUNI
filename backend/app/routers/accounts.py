@@ -1,6 +1,7 @@
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -28,9 +29,15 @@ def list_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Return own accounts + joint accounts where this user is the joint holder
     return (
         db.query(Account)
-        .filter(Account.user_id == current_user.id)
+        .filter(
+            or_(
+                Account.user_id == current_user.id,
+                Account.joint_user_id == current_user.id,
+            )
+        )
         .order_by(Account.name)
         .all()
     )

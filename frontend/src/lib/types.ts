@@ -188,3 +188,133 @@ export interface AlertItem {
   due_date?: string
   meta: Record<string, unknown>
 }
+
+// Google Sheets sync
+export interface SyncConfig {
+  id: number
+  user_id: number
+  sheet_id: string
+  is_enabled: boolean
+  last_sync_at?: string
+  last_sync_status?: string
+  last_sync_message?: string
+  created_at: string
+}
+
+export interface SyncResult {
+  imported: number
+  skipped: number
+  errors: number
+  last_sync_at: string
+  status: string
+  message?: string
+}
+
+// Financial Profile
+export interface FinancialProfile {
+  id: number
+  user_id: number
+  salary?: number
+  pay_frequency?: string
+  net_per_paycheck?: number
+  employer_401k_percent?: number
+  employee_401k_per_paycheck?: number
+  hysa_apy?: number
+  hysa_monthly_contribution?: number
+  ira_monthly_contribution?: number
+  hidden_sections?: string
+  updated_at?: string
+}
+
+// Student Loans
+export interface StudentLoan {
+  id: number
+  user_id: number
+  loan_name: string
+  servicer?: string
+  original_balance: number
+  current_balance: number
+  interest_rate: number
+  minimum_payment: number
+  is_active: boolean
+  created_at: string
+  updated_at?: string
+}
+
+// Investment Holdings
+export interface InvestmentHolding {
+  id: number
+  user_id: number
+  account_id: number
+  ticker?: string
+  fund_name: string
+  current_value: number
+  monthly_contribution: number
+  assumed_annual_return: number
+  weight_percent?: number
+  created_at: string
+  updated_at?: string
+}
+
+// Compensation Events
+export type CompensationEventType = 'raise' | 'bonus' | 'spot_award' | 'stipend' | 'other'
+
+export interface CompensationEvent {
+  id: number
+  user_id: number
+  event_type: CompensationEventType
+  effective_date: string
+  old_salary?: number
+  new_salary?: number
+  gross_amount?: number
+  net_amount?: number
+  description?: string
+  notes?: string
+  created_at: string
+}
+
+// Paystubs
+export interface Paystub {
+  id: number
+  user_id: number
+  employer?: string
+  voucher_number?: string
+  pay_date?: string
+  period_start?: string
+  period_end?: string
+  gross_pay?: number
+  regular_pay?: number
+  holiday_pay?: number
+  overtime_pay?: number
+  employer_401k?: number
+  tax_federal?: number
+  tax_state_md?: number
+  tax_state_md_cal?: number
+  tax_social_security?: number
+  tax_medicare?: number
+  deduction_401k?: number
+  deduction_vision?: number
+  deduction_gtl?: number
+  deduction_vlife?: number
+  deduction_add?: number
+  deduction_er_std_ltd?: number
+  net_pay?: number
+  ytd_gross?: number
+  ytd_federal?: number
+  ytd_social_security?: number
+  ytd_medicare?: number
+  ytd_state_md?: number
+  ytd_state_md_cal?: number
+  ytd_401k_employee?: number
+  ytd_401k_employer?: number
+  ytd_net?: number
+  parse_method?: string
+  raw_pdf_path?: string
+  created_at: string
+}
+
+export interface ParsedPaystub {
+  parsed: Partial<Paystub>
+  parse_method: string
+  raw_text_excerpt?: string
+}

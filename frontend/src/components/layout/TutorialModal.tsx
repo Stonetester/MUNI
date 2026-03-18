@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { X, ChevronLeft, ChevronRight, LayoutDashboard, ArrowUpDown, Wallet, Target, TrendingUp, Calendar, FlaskConical, BellRing, Settings, HelpCircle, PlusCircle } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, LayoutDashboard, ArrowUpDown, Wallet, Target, TrendingUp, Calendar, FlaskConical, BellRing, Settings, HelpCircle, PlusCircle, UserCircle, FileText, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const steps = [
@@ -183,21 +183,84 @@ const steps = [
     ),
   },
   {
+    icon: UserCircle,
+    title: 'Financial Profile',
+    color: 'text-primary',
+    bg: 'bg-primary/10',
+    content: (
+      <div className="flex flex-col gap-3 text-sm text-text-secondary">
+        <p>Financial Profile is your personal financial data hub — salary, loans, investments, and pay history all in one place.</p>
+        <ul className="flex flex-col gap-2">
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Income & Salary</span>Enter your annual salary, pay frequency, and 401k contribution details.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">HYSA & IRA</span>Set your APY and monthly contribution amounts for savings accounts.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Student Loans</span>Track each loan individually — balance, rate, servicer, and min payment.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Investment Holdings</span>Fund-level tracking: SWPPX, SWISX, 401k funds, with assumed return rates.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Compensation History</span>Log raises, bonuses, spot awards, and stipends with dates and amounts.</li>
+        </ul>
+        <p className="text-xs text-muted">Each user has their own profile — both partners fill in their own data independently.</p>
+      </div>
+    ),
+  },
+  {
+    icon: FileText,
+    title: 'Paystubs',
+    color: 'text-orange-400',
+    bg: 'bg-orange-400/10',
+    content: (
+      <div className="flex flex-col gap-3 text-sm text-text-secondary">
+        <p>Upload Paylocity paystub PDFs and the app automatically extracts every field — no manual entry needed.</p>
+        <ul className="flex flex-col gap-2">
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">Upload PDF</span>Drag and drop or click to browse. Supports Paylocity digital PDFs.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">Review & edit</span>All extracted fields are shown for review. Correct anything before saving.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">History</span>Saved stubs show gross/net per check and effective tax rate at a glance.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">YTD tracking</span>Year-to-date totals (gross, net, 401k, federal tax) are captured automatically.</li>
+        </ul>
+        <div className="p-3 rounded-xl bg-surface-2 text-xs">
+          Fields extracted: gross pay, net pay, federal/MD/SS/Medicare taxes, 401k (employee + employer Safe Harbor), vision, GTL, and all YTD figures.
+        </div>
+      </div>
+    ),
+  },
+  {
+    icon: RefreshCw,
+    title: 'Google Sheets Sync',
+    color: 'text-green-400',
+    bg: 'bg-green-400/10',
+    content: (
+      <div className="flex flex-col gap-3 text-sm text-text-secondary">
+        <p>Connect your Google Sheet to import transactions automatically — no manual CSV uploads required.</p>
+        <ul className="flex flex-col gap-2">
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">Auto-sync</span>When enabled, the app syncs your sheet every 30 minutes in the background.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">Sync Now</span>Hit the button in Settings to force an immediate sync without waiting.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">Deduplication</span>Transactions already imported are detected and skipped — safe to sync repeatedly.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">Sheet format</span>Each tab is a month. Columns: Date, Description/Expense, Amount. Positive amounts = expenses.</li>
+        </ul>
+        <div className="p-3 rounded-xl bg-surface-2 text-xs flex flex-col gap-1">
+          <span className="text-text-primary font-semibold">To connect:</span>
+          <span>1. Get your Sheet ID from the URL</span>
+          <span>2. Share the sheet with the service account email from your credentials file</span>
+          <span>3. Paste the ID into Settings → Google Sheets Sync → Save → Sync Now</span>
+        </div>
+      </div>
+    ),
+  },
+  {
     icon: Settings,
     title: 'Settings',
     color: 'text-text-secondary',
     bg: 'bg-surface-2',
     content: (
       <div className="flex flex-col gap-3 text-sm text-text-secondary">
-        <p>Settings is currently focused on account management.</p>
+        <p>Settings manages your account security and Google Sheets integration.</p>
         <ul className="flex flex-col gap-2">
           <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Change password</span>Enter your current password and a new one. Takes effect immediately.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Account info</span>Shows which user you're logged in as.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Google Sheets Sync</span>Configure your Sheet ID, toggle auto-sync, and trigger manual syncs.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Account info</span>Shows which user you are logged in as.</li>
         </ul>
         <div className="p-3 rounded-xl bg-surface-2 text-xs">
           <span className="text-text-primary font-semibold">Do this first:</span> Change the default password (<span className="font-mono">finance123</span>) as soon as you log in for the first time.
         </div>
-        <p className="mt-1 text-center text-text-primary font-medium">You're all set — go explore!</p>
+        <p className="mt-1 text-center text-text-primary font-medium">You are all set — go explore!</p>
       </div>
     ),
   },

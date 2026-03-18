@@ -15,6 +15,9 @@ import {
   BarChart2,
   Calendar,
   Info,
+  UserCircle,
+  FileText,
+  Sheet,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -431,6 +434,187 @@ const sections: Section[] = [
               <li><span className="text-text-primary font-medium">Monthly breakdown:</span> Large amounts for deposit months, smaller for regular months</li>
             </ul>
             <p className="text-xs text-muted">The forecast will show these costs hitting your cash flow in the right months.</p>
+          </div>
+        ),
+      },
+    ],
+  },
+  {
+    id: 'google-sheets',
+    icon: Sheet,
+    iconColor: 'text-green-400',
+    iconBg: 'bg-green-400/10',
+    title: 'Step 7 — Connect Google Sheets (Optional)',
+    subtitle: 'Skip manual CSV exports. Connect your monthly spending sheet and let the app auto-import transactions.',
+    steps: [
+      {
+        title: 'What you need',
+        body: (
+          <div className="flex flex-col gap-2 text-sm text-text-secondary">
+            <ul className="flex flex-col gap-1.5 ml-3">
+              <li>A Google Sheets service account credentials file at <span className="font-mono text-xs text-primary">backend/credentials/google-sheets-key.json</span></li>
+              <li>Your spreadsheet shared with the service account email (the <span className="font-mono text-xs">client_email</span> field in the JSON)</li>
+              <li>Your Google Spreadsheet ID — found in the sheet URL between <span className="font-mono text-xs">/d/</span> and <span className="font-mono text-xs">/edit</span></li>
+            </ul>
+          </div>
+        ),
+      },
+      {
+        title: 'Sheet format expected',
+        body: (
+          <div className="flex flex-col gap-2 text-sm text-text-secondary">
+            <p>Each tab should represent a month (e.g. <span className="font-mono text-xs">Jan 2025</span>, <span className="font-mono text-xs">Feb 2025</span>). Rows should have:</p>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              {[
+                { col: 'Date', ex: '1/15/2025', req: true },
+                { col: 'Description / Expense', ex: 'Target', req: true },
+                { col: 'Amount', ex: '42.50', req: true },
+              ].map(c => (
+                <div key={c.col} className="p-2 rounded-lg bg-surface-2">
+                  <p className="font-mono text-primary">{c.col}</p>
+                  <p className="text-muted">{c.ex}</p>
+                  {c.req && <p className="text-green-400">Required</p>}
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted">Positive amounts = expenses (they are negated on import). Blank rows and header rows are skipped automatically.</p>
+          </div>
+        ),
+      },
+      {
+        title: 'Connect in Settings',
+        body: (
+          <div className="flex flex-col gap-2 text-sm text-text-secondary">
+            <ol className="flex flex-col gap-2 ml-3 list-decimal list-outside">
+              <li>Go to <span className="text-text-primary font-medium">Settings</span> → <span className="text-text-primary font-medium">Google Sheets Sync</span></li>
+              <li>Paste your Spreadsheet ID into the field</li>
+              <li>Toggle auto-sync on if you want background sync every 30 minutes</li>
+              <li>Click <span className="text-text-primary font-medium">Save Settings</span></li>
+              <li>Click <span className="text-text-primary font-medium">Sync Now</span> to run the first import immediately</li>
+            </ol>
+            <div className="p-3 rounded-xl bg-primary/10 border border-primary/20 text-xs text-primary flex gap-2">
+              <Info size={14} className="shrink-0 mt-0.5" />
+              <span>
+                Deduplication is automatic — re-running sync will not create duplicate transactions. Only new rows are imported.
+              </span>
+            </div>
+          </div>
+        ),
+      },
+    ],
+  },
+  {
+    id: 'financial-profile',
+    icon: UserCircle,
+    iconColor: 'text-primary',
+    iconBg: 'bg-primary/10',
+    title: 'Step 8 — Fill Out Your Financial Profile',
+    subtitle: 'Track salary, 401k details, HYSA contributions, student loans, investment holdings, and compensation history.',
+    steps: [
+      {
+        title: 'Go to My Profile',
+        body: (
+          <p className="text-sm text-text-secondary">
+            Click <span className="text-text-primary font-medium">My Profile</span> in the sidebar. Each user has their own profile — fill yours in, then switch users and fill in your partner&apos;s.
+          </p>
+        ),
+      },
+      {
+        title: 'Enter salary and pay info',
+        body: (
+          <div className="flex flex-col gap-2 text-sm text-text-secondary">
+            <p>In the <span className="text-text-primary font-medium">Income & Salary</span> section, enter:</p>
+            <ul className="flex flex-col gap-1 ml-3">
+              <li>Annual salary</li>
+              <li>Pay frequency (semi-monthly = 24 checks/yr, biweekly = 26)</li>
+              <li>Net pay per paycheck (after taxes and deductions)</li>
+              <li>Employer 401k match % (e.g. 6 for 6% Safe Harbor)</li>
+            </ul>
+          </div>
+        ),
+      },
+      {
+        title: 'Add student loans',
+        body: (
+          <div className="flex flex-col gap-2 text-sm text-text-secondary">
+            <p>In the <span className="text-text-primary font-medium">Student Loans</span> section, add each loan individually:</p>
+            <ul className="flex flex-col gap-1 ml-3">
+              <li>Loan name and servicer</li>
+              <li>Original balance and current remaining balance</li>
+              <li>Interest rate and minimum monthly payment</li>
+            </ul>
+            <p className="text-xs text-muted">Total remaining across all active loans is shown at the top of the section.</p>
+          </div>
+        ),
+      },
+      {
+        title: 'Add investment holdings',
+        body: (
+          <div className="flex flex-col gap-2 text-sm text-text-secondary">
+            <p>In the <span className="text-text-primary font-medium">Investment Holdings</span> section, add each fund or account holding:</p>
+            <ul className="flex flex-col gap-1 ml-3">
+              <li>Ticker symbol (e.g. SWPPX) and fund name</li>
+              <li>Current value and monthly contribution</li>
+              <li>Assumed annual return rate (default 7%)</li>
+              <li>Select the parent account (401k, IRA, brokerage)</li>
+            </ul>
+          </div>
+        ),
+      },
+    ],
+  },
+  {
+    id: 'paystubs',
+    icon: FileText,
+    iconColor: 'text-orange-400',
+    iconBg: 'bg-orange-400/10',
+    title: 'Step 9 — Upload Paystubs (Optional)',
+    subtitle: 'Upload Paylocity PDF paystubs to automatically extract all fields — gross pay, taxes, 401k, deductions, and YTD totals.',
+    steps: [
+      {
+        title: 'Go to Paystubs',
+        body: (
+          <p className="text-sm text-text-secondary">
+            Click <span className="text-text-primary font-medium">Paystubs</span> in the sidebar. You'll see an upload zone and, once you've saved stubs, a history timeline.
+          </p>
+        ),
+      },
+      {
+        title: 'Upload and review',
+        body: (
+          <div className="flex flex-col gap-2 text-sm text-text-secondary">
+            <ol className="flex flex-col gap-2 ml-3 list-decimal list-outside">
+              <li>Drag a PDF onto the upload zone or click to browse</li>
+              <li>The parser extracts all fields automatically using pdfplumber</li>
+              <li>Review the pre-filled form — correct any fields that didn't parse correctly</li>
+              <li>Click <span className="text-text-primary font-medium">Save Paystub</span> to store it</li>
+            </ol>
+          </div>
+        ),
+      },
+      {
+        title: 'What gets extracted',
+        body: (
+          <div className="flex flex-col gap-2 text-sm text-text-secondary">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {[
+                'Gross pay & net pay',
+                'Federal income tax (FITW)',
+                'MD state & county tax',
+                'Social Security & Medicare',
+                '401k employee deduction',
+                'Employer Safe Harbor 401k',
+                'Vision insurance',
+                'YTD gross & net',
+                'YTD 401k (employee + employer)',
+                'Pay period dates',
+              ].map(item => (
+                <div key={item} className="flex items-center gap-2 p-2 rounded-lg bg-surface-2">
+                  <CheckCircle2 size={12} className="text-green-400 shrink-0" />
+                  <span className="text-text-secondary">{item}</span>
+                </div>
+              ))}
+            </div>
           </div>
         ),
       },

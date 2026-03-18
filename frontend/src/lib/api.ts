@@ -14,6 +14,14 @@ import type {
   PaginatedTransactions,
   BudgetSummary,
   AlertItem,
+  SyncConfig,
+  SyncResult,
+  FinancialProfile,
+  StudentLoan,
+  InvestmentHolding,
+  CompensationEvent,
+  Paystub,
+  ParsedPaystub,
 } from './types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -236,4 +244,115 @@ export async function getAlerts(month?: string, lookaheadDays = 30): Promise<Ale
   params.append('lookahead_days', String(lookaheadDays))
   const res: AxiosResponse<AlertItem[]> = await api.get(`/alerts?${params.toString()}`)
   return res.data
+}
+
+// Google Sheets Sync
+export async function getSyncConfig(): Promise<SyncConfig> {
+  const res: AxiosResponse<SyncConfig> = await api.get('/sync/google-sheets/config')
+  return res.data
+}
+
+export async function updateSyncConfig(data: { sheet_id?: string; is_enabled?: boolean }): Promise<SyncConfig> {
+  const res: AxiosResponse<SyncConfig> = await api.put('/sync/google-sheets/config', data)
+  return res.data
+}
+
+export async function runSync(): Promise<SyncResult> {
+  const res: AxiosResponse<SyncResult> = await api.post('/sync/google-sheets/run')
+  return res.data
+}
+
+// Financial Profile
+export async function getFinancialProfile(): Promise<FinancialProfile> {
+  const res: AxiosResponse<FinancialProfile> = await api.get('/financial-profile')
+  return res.data
+}
+
+export async function updateFinancialProfile(data: Partial<FinancialProfile>): Promise<FinancialProfile> {
+  const res: AxiosResponse<FinancialProfile> = await api.put('/financial-profile', data)
+  return res.data
+}
+
+// Student Loans
+export async function getStudentLoans(): Promise<StudentLoan[]> {
+  const res: AxiosResponse<StudentLoan[]> = await api.get('/financial-profile/loans')
+  return res.data
+}
+
+export async function createStudentLoan(data: Partial<StudentLoan>): Promise<StudentLoan> {
+  const res: AxiosResponse<StudentLoan> = await api.post('/financial-profile/loans', data)
+  return res.data
+}
+
+export async function updateStudentLoan(id: number, data: Partial<StudentLoan>): Promise<StudentLoan> {
+  const res: AxiosResponse<StudentLoan> = await api.put(`/financial-profile/loans/${id}`, data)
+  return res.data
+}
+
+export async function deleteStudentLoan(id: number): Promise<void> {
+  await api.delete(`/financial-profile/loans/${id}`)
+}
+
+// Investment Holdings
+export async function getHoldings(): Promise<InvestmentHolding[]> {
+  const res: AxiosResponse<InvestmentHolding[]> = await api.get('/financial-profile/holdings')
+  return res.data
+}
+
+export async function createHolding(data: Partial<InvestmentHolding>): Promise<InvestmentHolding> {
+  const res: AxiosResponse<InvestmentHolding> = await api.post('/financial-profile/holdings', data)
+  return res.data
+}
+
+export async function updateHolding(id: number, data: Partial<InvestmentHolding>): Promise<InvestmentHolding> {
+  const res: AxiosResponse<InvestmentHolding> = await api.put(`/financial-profile/holdings/${id}`, data)
+  return res.data
+}
+
+export async function deleteHolding(id: number): Promise<void> {
+  await api.delete(`/financial-profile/holdings/${id}`)
+}
+
+// Compensation Events
+export async function getCompensationEvents(): Promise<CompensationEvent[]> {
+  const res: AxiosResponse<CompensationEvent[]> = await api.get('/financial-profile/compensation')
+  return res.data
+}
+
+export async function createCompensationEvent(data: Partial<CompensationEvent>): Promise<CompensationEvent> {
+  const res: AxiosResponse<CompensationEvent> = await api.post('/financial-profile/compensation', data)
+  return res.data
+}
+
+export async function updateCompensationEvent(id: number, data: Partial<CompensationEvent>): Promise<CompensationEvent> {
+  const res: AxiosResponse<CompensationEvent> = await api.put(`/financial-profile/compensation/${id}`, data)
+  return res.data
+}
+
+export async function deleteCompensationEvent(id: number): Promise<void> {
+  await api.delete(`/financial-profile/compensation/${id}`)
+}
+
+// Paystubs
+export async function parsePaystub(file: File): Promise<ParsedPaystub> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await api.post('/paystubs/parse', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return res.data
+}
+
+export async function savePaystub(data: Partial<Paystub>): Promise<Paystub> {
+  const res: AxiosResponse<Paystub> = await api.post('/paystubs', data)
+  return res.data
+}
+
+export async function getPaystubs(): Promise<Paystub[]> {
+  const res: AxiosResponse<Paystub[]> = await api.get('/paystubs')
+  return res.data
+}
+
+export async function deletePaystub(id: number): Promise<void> {
+  await api.delete(`/paystubs/${id}`)
 }

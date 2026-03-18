@@ -49,6 +49,8 @@ frontend/.next/
 backend/finance.db
 backend/finance.db-shm
 backend/finance.db-wal
+backend/credentials/
+backend/uploads/
 
 # Personal financial data
 seed_transactions.json
