@@ -751,6 +751,15 @@ source venv/bin/activate
 alembic upgrade head
 '
 
+echo "--> Ensuring frontend .env.local exists..."
+if [ ! -f /opt/muni/app/frontend/.env.local ]; then
+  echo 'NEXT_PUBLIC_API_URL=http://10.0.0.48' > /opt/muni/app/frontend/.env.local
+  chown muni:muni /opt/muni/app/frontend/.env.local
+  echo "    Created .env.local with NEXT_PUBLIC_API_URL=http://10.0.0.48"
+else
+  echo "    .env.local already exists"
+fi
+
 echo "--> Installing frontend dependencies..."
 sudo -u muni -H bash -lc '
 cd /opt/muni/app/frontend
