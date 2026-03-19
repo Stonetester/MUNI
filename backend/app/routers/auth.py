@@ -27,6 +27,19 @@ def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+@router.post("/switch/{username}", response_model=Token)
+def switch_profile(
+    username: str,
+    db: Session = Depends(get_db),
+):
+    """Password-free profile switch — Tailscale is the security layer."""
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
+    access_token = create_access_token(data={"sub": user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 @router.get("/me", response_model=UserMe)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user

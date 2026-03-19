@@ -5,10 +5,10 @@ import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
-import { changePassword, getSyncConfig, updateSyncConfig, runSync } from '@/lib/api'
+import { getSyncConfig, updateSyncConfig, runSync } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 import type { SyncConfig, SyncResult } from '@/lib/types'
-import { Settings, Lock, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink } from 'lucide-react'
+import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink } from 'lucide-react'
 
 function fmtDate(s?: string | null) {
   if (!s) return 'Never'
@@ -17,12 +17,6 @@ function fmtDate(s?: string | null) {
 
 export default function SettingsPage() {
   const [username, setUsername] = useState('')
-  const [currentPw, setCurrentPw] = useState('')
-  const [newPw, setNewPw] = useState('')
-  const [confirmPw, setConfirmPw] = useState('')
-  const [pwLoading, setPwLoading] = useState(false)
-  const [pwError, setPwError] = useState('')
-  const [pwSuccess, setPwSuccess] = useState(false)
 
   // Google Sheets sync state
   const [syncConfig, setSyncConfig] = useState<SyncConfig | null>(null)
@@ -53,33 +47,6 @@ export default function SettingsPage() {
       // Sync not configured yet — fine
     })
   }, [])
-
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setPwError('')
-    setPwSuccess(false)
-    if (newPw !== confirmPw) {
-      setPwError('New passwords do not match.')
-      return
-    }
-    if (newPw.length < 6) {
-      setPwError('Password must be at least 6 characters.')
-      return
-    }
-    setPwLoading(true)
-    try {
-      await changePassword(currentPw, newPw)
-      setPwSuccess(true)
-      setCurrentPw('')
-      setNewPw('')
-      setConfirmPw('')
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setPwError(msg || 'Failed to change password.')
-    } finally {
-      setPwLoading(false)
-    }
-  }
 
   const handleSaveSyncConfig = async () => {
     setSyncSaving(true)
@@ -224,56 +191,12 @@ export default function SettingsPage() {
           </div>
         </Card>
 
-        {/* Change Password */}
-        <Card title="Change Password">
-          <form onSubmit={handleChangePassword} className="flex flex-col gap-4">
-            {pwError && (
-              <div className="p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm">
-                {pwError}
-              </div>
-            )}
-            {pwSuccess && (
-              <div className="p-3 rounded-xl bg-primary/10 border border-primary/30 text-primary text-sm">
-                Password changed successfully.
-              </div>
-            )}
-            <Input
-              label="Current Password"
-              type="password"
-              value={currentPw}
-              onChange={(e) => setCurrentPw(e.target.value)}
-              required
-              placeholder="Enter current password"
-            />
-            <Input
-              label="New Password"
-              type="password"
-              value={newPw}
-              onChange={(e) => setNewPw(e.target.value)}
-              required
-              placeholder="At least 6 characters"
-            />
-            <Input
-              label="Confirm New Password"
-              type="password"
-              value={confirmPw}
-              onChange={(e) => setConfirmPw(e.target.value)}
-              required
-              placeholder="Repeat new password"
-            />
-            <Button type="submit" variant="primary" loading={pwLoading} className="w-fit">
-              <Lock size={14} />
-              Update Password
-            </Button>
-          </form>
-        </Card>
-
         {/* App Info */}
         <Card title="About">
           <div className="flex flex-col gap-2 text-sm text-text-secondary">
             <div className="flex items-center gap-2">
               <Info size={14} />
-              <span>FinanceTrack v0.2 — Self-hosted personal finance tool</span>
+              <span>Muni v0.3 — Self-hosted personal finance tool</span>
             </div>
           </div>
         </Card>

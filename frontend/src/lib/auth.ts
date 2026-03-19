@@ -72,23 +72,14 @@ export function switchProfiles(): void {
   window.location.reload()
 }
 
-export async function login(username: string, password: string): Promise<void> {
-  const formData = new URLSearchParams()
-  formData.append('username', username)
-  formData.append('password', password)
-
+export async function login(username: string): Promise<void> {
   const response = await fetch(
-    `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/auth/login`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData.toString(),
-    }
+    `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/auth/switch/${username}`,
+    { method: 'POST' }
   )
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Login failed' }))
-    throw new Error(error.detail || 'Login failed')
+    throw new Error('Profile not found')
   }
 
   const data = await response.json()
