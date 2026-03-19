@@ -8,7 +8,8 @@ import Input from '@/components/ui/Input'
 import { getSyncConfig, updateSyncConfig, runSync } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 import type { SyncConfig, SyncResult } from '@/lib/types'
-import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink } from 'lucide-react'
+import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight } from 'lucide-react'
+import { switchProfiles, getAltUser } from '@/lib/auth'
 
 function fmtDate(s?: string | null) {
   if (!s) return 'Never'
@@ -90,15 +91,35 @@ export default function SettingsPage() {
         </div>
 
         {/* Account Info */}
-        <Card title="Account">
-          <div className="flex items-center gap-3 py-2">
-            <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
-              <User size={18} className="text-primary" />
+        <Card title="Profiles">
+          <div className="flex flex-col gap-3 mt-1">
+            <p className="text-xs text-text-secondary">This is a personal app. No passwords — just switch between profiles.</p>
+            <div className="flex gap-3">
+              {['keaton', 'katherine'].map(name => (
+                <div
+                  key={name}
+                  className={`flex-1 flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+                    username === name
+                      ? 'bg-primary/10 border-primary/30'
+                      : 'bg-surface-2 border-transparent'
+                  }`}
+                >
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${username === name ? 'bg-primary/20' : 'bg-surface'}`}>
+                    <User size={15} className={username === name ? 'text-primary' : 'text-text-secondary'} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-semibold capitalize ${username === name ? 'text-primary' : 'text-text-secondary'}`}>{name}</p>
+                    <p className="text-[10px] text-muted">{username === name ? 'Active' : 'Switch to'}</p>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div>
-              <p className="text-sm font-semibold text-text-primary">{username}</p>
-              <p className="text-xs text-text-secondary">Personal account</p>
-            </div>
+            {getAltUser() && (
+              <Button variant="secondary" size="sm" onClick={() => { switchProfiles(); window.location.reload() }} className="gap-2 self-start">
+                <ArrowLeftRight size={13} />
+                Switch to {getAltUser()}
+              </Button>
+            )}
           </div>
         </Card>
 
