@@ -21,6 +21,8 @@ const pageTitles: Record<string, string> = {
   '/alerts': 'Alerts',
   '/calendar': 'Spending Calendar',
   '/insights': 'Spending Insights',
+  '/ai-report': 'AI Financial Report',
+  '/notifications': 'Notifications',
 }
 
 // Toast notification system

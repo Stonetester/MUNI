@@ -23,6 +23,8 @@ import {
   ChevronUp,
   Layers,
   RefreshCw,
+  Sparkles,
+  Mail,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { APP_VERSION, APP_NAME } from '@/lib/version'
@@ -43,10 +45,12 @@ const primaryItems = [
 ]
 
 const extrasItems = [
+  { label: 'AI Report', icon: Sparkles, href: '/ai-report' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },
   { label: 'What-If', icon: FlaskConical, href: '/scenarios' },
   { label: 'Alerts', icon: BellRing, href: '/alerts' },
+  { label: 'Notifications', icon: Mail, href: '/notifications' },
 ]
 
 function NavItem({ label, icon: Icon, href, active }: { label: string; icon: React.ElementType; href: string; active: boolean }) {

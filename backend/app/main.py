@@ -29,6 +29,7 @@ from app.routers import (
     alerts,
 )
 from app.routers import google_sheets, financial_profile, paystubs, joint
+from app.routers import ai_report, notifications
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +50,28 @@ def _apply_migrations():
 
 
 def _start_scheduler():
-    """Start APScheduler background job for Google Sheets auto-sync."""
+    """Start APScheduler background jobs."""
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
         from app.services.google_sheets_sync import sync_all_users
+        from app.services.email_service import send_weekly_digest_all
 
         scheduler = BackgroundScheduler()
         scheduler.add_job(sync_all_users, "interval", minutes=30, id="sheets_sync")
+        # Weekly digest — every Monday at 8:00 AM
+        scheduler.add_job(
+            send_weekly_digest_all,
+            "cron",
+            day_of_week="mon",
+            hour=8,
+            minute=0,
+            id="weekly_digest",
+        )
         scheduler.start()
-        logger.info("Google Sheets auto-sync scheduler started (every 30 min)")
+        logger.info("Scheduler started: Google Sheets sync (30 min) + weekly email digest (Mon 8am)")
         return scheduler
     except ImportError:
-        logger.warning("APScheduler not installed — auto-sync disabled. Run: pip install apscheduler")
+        logger.warning("APScheduler not installed — scheduled jobs disabled. Run: pip install apscheduler")
         return None
 
 
@@ -114,6 +125,8 @@ app.include_router(google_sheets.router, prefix=PREFIX)
 app.include_router(financial_profile.router, prefix=PREFIX)
 app.include_router(paystubs.router, prefix=PREFIX)
 app.include_router(joint.router, prefix=PREFIX)
+app.include_router(ai_report.router, prefix=PREFIX)
+app.include_router(notifications.router, prefix=PREFIX)
 
 # Serve Next.js static export if it exists
 FRONTEND_BUILD = os.path.join(

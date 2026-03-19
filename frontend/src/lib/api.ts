@@ -402,3 +402,44 @@ export async function getPaystubs(): Promise<Paystub[]> {
 export async function deletePaystub(id: number): Promise<void> {
   await api.delete(`/paystubs/${id}`)
 }
+
+// AI Monthly Report
+export async function getAiReport(year?: number, month?: number): Promise<{ year: number; month: number; report: string }> {
+  const params = new URLSearchParams()
+  if (year) params.append('year', String(year))
+  if (month) params.append('month', String(month))
+  const query = params.toString()
+  const res = await api.get(`/ai-report${query ? '?' + query : ''}`)
+  return res.data
+}
+
+// Notifications
+export async function getNotificationSettings(): Promise<{ notification_email: string | null; weekly_digest_enabled: boolean }> {
+  const res = await api.get('/notifications/settings')
+  return res.data
+}
+
+export async function updateNotificationSettings(data: { notification_email?: string; weekly_digest_enabled?: boolean }): Promise<{ notification_email: string | null; weekly_digest_enabled: boolean }> {
+  const res = await api.put('/notifications/settings', data)
+  return res.data
+}
+
+export async function getWeeklyDigestPreview(): Promise<{
+  week_start: string
+  today: string
+  income: number
+  spending: number
+  top_categories: [string, number][]
+  net_worth: number
+  total_assets: number
+  total_liabilities: number
+  over_budget: [string, number, number][]
+}> {
+  const res = await api.get('/notifications/weekly-preview')
+  return res.data
+}
+
+export async function sendWeeklyDigestNow(email?: string): Promise<{ sent: boolean; to: string }> {
+  const res = await api.post('/notifications/send-weekly', email ? { email } : {})
+  return res.data
+}
