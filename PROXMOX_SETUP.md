@@ -1,6 +1,6 @@
 # Muni — Complete Proxmox Server Guide
 
-This guide covers everything: initial setup, daily startup, shutdown, and deploying updates from GitHub. Every command is written out in full. Nothing is assumed.
+This guide covers everything: initial setup, daily startup, shutdown, deploying updates from GitHub, and troubleshooting every error you might encounter. Every command is written out in full. Nothing is assumed.
 
 ---
 
@@ -59,7 +59,7 @@ You need this template to create the new container. If you already have it, skip
 |---|---|
 | Node | your node (e.g. `pve`) |
 | CT ID | `102` |
-| Hostname | `muni` (if your Proxmox node is also named `muni`, use `muniapp`) |
+| Hostname | `muni` |
 | Unprivileged container | ✅ checked |
 | Password | set a strong root password — write it down |
 | Confirm password | same again |
@@ -116,15 +116,17 @@ Wait for the task to complete in the bottom panel.
 
 ---
 
-## Step 4 — Enable Nesting Feature
+## Step 4 — Enable Nesting
 
-This allows Docker and certain system calls to work inside the container.
+Enable nesting for the container. This is required for certain system calls inside the container.
 
 1. In the left panel, click **CT 102 (muni)**
 2. Click **Options** in the right panel
 3. Double-click **Features**
 4. Check **nesting**
 5. Click **OK**
+
+> **No TUN device setup needed.** Tailscale runs on Roman (the Proxmox host), not inside each container. Roman acts as a subnet router that exposes your entire LAN — see Step 13 for the full setup.
 
 ---
 
@@ -263,6 +265,8 @@ pip install -r requirements.txt
 
 This will take 2–5 minutes. You will see many packages being downloaded.
 
+> **Note:** You may see a warning: `(trapped) error reading bcrypt version` or `module 'bcrypt' has no attribute '__about__'`. This is a harmless compatibility warning between the `passlib` and `bcrypt` libraries. The app works correctly despite it. Ignore it.
+
 Run the database migrations to create all tables:
 
 ```bash
@@ -293,6 +297,16 @@ python seed/seed_data.py
 '
 ```
 
+Expected output:
+```
+Seeding database with users and categories...
+  Created users: keaton, katherine
+  Created default categories
+Seed complete!
+```
+
+> **Important:** If you skip this step, clicking Keaton or Katherine on the login screen will fail silently because the users do not exist in the database. If the app was already running and the DB existed but was empty, just run the seed command above — it is safe to run at any time.
+
 ### Create the backend environment file
 
 Generate a secret key first (copy the output — you will need it in the next command):
@@ -308,11 +322,9 @@ cat > /opt/muni/app/backend/.env << 'EOF'
 SECRET_KEY=PASTE_YOUR_SECRET_KEY_HERE
 ACCESS_TOKEN_EXPIRE_MINUTES=43200
 DATABASE_URL=sqlite:///./finance.db
-CORS_ORIGINS=["http://localhost:3000","http://100.x.y.z:3000","http://100.x.y.z"]
+CORS_ORIGINS=["http://localhost:3000","http://10.0.0.48:3000","http://10.0.0.48"]
 EOF
 ```
-
-You will update `100.x.y.z` with your real Tailscale IP in Step 13. Leave it as-is for now.
 
 Set correct ownership:
 
@@ -329,11 +341,9 @@ Create the frontend environment file:
 
 ```bash
 cat > /opt/muni/app/frontend/.env.local << 'EOF'
-NEXT_PUBLIC_API_URL=http://100.x.y.z
+NEXT_PUBLIC_API_URL=http://10.0.0.48
 EOF
 ```
-
-You will update `100.x.y.z` with your real Tailscale IP in Step 13.
 
 Set ownership:
 
@@ -361,13 +371,13 @@ npm run build
 '
 ```
 
-This will take 1–3 minutes. RAM usage will spike to ~700 MB during the build — this is normal. At the end you should see `✓ Generating static pages (19/19)` with no errors.
+This will take 1–3 minutes. RAM usage will spike to ~700 MB during the build — this is normal. At the end you should see `✓ Generating static pages` with no errors.
 
 ---
 
-## Step 12 — Create systemd Services
+## Step 12 — Create systemd Services (Auto-Start on Boot)
 
-These services make the backend and frontend start automatically whenever the container boots.
+These services make the backend and frontend start automatically whenever the container boots or restarts. You create them once and never need to manually start the app again.
 
 ### Create the backend service file
 
@@ -414,7 +424,7 @@ WantedBy=multi-user.target
 EOF
 ```
 
-### Load and start both services
+### Load and enable all services to start on every boot
 
 Tell systemd about the new files:
 
@@ -422,19 +432,20 @@ Tell systemd about the new files:
 systemctl daemon-reload
 ```
 
-Enable both services so they start on every boot:
+Enable all services so they start automatically on every container boot:
 
 ```bash
 systemctl enable muni-backend
 systemctl enable muni-frontend
+systemctl enable nginx
 ```
-#### PASUED HERE
 
-Start them now:
+Start them now for the first time:
 
 ```bash
 systemctl start muni-backend
 systemctl start muni-frontend
+systemctl start nginx
 ```
 
 Wait 5 seconds, then check they are running:
@@ -443,7 +454,7 @@ Wait 5 seconds, then check they are running:
 systemctl status muni-backend --no-pager
 ```
 
-Look for `Active: active (running)`. If it says `failed`, see the Troubleshooting section at the end.
+Look for `Active: active (running)`. If it says `failed`, see the Troubleshooting section at the end of this guide.
 
 ```bash
 systemctl status muni-frontend --no-pager
@@ -457,7 +468,7 @@ Test the backend directly:
 curl http://127.0.0.1:8000/health
 ```
 
-Expected output: `{"status":"ok"}` or similar JSON.
+Expected output: `{"status":"ok"}`
 
 Test the frontend directly:
 
@@ -469,78 +480,96 @@ Expected output: `HTTP/1.1 200 OK` on the first line.
 
 ---
 
-## Step 13 — Install Tailscale
+## Step 13 — Configure Remote Access via Roman's Subnet Router
 
-Tailscale gives the container a permanent IP address (`100.x.y.z`) that works from your phone, laptop, or any device on your Tailscale network — even when you are away from home.
+Tailscale is already installed on Roman (your Proxmox host at 10.0.0.11). Instead of installing Tailscale inside each container, Roman acts as a **subnet router** — it advertises your entire home network (10.0.0.0/24) through Tailscale. This means every device on your LAN, including the muni container at 10.0.0.48, is reachable from anywhere with no extra setup per container.
 
-Install Tailscale:
+**Your network layout:**
+| Machine | LAN IP | Role |
+|---|---|---|
+| Roman (Proxmox host) | 10.0.0.11 | Tailscale subnet router |
+| CT 102 (muni) | 10.0.0.48 | Finance app |
+| CT 100 (modoGusto) | 10.0.0.x | Food app |
+| CT 101 (cloudflared) | 10.0.0.x | Cloudflare tunnel |
 
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-```
+**You access muni at:** `http://10.0.0.48` — from any device connected to your Tailscale account.
 
-Start Tailscale and connect it to your account:
+---
 
-```bash
-tailscale up
-```
+### Step 13a — Enable subnet routing on Roman
 
-It will print a URL like `https://login.tailscale.com/a/xxxxxxxx`. Open that URL on any device and log in with your Tailscale account. The container will then be authorized.
+SSH into Roman (not the muni container) or use the Proxmox shell (node → Shell in the left panel).
 
-Get the container's Tailscale IP address:
-
-```bash
-tailscale ip -4
-```
-
-Example output: `100.64.1.42`
-
-**Write this IP down.** You will use it everywhere below. Replace `100.64.1.42` with your actual IP in all following commands.
-
-### Update the environment files with the real Tailscale IP
-
-Update the backend CORS allowed origins:
+Enable IP forwarding (required for subnet routing — if you already ran these, running again is harmless):
 
 ```bash
-sed -i 's|100.x.y.z|100.64.1.42|g' /opt/muni/app/backend/.env
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/99-tailscale.conf
+echo 'net.ipv6.conf.all.forwarding = 1' >> /etc/sysctl.d/99-tailscale.conf
+sysctl -p /etc/sysctl.d/99-tailscale.conf
 ```
 
-Update the frontend API URL:
+Tell Tailscale to advertise your LAN subnet:
 
 ```bash
-sed -i 's|100.x.y.z|100.64.1.42|g' /opt/muni/app/frontend/.env.local
+tailscale up --advertise-routes=10.0.0.0/24
 ```
 
-Verify both files look correct:
+Verify Tailscale is running and the route is being advertised:
 
 ```bash
-cat /opt/muni/app/backend/.env
-cat /opt/muni/app/frontend/.env.local
+tailscale status
 ```
 
-The backend `.env` should have your Tailscale IP in the `CORS_ORIGINS` line.
-The frontend `.env.local` should show `NEXT_PUBLIC_API_URL=http://100.64.1.42`.
+You should see Roman listed as a node. The output will mention the subnet route.
 
-Rebuild the frontend so it bakes in the correct API URL:
+---
+
+### Step 13b — Approve the subnet route in the Tailscale admin console
+
+This one-time approval step must be done from a browser:
+
+1. Go to **https://login.tailscale.com/admin/machines**
+2. Find **Roman** in the machine list
+3. Click the **`...`** menu next to Roman → **Edit route settings**
+4. You will see `10.0.0.0/24` listed — toggle it **on**
+5. Click **Save**
+
+After approval, any device connected to your Tailscale account can reach `10.0.0.48` (muni), `10.0.0.11` (Roman Proxmox UI), and everything else on your LAN.
+
+---
+
+### Step 13c — Install Tailscale on your devices
+
+On every device you want to use to access Muni:
+
+- **iPhone / Android**: Install the Tailscale app from the App Store or Play Store. Sign in with the same account.
+- **Windows / Mac laptop**: Download from tailscale.com. Sign in with the same account.
+
+Once connected, open a browser and go to:
+
+```
+http://10.0.0.48
+```
+
+You should see the Muni login screen.
+
+---
+
+### Step 13d — Verify from inside the muni container
+
+Back inside the muni container (not Roman), verify the app is reachable at its LAN IP:
 
 ```bash
-sudo -u muni -H bash -lc '
-cd /opt/muni/app/frontend
-npm run build
-'
+curl http://10.0.0.48/health
 ```
 
-Restart both services to pick up the new environment:
-
-```bash
-systemctl restart muni-backend muni-frontend
-```
+Expected: `{"status":"ok"}`
 
 ---
 
 ## Step 14 — Set Up Nginx
 
-Nginx sits in front of both services and routes requests — `/api/` goes to the backend on port 8000, everything else goes to the frontend on port 3000. This means you access the app on port 80 instead of manually specifying ports.
+Nginx sits in front of both services and routes requests — `/api/` goes to the backend on port 8000, everything else goes to the frontend on port 3000. This means you access the app on port 80 with no port number in the URL.
 
 Create the Nginx config for Muni:
 
@@ -592,17 +621,10 @@ nginx -t
 
 Expected output: `syntax is ok` and `test is successful`.
 
-Enable Nginx so it starts on boot and start it now:
+Reload Nginx to apply the config:
 
 ```bash
-systemctl enable nginx
-systemctl start nginx
-```
-
-Verify Nginx is running:
-
-```bash
-systemctl status nginx --no-pager
+systemctl reload nginx
 ```
 
 Test that the full stack works through Nginx:
@@ -631,18 +653,10 @@ On every device you want to access Muni from:
 Once signed in on a device, open a browser and go to:
 
 ```
-http://100.64.1.42
+http://10.0.0.48
 ```
 
-(Replace with your actual Tailscale IP from Step 13)
-
-You should see the Muni login page.
-
-Log in with:
-- Username: `keaton` Password: `finance123`
-- Username: `katherine` Password: `finance123`
-
-**Change both passwords immediately** via Settings → Change Password inside the app.
+You should see the Muni login screen. Click **Keaton** or **Katherine** to log in — no password required.
 
 ---
 
@@ -778,7 +792,7 @@ chmod +x /usr/local/bin/muni-deploy
 Run these checks to confirm everything is working end to end:
 
 ```bash
-# All four services running
+# All services running
 systemctl status muni-backend --no-pager
 systemctl status muni-frontend --no-pager
 systemctl status nginx --no-pager
@@ -793,25 +807,35 @@ curl -I http://localhost
 ```
 
 ```bash
-# Tailscale connectivity (replace with your IP)
-curl -I http://100.64.1.42
+# LAN connectivity (reachable via Tailscale subnet route on Roman)
+curl -I http://10.0.0.48
 ```
 
-Open `http://100.64.1.42` in your phone browser and log in. Setup is complete.
+Open `http://10.0.0.48` in your phone browser (with Tailscale connected) and click Keaton or Katherine to log in. Setup is complete.
 
 ---
 
 ---
 
-# PART 2 — DAILY STARTUP
+# PART 2 — DAILY STARTUP AND AUTO-START
 
-## When You Turn the Proxmox Server On
+## How Auto-Start Works
 
-When the Dell OptiPlex powers on, Proxmox boots automatically. The LXC containers **do not start automatically by default** unless you configured autostart. Here is how to handle both cases.
+If you followed this guide, **everything starts automatically**. You do not need to do anything after a power on or reboot. Here is what happens in order:
 
-### Option A — Configure autostart (recommended, do this once)
+1. Proxmox host (Roman) boots → Tailscale on Roman starts automatically (systemctl enabled on Roman)
+2. Proxmox host boots → CT 102 (muni) starts automatically (if you configured autostart — see below)
+3. CT 102 boots → `muni-backend` starts automatically (systemctl enabled in Step 12)
+4. CT 102 boots → `muni-frontend` starts automatically (systemctl enabled in Step 12)
+5. CT 102 boots → `nginx` starts automatically (systemctl enabled in Step 12)
 
-This makes CT 102 start automatically whenever Proxmox boots — you never have to think about it.
+After about 15–20 seconds from power on, the app is accessible at `http://10.0.0.48` from any Tailscale-connected device.
+
+---
+
+## Configure CT 102 to Start Automatically When Proxmox Boots
+
+Do this once. Without it, you have to manually start the container in the Proxmox UI every time.
 
 1. In the Proxmox UI, click **CT 102 (muni)** in the left panel
 2. Click **Options**
@@ -819,31 +843,35 @@ This makes CT 102 start automatically whenever Proxmox boots — you never have 
 4. Set it to **Yes**
 5. Click **OK**
 
-After this, CT 102 starts by itself on every boot. The `muni-backend`, `muni-frontend`, and `nginx` services start automatically inside the container because you ran `systemctl enable` on them in Step 12 and 14.
+From now on, the entire stack — container, Tailscale, backend, frontend, and Nginx — comes up on its own whenever the server powers on.
 
-### Option B — Start the container manually
+---
+
+## Starting the Container Manually (if autostart is off)
 
 If autostart is not configured, after Proxmox boots:
 
 1. Log into the Proxmox UI at `https://<proxmox-ip>:8006`
 2. Click **CT 102 (muni)** in the left panel
 3. Click **Start** at the top
-4. Wait 10–15 seconds for the container to boot
-5. The services start automatically inside the container — you do not need to do anything else
+4. Wait 15–20 seconds for the container to boot and all services to start
+5. The services start automatically inside the container — you do not need to open the console or run any commands
 
-### Verify everything started after boot
+---
 
-After the container is running, open its console (Proxmox UI → CT 102 → Console) and run:
+## Verify Everything Started After Boot
+
+To confirm all services are up, open the container console (Proxmox UI → CT 102 → Console) or SSH in, then:
 
 ```bash
-systemctl status muni-backend --no-pager
-systemctl status muni-frontend --no-pager
-systemctl status nginx --no-pager
+systemctl status muni-backend muni-frontend nginx --no-pager
 ```
 
 All three should show `Active: active (running)`.
 
-If any are not running, start them manually:
+> **Tailscale runs on Roman, not inside this container.** If the app is unreachable from outside your home network, check Tailscale status on Roman: `ssh root@10.0.0.11` then `tailscale status`.
+
+If any container services are not running, start them manually:
 
 ```bash
 systemctl start muni-backend
@@ -861,15 +889,13 @@ systemctl start nginx
 
 ### To stop the app without shutting down the server
 
-Stop the services inside the container:
+Stop the services inside the container in this order:
 
 ```bash
 systemctl stop muni-frontend
 systemctl stop muni-backend
 systemctl stop nginx
 ```
-
-Stop in that order — frontend first, then backend, then nginx.
 
 ### To shut down the container completely
 
@@ -906,9 +932,10 @@ Or from the Proxmox UI: Node → **Shutdown** button at the top right.
 | Branch | Purpose |
 |---|---|
 | `main` | Stable, production-ready — **always deploy from this** |
-| `feature/insights` | Active development — do not deploy until merged to main |
+| `dev` | Integration testing — merged into main when ready |
+| `feature/*` | Active development — do not deploy until merged to main |
 
-New features are developed on `feature/insights`. When they are ready and tested, they get merged into `main`. You then pull `main` on the server.
+New features are developed on feature branches, merged to `dev` for testing, then merged to `main`. You then pull `main` on the server.
 
 ---
 
@@ -1016,8 +1043,7 @@ npm run build
 **Step 6 — Restart the services**
 
 ```bash
-systemctl restart muni-backend
-systemctl restart muni-frontend
+systemctl restart muni-backend muni-frontend
 ```
 
 **Step 7 — Verify they came back up**
@@ -1041,9 +1067,9 @@ sudo -u muni -H bash -lc 'cd /opt/muni/app && git log --oneline -10'
 
 Example output:
 ```
-9bf25bd3 Add production deploy workflow
-d9c606a3 Rewrite PROXMOX_SETUP for Muni
-90c95d22 Add bug fixes: transaction names, calendar legend
+9bf25bd3 Add AI report and email notifications
+d9c606a3 Remove password auth — profile picker
+90c95d22 Fix transaction import bug
 ```
 
 Roll back to a specific commit (replace `90c95d22` with the hash you want):
@@ -1088,80 +1114,333 @@ Then run `muni-deploy` again.
 
 # PART 5 — TROUBLESHOOTING
 
-## Service won't start
+Every error you might encounter is documented here. Read the exact error message, find the matching section, and follow the steps.
+
+---
+
+## App not reachable from outside home network / Tailscale not working
+
+**Symptom:** You can reach `http://10.0.0.48` from devices on your home Wi-Fi, but not from your phone on mobile data or from a remote laptop.
+
+**Cause:** Tailscale subnet routing is not active on Roman, or the route has not been approved in the admin console, or the device you're connecting from is not signed into Tailscale.
+
+**Fix — check each in order:**
+
+**1. Verify Tailscale is running on Roman:**
+
+```bash
+# SSH into Roman, or use Proxmox node → Shell
+ssh root@10.0.0.11
+tailscale status
+```
+
+If the output shows `Stopped` or `tailscale: command not found`, start it:
+
+```bash
+systemctl start tailscaled
+systemctl enable tailscaled
+tailscale up
+```
+
+**2. Verify the subnet route is being advertised:**
+
+```bash
+# On Roman
+tailscale status --active
+```
+
+Look for a line showing `10.0.0.0/24` in the routes section. If it's missing, re-run:
+
+```bash
+tailscale up --advertise-routes=10.0.0.0/24
+```
+
+**3. Verify the route is approved in the admin console:**
+
+Go to **https://login.tailscale.com/admin/machines** → find Roman → **Edit route settings** → confirm `10.0.0.0/24` is toggled on.
+
+**4. Verify the connecting device is on Tailscale:**
+
+On your phone or laptop, open the Tailscale app and confirm it shows as connected. Disconnect and reconnect if needed.
+
+**5. Test the connection:**
+
+From a Tailscale-connected device (not on your home Wi-Fi):
+
+```bash
+curl http://10.0.0.48/health
+```
+
+Expected: `{"status":"ok"}`
+
+---
+
+## Tailscale subnet routing was working, now stopped
+
+**Cause:** Roman rebooted and Tailscale's `tailscaled` service didn't start automatically.
+
+**Fix — on Roman:**
+
+```bash
+systemctl enable tailscaled   # ensure it auto-starts on boot
+systemctl start tailscaled
+sleep 3
+tailscale up --advertise-routes=10.0.0.0/24
+```
+
+To prevent this permanently, verify it's enabled:
+
+```bash
+systemctl is-enabled tailscaled
+```
+
+Should output: `enabled`
+
+---
+
+## Tailscale: IP forwarding not working after Roman reboot
+
+If subnet routing stops after Roman reboots, verify the sysctl settings persisted:
+
+```bash
+# On Roman
+sysctl net.ipv4.ip_forward
+```
+
+Expected: `net.ipv4.ip_forward = 1`
+
+If it shows `0`, the file wasn't saved properly. Re-run:
+
+```bash
+echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-tailscale.conf
+echo 'net.ipv6.conf.all.forwarding = 1' >> /etc/sysctl.d/99-tailscale.conf
+sysctl -p /etc/sysctl.d/99-tailscale.conf
+```
+
+---
+
+## Login does nothing when clicking Keaton or Katherine
+
+**Symptom:** Clicking the profile cards on the login screen does nothing. The backend logs show:
+```
+POST /api/v1/auth/switch/keaton HTTP/1.1" 404 Not Found
+```
+
+**Cause:** The database was not seeded — the users `keaton` and `katherine` do not exist in the database.
+
+**Fix:**
+
+```bash
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/backend
+source venv/bin/activate
+python seed/seed_data.py
+'
+```
+
+Expected output: `Created users: keaton, katherine`
+
+If it says "Database already seeded. Skipping." but login still fails, the database may be corrupt or in a different location. Check:
+
+```bash
+ls -la /opt/muni/app/backend/finance.db
+```
+
+If the file is 0 bytes or missing, delete it and re-seed:
+
+```bash
+rm -f /opt/muni/app/backend/finance.db
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/backend
+source venv/bin/activate
+alembic upgrade head
+python seed/seed_data.py
+'
+systemctl restart muni-backend
+```
+
+---
+
+## Backend service won't start
+
+Check the full error logs:
+
+```bash
+journalctl -u muni-backend -n 100 --no-pager
+```
+
+Look for error messages near the bottom.
+
+**Common causes:**
+
+**Missing `.env` file:**
+```
+EnvironmentFile=/opt/muni/app/backend/.env: No such file or directory
+```
+Fix: Create the `.env` file following Step 10 of this guide.
+
+**Missing Python package:**
+```
+ModuleNotFoundError: No module named 'xxx'
+```
+Fix:
+```bash
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/backend
+source venv/bin/activate
+pip install -r requirements.txt
+'
+systemctl restart muni-backend
+```
+
+**Port already in use:**
+```
+error: [Errno 98] Address already in use
+```
+Fix:
+```bash
+fuser -k 8000/tcp
+systemctl restart muni-backend
+```
+
+**Database permission error:**
+```
+sqlite3.OperationalError: unable to open database file
+```
+Fix:
+```bash
+chown muni:muni /opt/muni/app/backend/finance.db
+chmod 644 /opt/muni/app/backend/finance.db
+systemctl restart muni-backend
+```
+
+---
+
+## Frontend service won't start
 
 Check the logs:
 
 ```bash
-journalctl -u muni-backend -n 50 --no-pager
+journalctl -u muni-frontend -n 100 --no-pager
 ```
 
+**Common causes:**
+
+**Build not run:**
+```
+Error: Cannot find module '.next/server/app/page_client-reference-manifest.js'
+```
+Fix: The frontend was never built or the build failed.
 ```bash
-journalctl -u muni-frontend -n 50 --no-pager
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/frontend
+npm install
+npm run build
+'
+systemctl restart muni-frontend
 ```
 
-Look for error messages near the bottom of the output.
+**Node not found:**
+```
+/usr/bin/npm: not found
+```
+Fix:
+```bash
+which node && which npm
+```
+If those return nothing, reinstall Node:
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+```
 
-## Frontend shows blank page or can't reach API
+---
 
-Check the frontend `.env.local` has the correct Tailscale IP:
+## Frontend shows blank page or "Failed to fetch" / can't reach API
+
+**Cause:** The `NEXT_PUBLIC_API_URL` in the frontend `.env.local` has the wrong IP, or the backend is not running.
+
+Check the current config:
 
 ```bash
 cat /opt/muni/app/frontend/.env.local
 ```
 
-If the IP is wrong, update it:
+It should show `NEXT_PUBLIC_API_URL=http://10.0.0.48` (muni's LAN IP). If it shows a different IP or a `100.x.y.z` Tailscale IP, update it:
 
 ```bash
 nano /opt/muni/app/frontend/.env.local
 ```
 
-Change the `NEXT_PUBLIC_API_URL` line, save (`Ctrl+X` → `Y` → `Enter`), then rebuild:
+Change the `NEXT_PUBLIC_API_URL` line to `http://10.0.0.48`, save (`Ctrl+X` → `Y` → `Enter`), then rebuild and restart:
 
 ```bash
-sudo -u muni -H bash -lc 'cd /opt/muni/app/frontend && npm run build'
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/frontend
+npm run build
+'
 systemctl restart muni-frontend
 ```
 
-## Tailscale IP changed
-
-The Tailscale IP is permanent and should never change unless you re-install Tailscale. If for some reason it did:
+Also verify the backend is actually running:
 
 ```bash
-tailscale ip -4
+curl http://127.0.0.1:8000/health
 ```
 
-Get the new IP, then update both env files:
+If that fails, restart the backend:
 
 ```bash
-nano /opt/muni/app/backend/.env
-nano /opt/muni/app/frontend/.env.local
+systemctl restart muni-backend
 ```
 
-Then rebuild and restart:
+---
 
-```bash
-sudo -u muni -H bash -lc 'cd /opt/muni/app/frontend && npm run build'
-systemctl restart muni-backend muni-frontend
-```
+---
 
-## Nginx error
+## Nginx error / 502 Bad Gateway
 
-Test the config:
+Test the Nginx config for syntax errors:
 
 ```bash
 nginx -t
 ```
 
-View logs:
+View recent Nginx logs:
 
 ```bash
 journalctl -u nginx -n 50 --no-pager
 ```
 
-## CSV/file upload fails
+**502 Bad Gateway** means Nginx is running but cannot reach the backend or frontend. Check:
 
-The uploaded file is too large. Increase the limit in the Nginx config:
+```bash
+curl http://127.0.0.1:8000/health   # backend
+curl -I http://127.0.0.1:3000       # frontend
+```
+
+If either fails, start the failing service:
+
+```bash
+systemctl start muni-backend
+systemctl start muni-frontend
+```
+
+---
+
+## Nginx: "sites-enabled/muni already exists" when setting up
+
+```bash
+rm /etc/nginx/sites-enabled/muni
+ln -s /etc/nginx/sites-available/muni /etc/nginx/sites-enabled/muni
+nginx -t && systemctl reload nginx
+```
+
+---
+
+## CSV or file upload fails / 413 Request Entity Too Large
+
+The uploaded file is too large for the current Nginx config. Increase the limit:
 
 ```bash
 nano /etc/nginx/sites-available/muni
@@ -1173,9 +1452,11 @@ Change `client_max_body_size 25M;` to `client_max_body_size 50M;`, save, then re
 nginx -t && systemctl reload nginx
 ```
 
+---
+
 ## "alembic upgrade head" says "table already exists"
 
-This happens when the database was created before Alembic ran. Fix it once with:
+This happens when the database was created by the app before Alembic ran its migrations. Fix it once with:
 
 ```bash
 sudo -u muni -H bash -lc '
@@ -1186,6 +1467,20 @@ alembic stamp head
 ```
 
 Then run `alembic upgrade head` again — it will say "Already up to date."
+
+---
+
+## bcrypt warning on startup or seed
+
+**Warning text:**
+```
+(trapped) error reading bcrypt version
+AttributeError: module 'bcrypt' has no attribute '__about__'
+```
+
+**This is harmless.** It is a compatibility warning between the `passlib` library and newer versions of `bcrypt`. The app works correctly. You can ignore this warning entirely. It appears because `passlib 1.7.4` tries to read `bcrypt.__about__.__version__` which no longer exists in `bcrypt 4.x`.
+
+---
 
 ## Database is corrupt or missing
 
@@ -1203,12 +1498,76 @@ chown muni:muni /opt/muni/app/backend/finance.db
 systemctl restart muni-backend
 ```
 
-## Check resource usage
+If there are no backups and the database is completely gone, re-create it from scratch:
+
+```bash
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/backend
+source venv/bin/activate
+alembic upgrade head
+python seed/seed_data.py
+'
+systemctl restart muni-backend
+```
+
+Note: this wipes all transaction data. Only do this if there is no backup.
+
+---
+
+## Service shows "active (running)" but app is not accessible
+
+The service is up but something is blocking access. Work through this checklist:
+
+1. **Is Tailscale running on Roman (not inside this container)?**
+   ```bash
+   # SSH into Roman or use Proxmox node → Shell
+   ssh root@10.0.0.11
+   tailscale status
+   ```
+   If stopped: `systemctl start tailscaled && tailscale up --advertise-routes=10.0.0.0/24`
+
+2. **Is Nginx running?**
+   ```bash
+   systemctl status nginx --no-pager
+   curl -I http://localhost
+   ```
+
+3. **Can you reach the backend internally?**
+   ```bash
+   curl http://127.0.0.1:8000/health
+   ```
+
+4. **Is your device on Tailscale?**
+   On your phone or laptop, open the Tailscale app and make sure it shows as connected.
+
+5. **Are you using the right IP?**
+   The muni container is at `10.0.0.48`. Open `http://10.0.0.48` in the browser — no `https`, no extra port number. This IP is reachable from any Tailscale-connected device because Roman advertises the 10.0.0.0/24 subnet.
+
+---
+
+## Container uses too much RAM and the build fails
+
+The `npm run build` step uses ~700 MB of RAM. If the container only has 1 GB of RAM, the build will fail with an out-of-memory error.
+
+Fix: increase the container RAM in Proxmox.
+
+1. Stop the container: Proxmox UI → CT 102 → Shutdown
+2. Click **Resources** → **Memory**
+3. Set Memory to `2048` MiB
+4. Click **OK**
+5. Start the container and retry the build
+
+---
+
+## Check overall resource usage
 
 See how much RAM and CPU the container is using:
 
 ```bash
 free -h
+```
+
+```bash
 top
 ```
 
@@ -1222,24 +1581,29 @@ Press `q` to exit `top`.
 
 Print or save this section for day-to-day use.
 
-### Start everything
+### Check status of everything (inside muni container)
+```bash
+systemctl status muni-backend muni-frontend nginx --no-pager
+```
+
+### Check Tailscale status (on Roman, not muni)
+```bash
+ssh root@10.0.0.11 'tailscale status'
+```
+
+### Start everything (inside muni container)
 ```bash
 systemctl start muni-backend muni-frontend nginx
 ```
 
-### Stop everything
+### Stop everything (inside muni container)
 ```bash
 systemctl stop muni-frontend muni-backend nginx
 ```
 
-### Restart everything
+### Restart everything (inside muni container)
 ```bash
 systemctl restart muni-backend muni-frontend nginx
-```
-
-### Check status
-```bash
-systemctl status muni-backend muni-frontend nginx --no-pager
 ```
 
 ### View live logs (backend)
@@ -1272,7 +1636,18 @@ cd /opt/muni/app && git fetch origin && git log HEAD..origin/main --oneline
 muni-backup
 ```
 
-### App URL (from any Tailscale device)
+### Re-seed the database (if login fails)
+```bash
+sudo -u muni -H bash -lc 'cd /opt/muni/app/backend && source venv/bin/activate && python seed/seed_data.py'
 ```
-http://<your-tailscale-ip>
+
+### App URL (from any Tailscale-connected device)
+```
+http://10.0.0.48
+```
+
+### Tailscale subnet routing (run on Roman if remote access stops working)
+```bash
+ssh root@10.0.0.11
+tailscale up --advertise-routes=10.0.0.0/24
 ```
