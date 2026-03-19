@@ -12,6 +12,8 @@ backend/venv/
 # Next.js
 .next/
 out/
+tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
 
 # Build outputs
 dist/

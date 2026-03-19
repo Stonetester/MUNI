@@ -1,70 +1,101 @@
-# FinanceTrack — Claude Project Context
-_Last updated: 2026-03-18 (session 3). See NEXT_PHASE_PLAN.md for the full build plan._
+# Muni — Claude Project Context
+_Last updated: 2026-03-19 (session 4). See NEXT_PHASE_PLAN.md for the full build plan._
 
 ---
 
 ## Stack
-- **Backend**: Python FastAPI + SQLAlchemy + SQLite (default) / PostgreSQL + Alembic + Uvicorn port 8000
+- **Backend**: Python FastAPI + SQLAlchemy + SQLite + Alembic + Uvicorn port 8000
 - **Frontend**: Next.js 14 (App Router) + TypeScript + Tailwind CSS (dark theme) + Recharts port 3000
-- **Auth**: JWT 30-day tokens, two seeded users: `keaton` / `katherine`
+- **Auth**: JWT 30-day tokens, **no passwords** — two profiles: `keaton` / `katherine`. Login is a profile picker that calls `/auth/switch/{username}` (no password required). Tailscale subnet routing is the security layer.
 - **Repo**: https://github.com/Stonetester/MUNI.git
 
 ---
 
-## Git State (as of 2026-03-18)
-- **Current branch**: `feature/insights` (active development — all recent work here)
-- **Branches**:
-  - `main` — stable, clean, pushed to origin
-  - `dev` — all cleanup + Docker + bug fixes committed and pushed
-  - `feature/insights` — all new feature work, committed and pushed to origin
-- **Remote codex branches**: both deleted
-- **Next step**: when new phase (Google Sheets + Financial Profile) is complete, merge `feature/insights` → `dev` → `main`
+## Production Server
+- **Proxmox host**: Roman — `10.0.0.11`
+- **Muni container**: CT 102 — `10.0.0.48`
+- **Access URL**: `http://10.0.0.48` (via Tailscale subnet routing on Roman)
+- **Tailscale**: runs on Roman only — advertises `10.0.0.0/24` so all LAN devices including CT 102 are reachable from any Tailscale device without installing Tailscale in each container
+- **Full setup guide**: `PROXMOX_SETUP.md` — covers initial setup, daily startup, shutdown, deploy, rollback, and troubleshooting
+
+### Production Startup
+The container and all services start automatically on Proxmox boot via systemd. Manual start:
+```bash
+# SSH into muni container
+ssh root@10.0.0.48
+systemctl start muni-backend muni-frontend nginx
+# Verify
+systemctl status muni-backend muni-frontend nginx
+```
+
+### Production Shutdown
+```bash
+# Stop services only (keep container running)
+systemctl stop muni-backend muni-frontend nginx
+# Full container shutdown
+shutdown -h now
+# Or: Proxmox UI → CT 102 → Shutdown
+```
+
+### Deploy an Update
+```bash
+# SSH into muni container
+ssh root@10.0.0.48
+muni-deploy
+```
+The `muni-deploy` script: pulls from `main`, runs alembic migrations, rebuilds frontend, restarts services.
+
+### Re-seed Database (if login fails / empty DB)
+```bash
+sudo -u muni -H bash -lc '
+cd /opt/muni/app/backend
+source venv/bin/activate
+alembic upgrade head
+python seed/seed_data.py
+'
+systemctl restart muni-backend
+```
 
 ---
 
-## All Completed Tasks
-
-### Done on `dev` branch
-1. ✅ Untracked personal/binary files (`finance.db*`, `seed_transactions.json`, `backend_log.txt`) — added to `.gitignore` + `git rm --cached`
-2. ✅ Added `backend/Dockerfile`, `frontend/Dockerfile`, `backend/.dockerignore`, `frontend/.dockerignore`
-3. ✅ Fixed `api.ts` `createSnapshot()` — now calls `/balance-snapshots` (was `/snapshots`)
-4. ✅ Cleaned `README.md` — removed real account balances and personal transaction counts
-5. ✅ Cleaned `USER_GUIDE.md` — replaced Keaton/Katherine with User 1/User 2
-6. ✅ Removed hardcoded credentials from `settings/page.tsx` About card
-7. ✅ Added Tailscale section (§11) to `PROXMOX_SETUP.md`
-8. ✅ Fixed `docker-compose.yml` CORS_ORIGINS to include production domain
-9. ✅ Pushed `dev` to origin; deleted remote codex branches
-10. ✅ Updated `.gitignore` to exclude `__pycache__/` and `frontend/.next/`
-
-### Done on `feature/insights` branch
-11. ✅ **Tutorial modal** — `?` button in sidebar footer + mobile More drawer → 10-step walkthrough
-12. ✅ **Spending Calendar** (`/calendar`) — monthly grid with SVG pie charts per day (category color-coded), click day → transaction detail modal
-13. ✅ **Profile Switcher** — header button to store a second user's JWT and toggle between keaton/katherine without logging out
-14. ✅ **Clickable chart months** — Monthly Cash Flow, Net Worth Projection, Cash Flow Forecast → click any bar/point → MonthDetailModal with category breakdown
-15. ✅ **Spending Insights** (`/insights`) — health scorecard, trend analysis, z-score anomaly detection, debt payoff scenarios
-16. ✅ **Seed script cleaned** — `backend/seed/seed_data.py` now creates only users + default categories (no personal financial data). App starts clean.
-17. ✅ **Getting Started guide** (`/getting-started`) — interactive 6-section checklist: add accounts, import CSV, enter balances, recurring rules, budgets, life events. In sidebar + mobile nav.
-18. ✅ **bcrypt pinned** — `bcrypt==4.0.1` in `requirements.txt` to fix passlib 1.7.4 incompatibility with bcrypt 4.1+
-19. ✅ **NEXT_PHASE_PLAN.md** — full plan for Google Sheets sync + Financial Profile page saved at repo root
+## Git State (as of 2026-03-19)
+- **Active branch**: `main` — all work merged here, pushed to origin
+- **All branches merged into main**:
+  - `dev` — Docker, cleanup, bug fixes
+  - `feature/insights` — calendar, insights, profile switcher, tutorial, getting started
+  - `feature/mobile-ai-reports` — AI report page, email notifications
+- **Workflow**: develop locally on `main` (or a feature branch), push to origin, then `muni-deploy` on the server
 
 ---
 
-## Known Working Features
-- ✅ Login (`/login`)
-- ✅ Dashboard: net worth, monthly flow (clickable months), accounts grid, spending chart, forecast preview, recent transactions
-- ✅ Transactions: paginated list, import CSV/XLSX, add/edit/delete, filters
-- ✅ Accounts: CRUD, balance history chart (via `/balance-snapshots?account_id=`)
-- ✅ Budget: categories with budget_amount, recurring rules, spending vs budget
-- ✅ Forecast: 60-month net worth + cash flow charts (both clickable months), category table, scenario selector
-- ✅ Life Events: CRUD
-- ✅ What-If Scenarios: clone baseline, compare two scenarios
-- ✅ Alerts: over-budget categories + upcoming event payments
-- ✅ Settings: change password (POST /auth/change-password)
-- ✅ Calendar (`/calendar`): day-level spending pie charts, click for detail
-- ✅ Insights (`/insights`): health scorecard, trend analysis, debt payoff scenarios
-- ✅ Tutorial: `?` button in sidebar → step-by-step walkthrough modal
-- ✅ Getting Started (`/getting-started`): interactive setup checklist for new users
-- ✅ Profile Switcher: toggle between keaton/katherine JWT without logging out
+## All Completed Features
+
+### Infrastructure & Auth
+1. ✅ **No-password auth** — login page is a profile picker; backend `/auth/switch/{username}` issues JWT with no password
+2. ✅ **Profile Switcher** — header button stores second user's JWT, toggles without logout
+3. ✅ **Settings page** — shows Keaton/Katherine profile cards (active/inactive), Google Sheets sync config, email notifications, about card
+4. ✅ **bcrypt pinned** — `bcrypt==4.0.1` in `requirements.txt` (passlib 1.7.4 compatibility)
+5. ✅ **Seed script** — creates users + categories only, no personal data
+6. ✅ **Production deploy** — `muni-deploy` script, systemd auto-start, nginx reverse proxy
+7. ✅ **Tailscale subnet routing** — Roman (10.0.0.11) advertises 10.0.0.0/24; muni at 10.0.0.48
+8. ✅ **`backend/venv/` removed from git** — Windows venv broke Linux server; now gitignored properly
+
+### App Features
+9. ✅ Dashboard: net worth, monthly flow (clickable months), accounts grid, spending chart, forecast preview, recent transactions
+10. ✅ Transactions: paginated list, import CSV/XLSX, add/edit/delete, filters
+11. ✅ Accounts: CRUD, balance history chart (via `/balance-snapshots?account_id=`)
+12. ✅ Budget: categories with budget_amount, recurring rules, spending vs budget
+13. ✅ Forecast: 60-month net worth + cash flow charts (both clickable months), category table, scenario selector
+14. ✅ Life Events: CRUD
+15. ✅ What-If Scenarios: clone baseline, compare two scenarios
+16. ✅ Alerts: over-budget categories + upcoming event payments
+17. ✅ Spending Calendar (`/calendar`): monthly grid with day-level pie charts, click for transaction detail
+18. ✅ Spending Insights (`/insights`): health scorecard, trend analysis, z-score anomaly detection, debt payoff scenarios
+19. ✅ AI Financial Report (`/ai-report`): Claude-powered monthly report
+20. ✅ Notifications (`/notifications`): weekly email digest, SMTP config, preview
+21. ✅ Google Sheets Sync (`/settings`): connect sheet ID, auto-sync every 30 min, manual sync
+22. ✅ Tutorial modal: `?` button in sidebar → 10-step walkthrough
+23. ✅ Getting Started (`/getting-started`): interactive 6-section setup checklist
 
 ---
 
@@ -79,46 +110,38 @@ _Last updated: 2026-03-18 (session 3). See NEXT_PHASE_PLAN.md for the full build
   - `Sidebar.tsx` — desktop nav (includes `?` tutorial button in footer, "Get Started" link)
   - `MobileNavBar.tsx` — mobile bottom nav + More drawer
   - `ProfileSwitcher.tsx` — dual-user token switcher
-  - `TutorialModal.tsx` — 10-step app walkthrough (step 1 links to /getting-started)
+  - `TutorialModal.tsx` — 10-step app walkthrough
 - All pages: `frontend/src/app/`
   - `/dashboard`, `/transactions`, `/accounts`, `/budget`, `/forecast`
-  - `/events`, `/scenarios`, `/alerts`, `/settings`, `/login`
+  - `/events`, `/scenarios`, `/alerts`, `/settings`, `/notifications`, `/login`
   - `/calendar` — spending calendar with day-level pie charts
   - `/insights` — statistical spending analysis page
+  - `/ai-report` — Claude-powered monthly financial report
   - `/getting-started` — interactive new-user setup guide
 - UI components: `frontend/src/components/ui/`
   - `MonthDetailModal.tsx` — clickable month detail (forecast data + category breakdown)
-- Auth: `frontend/src/lib/auth.ts` — includes `getAltToken`, `storeAltProfile`, `switchProfiles`
-- Seed script: `backend/seed/seed_data.py` — creates users + categories only (no personal data)
-- Next phase plan: `NEXT_PHASE_PLAN.md` — full plan for Phase 3 features
+- Auth: `frontend/src/lib/auth.ts` — `login()`, `switchProfiles()`, `getAltUser()`, `storeAltProfile()`
+- Seed script: `backend/seed/seed_data.py` — creates users + categories only
+- Production guide: `PROXMOX_SETUP.md` — complete server setup + ops docs
+- Next phase plan: `NEXT_PHASE_PLAN.md` — Phase 3 & 4 planned features
 
 ---
 
 ## User Financial Data (Keaton)
 _Used when building projections, profile defaults, loan trackers._
 
-- **Salary**: ~$130,935/yr gross ($5,455.63/period × 24 — verified from March 2026 paystub); net ~$3,503.78/paycheck; semi-monthly (24 pay periods/yr). Old figure $116,500 was stale.
-- **Student Loans** (two loans, remaining balances as of 2026-03-18):
+- **Salary**: ~$130,935/yr gross ($5,455.63/period × 24 — verified from March 2026 paystub); net ~$3,503.78/paycheck; semi-monthly (24 pay periods/yr)
+- **Student Loans** (balances as of 2026-03-18):
   - Loan 1: **$343.35** @ 4.80% — nearly paid off
   - Loan 2: **$1,921.40** @ 4.28% — nearly paid off
-  - Payments tracked via "Student Loans" category transactions
 - **401k** (Fidelity):
   - Employee contribution: $380/paycheck
-  - Employer Safe Harbor: 6% of gross salary = **$327.34/paycheck** (verified from March 2026 stub; $130,935 × 6% ÷ 24 = $327.34 exactly)
-  - Note: Safe Harbor IS the 6% employer contribution — not a separate line
+  - Employer Safe Harbor: 6% = **$327.34/paycheck**
   - Starting balance: $68,534.76
-  - Fund allocations: to be entered by user in Financial Profile page (not yet built)
-- **IRA** (Schwab funds):
-  - $225/month → SWPPX (Schwab S&P 500 Index, ~10.4% historical return)
-  - $225/month → SWISX (Schwab International Index, ~6.8% historical return)
-  - Starting balance: $3,516.68
-  - Allocation note: 50/50 split is solid; 60/40 SWPPX/SWISX also defensible
-- **HYSA** (EverBank):
-  - APY: 3.9%
-  - Monthly contribution: $1,600/month
-  - Starting balance: $12,526.74
+- **IRA** (Schwab): $225/month → SWPPX + $225/month → SWISX; starting balance: $3,516.68
+- **HYSA** (EverBank): 3.9% APY, $1,600/month contribution, starting balance: $12,526.74
 - **Wedding**: Oct 2026, ~$62,702 total cost
-- **Katherine**: same account types (401k, IRA, loans, HYSA) — different values, to be entered by her in her own Financial Profile
+- **Katherine**: same account types — different values, to be entered in her Financial Profile
 
 ---
 
@@ -126,100 +149,54 @@ _Used when building projections, profile defaults, loan trackers._
 _See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
 
 ### A. Paystub PDF Parser
-- Upload paystub PDF (or image) → **pdfplumber** extracts all text (free, no API needed)
-- Regex patterns map text to structured fields (Paylocity format confirmed working from March 6 2026 stub)
-- Extracts: gross pay, regular/holiday/OT pay, all taxes (FITW/MD/MD-CAL1/SS/MED), all deductions (401k $380, dental $1.84, vision $0.39, GTL/VLIFE life ins, AD&D, ER STD/LTD), employer Safe Harbor 401k ($327.34/period = the 6%), net pay, all YTD figures
-- User reviews pre-filled form → confirms → saves to DB
-- `/paystubs` page: upload, timeline, summary stats (YTD income, effective tax rate, YTD 401k employee + employer)
-- **No API key required** — pdfplumber is free and local
-- Fallback to pytesseract for scanned PDFs (requires `winget install UB-Mannheim.TesseractOCR`)
+- Upload paystub PDF → pdfplumber extracts all fields (Paylocity format confirmed)
+- Extracts: gross/net pay, all taxes, all deductions, 401k employee + employer, YTD figures
+- `/paystubs` page: upload, timeline, summary stats
+- **No API key** — pdfplumber is free and local
 
 ### B. Historical Data Entry
-- **Past paystubs**: same upload+parse flow, any date; multi-file batch upload
-- **Investment statements**: manual entry form for 401k/IRA quarterly statements (beginning balance, ending balance, contributions, gains, fund breakdown)
-- Once entered: projections use actual historical return rates instead of assumed percentages
-
-### D. Compensation History (Bonuses, Raises, Awards)
-- Log raises (old salary → new salary, effective date → forecast updates from that date automatically)
-- Log spot bonuses, performance bonuses, awards (gross + net after tax)
-- Log stipends/allowances (recurring or one-time)
-- Timeline view on Financial Profile → Compensation tab
-- When paystub gross is unusually high vs previous stub, app prompts: "Log a bonus or raise?"
-- New model: `CompensationEvent` (event_type, effective_date, old_salary, new_salary, gross_amount, net_amount, description)
+- Past paystubs: batch upload + parse
+- Investment statements: manual form for 401k/IRA quarterly statements
 
 ### C. Joint HYSA (Keaton + Katherine)
-- Add `is_joint` + `joint_user_id` columns to `accounts` table
-- Joint accounts visible to both users; "Joint" badge in UI
-- Each user has their own recurring rule pointing to the joint account
-- **Keaton contribution: $1,600/month | Katherine contribution: $1,600/month** (changeable per user in Financial Profile)
-- Net worth: both users see full balance; couple combined view counts it once (future)
+- `is_joint` + `joint_user_id` on accounts table; "Joint" badge in UI
+- Keaton: $1,600/month | Katherine: $1,600/month
 
-### New models needed (Phase 4):
-- `Paystub` — all paystub fields (~30 columns, Paylocity-tuned)
-- `InvestmentStatement` — quarterly statement data per account
-- `CompensationEvent` — raises, bonuses, awards, stipends
-
-### New dependencies (Phase 4):
-- `pdfplumber>=0.10.0` — paystub + statement PDF parsing (free, no API key)
-- `pytesseract` + `pdf2image` — scanned PDF fallback (optional)
+### D. Compensation History
+- Log raises, bonuses, awards, stipends
+- `CompensationEvent` model; timeline on Financial Profile
 
 ### Build order for Phase 4:
-1. Joint HYSA (DB migration + API + UI badge) — no new dependencies
-2. Compensation History (raises/bonuses/awards — pure CRUD, no new dependencies)
-3. Paystub parser (`pip install pdfplumber` first; test with `March6PayStub.pdf`)
-4. Historical statement entry (manual form, no dependencies)
+1. Joint HYSA (DB migration + API + UI badge)
+2. Compensation History (pure CRUD)
+3. Paystub parser (`pip install pdfplumber>=0.10.0`)
+4. Historical statement entry
 
 ---
 
 ## Phase 3 — Planned Features (NOT YET BUILT)
-_See NEXT_PHASE_PLAN.md for full details, exact steps, and file plan._
+_See NEXT_PHASE_PLAN.md for full details._
 
-### 1. Google Sheets Auto-Sync
-- Connect "Keaton's monthly spending" Google Sheet directly to the app
-- Auto-polls every 30 minutes; new rows appear in Transactions automatically
-- Requires: Google Cloud service account + credentials JSON + Sheet ID in Settings
-- **PREREQUISITE**: User must complete 7-step Google Cloud setup (in NEXT_PHASE_PLAN.md)
+### 1. Google Sheets Auto-Sync _(backend built, needs Google credentials setup)_
+- Service account credentials JSON → `backend/credentials/google-sheets-key.json`
+- Sheet ID entered in Settings → auto-polls every 30 min
 
 ### 2. Financial Profile Page (`/financial-profile`)
-- Per-user page for entering: salary, student loans, 401k, IRA, HYSA
-- Each section has a **visibility toggle** — hide sections for accounts the user doesn't have
-- Katherine logs in and fills in her own values independently
-- All sections:
-  - Salary & Paycheck
-  - Student Loans (auto-tracks balance reduction from transactions)
-  - 401k (fund allocations, employer match, projection chart)
-  - IRA (SWPPX + SWISX, monthly contribution, projection)
-  - HYSA (APY, monthly contribution, projected balance)
-  - Google Sheets Sync config (Sheet ID, last sync, Sync Now button)
+- Per-user: salary, loans, 401k, IRA, HYSA with visibility toggles
+- New models: `UserSyncConfig`, `StudentLoan`, `InvestmentHolding`, `FinancialProfile`
+- New deps: `google-api-python-client`, `google-auth`, `apscheduler`
 
 ### 3. Student Loan Auto-Tracker
-- Starting balance entered in Financial Profile; app reduces balance as "Student Loans" transactions post
-- Shows payoff date, total interest remaining, amortization schedule
+- Balance reduces automatically as "Student Loans" transactions post
 
 ### 4. Investment Growth Projections
-- 401k, IRA, HYSA all projected with compound interest math
-- Milestone dates: wedding month, 1yr, 5yr, 20yr
-
-### New Backend Models Needed
-```
-UserSyncConfig       — sheet_id, last_sync_at, sync_enabled per user
-StudentLoan          — user_id, loan_name, current_balance, interest_rate, minimum_payment
-InvestmentHolding    — account_id, ticker, fund_name, current_value, monthly_contribution
-FinancialProfile     — user_id, gross_salary, pay_frequency, net_per_paycheck,
-                       employer_401k_percent, hidden_sections (JSON list)
-```
-
-### New Dependencies Needed
-```
-google-api-python-client>=2.100.0
-google-auth>=2.23.0
-apscheduler>=3.10.0
-```
+- 401k, IRA, HYSA projected with compound interest; milestone dates (wedding, 1yr, 5yr, 20yr)
 
 ---
 
 ## API Base URL
-`http://localhost:8000/api/v1`
+- Local dev: `http://localhost:8000/api/v1`
+- Production: `http://10.0.0.48/api/v1` (nginx proxies to port 8000)
 
 ---
 
@@ -245,13 +222,15 @@ uvicorn app.main:app --reload --port 8000
 # Terminal 2 — Frontend
 cd frontend && npm run dev
 ```
-Open http://localhost:3000 — login: `keaton / finance123` or `katherine / finance123`
+Open http://localhost:3000 — click Keaton or Katherine to log in (no password)
 
 ---
 
 ## Common Issues
 - `ModuleNotFoundError: email_validator` → `pip install "pydantic[email]"` or `pip install -r requirements.txt`
 - `'next' is not recognized` → run `npm install` in `frontend/` first
-- `bcrypt version error` / `password cannot be longer than 72 bytes` in passlib → `pip install bcrypt==4.0.1` (already pinned in requirements.txt)
+- `bcrypt version error` in passlib → `pip install bcrypt==4.0.1` (already pinned)
 - `seed_data.py` fails with "already seeded" → delete `backend/finance.db` and re-run
-- `frontend/.next/` or `__pycache__/` tracked by git → `git rm -rf --cached frontend/.next __pycache__` then commit
+- Login fails on production → database empty; run the re-seed command above
+- `npm EACCES permission denied` after git reset → `chown -R muni:muni /opt/muni/app`
+- Windows venv committed accidentally → `git rm -r --cached backend/venv/` then commit
