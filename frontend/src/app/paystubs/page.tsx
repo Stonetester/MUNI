@@ -20,6 +20,10 @@ function fmtDate(s?: string | null) {
   return new Date(s).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+function todayISO() {
+  return new Date().toISOString().split('T')[0]
+}
+
 // ─── Upload zone ──────────────────────────────────────────────────────────────
 function UploadZone({ onParsed }: { onParsed: (result: ParsedPaystub) => void }) {
   const [dragging, setDragging] = useState(false)
@@ -76,9 +80,13 @@ function UploadZone({ onParsed }: { onParsed: (result: ParsedPaystub) => void })
 
 // ─── Parsed review form ───────────────────────────────────────────────────────
 function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSaved: () => void; onCancel: () => void }) {
-  const [form, setForm] = useState({ ...parsed.parsed })
+  const [form, setForm] = useState<Partial<Paystub>>({
+    pay_date: todayISO(),
+    ...parsed.parsed,
+  })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
 
   const f = (key: keyof Paystub) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.type === 'number' ? (e.target.value ? parseFloat(e.target.value) : undefined) : e.target.value
@@ -86,11 +94,19 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
   }
 
   const handleSave = async () => {
+    if (!form.pay_date) {
+      setError('Pay date is required.')
+      return
+    }
     setSaving(true)
+    setError('')
     try {
       await savePaystub(form)
       setSaved(true)
       setTimeout(() => { setSaved(false); onSaved() }, 1000)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg || 'Failed to save paystub. Check that all required fields are filled in.')
     } finally {
       setSaving(false)
     }
@@ -103,9 +119,15 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
       </span>
     }>
       <div className="flex flex-col gap-4">
+        {error && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/20 text-danger text-sm">
+            <AlertCircle size={14} className="shrink-0" /> {error}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
           <Input label="Employer" value={form.employer ?? ''} onChange={f('employer')} />
-          <Input label="Pay Date" type="date" value={form.pay_date ?? ''} onChange={f('pay_date')} />
+          <Input label="Pay Date *" type="date" value={form.pay_date ?? ''} onChange={f('pay_date')} />
           <Input label="Period Start" type="date" value={form.period_start ?? ''} onChange={f('period_start')} />
           <Input label="Period End" type="date" value={form.period_end ?? ''} onChange={f('period_end')} />
         </div>
@@ -123,8 +145,8 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
         <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Taxes</p>
         <div className="grid grid-cols-2 gap-3">
           <Input label="Federal Tax ($)" type="number" step="0.01" value={form.tax_federal?.toString() ?? ''} onChange={f('tax_federal')} />
-          <Input label="MD State ($)" type="number" step="0.01" value={form.tax_state_md?.toString() ?? ''} onChange={f('tax_state_md')} />
-          <Input label="MD County ($)" type="number" step="0.01" value={form.tax_state_md_cal?.toString() ?? ''} onChange={f('tax_state_md_cal')} />
+          <Input label="MD State ($)" type="number" step="0.01" value={form.tax_state?.toString() ?? ''} onChange={f('tax_state')} />
+          <Input label="MD County ($)" type="number" step="0.01" value={form.tax_county?.toString() ?? ''} onChange={f('tax_county')} />
           <Input label="Social Security ($)" type="number" step="0.01" value={form.tax_social_security?.toString() ?? ''} onChange={f('tax_social_security')} />
           <Input label="Medicare ($)" type="number" step="0.01" value={form.tax_medicare?.toString() ?? ''} onChange={f('tax_medicare')} />
         </div>
@@ -141,7 +163,7 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
         <div className="grid grid-cols-2 gap-3">
           <Input label="YTD Gross ($)" type="number" step="0.01" value={form.ytd_gross?.toString() ?? ''} onChange={f('ytd_gross')} />
           <Input label="YTD Net ($)" type="number" step="0.01" value={form.ytd_net?.toString() ?? ''} onChange={f('ytd_net')} />
-          <Input label="YTD Federal ($)" type="number" step="0.01" value={form.ytd_federal?.toString() ?? ''} onChange={f('ytd_federal')} />
+          <Input label="YTD Federal ($)" type="number" step="0.01" value={form.ytd_federal_tax?.toString() ?? ''} onChange={f('ytd_federal_tax')} />
           <Input label="YTD 401k Employee ($)" type="number" step="0.01" value={form.ytd_401k_employee?.toString() ?? ''} onChange={f('ytd_401k_employee')} />
           <Input label="YTD 401k Employer ($)" type="number" step="0.01" value={form.ytd_401k_employer?.toString() ?? ''} onChange={f('ytd_401k_employer')} />
         </div>
@@ -162,8 +184,8 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
 function PaystubRow({ stub, onDelete }: { stub: Paystub; onDelete: () => void }) {
   const [expanded, setExpanded] = useState(false)
 
-  const effectiveTaxRate = stub.gross_pay && stub.tax_federal != null && stub.tax_state_md != null
-    ? ((stub.tax_federal + stub.tax_state_md + (stub.tax_state_md_cal ?? 0) + (stub.tax_social_security ?? 0) + (stub.tax_medicare ?? 0)) / stub.gross_pay * 100).toFixed(1)
+  const effectiveTaxRate = stub.gross_pay && stub.tax_federal != null && stub.tax_state != null
+    ? ((stub.tax_federal + stub.tax_state + (stub.tax_county ?? 0) + (stub.tax_social_security ?? 0) + (stub.tax_medicare ?? 0)) / stub.gross_pay * 100).toFixed(1)
     : null
 
   return (
@@ -210,8 +232,8 @@ function PaystubRow({ stub, onDelete }: { stub: Paystub; onDelete: () => void })
               { label: 'Gross Pay', value: fmt(stub.gross_pay) },
               { label: 'Net Pay', value: fmt(stub.net_pay) },
               { label: 'Federal Tax', value: fmt(stub.tax_federal) },
-              { label: 'MD State Tax', value: fmt(stub.tax_state_md) },
-              { label: 'MD County Tax', value: fmt(stub.tax_state_md_cal) },
+              { label: 'MD State Tax', value: fmt(stub.tax_state) },
+              { label: 'MD County Tax', value: fmt(stub.tax_county) },
               { label: 'Social Security', value: fmt(stub.tax_social_security) },
               { label: 'Medicare', value: fmt(stub.tax_medicare) },
               { label: '401k (Employee)', value: fmt(stub.deduction_401k) },
@@ -219,6 +241,7 @@ function PaystubRow({ stub, onDelete }: { stub: Paystub; onDelete: () => void })
               { label: 'Vision', value: fmt(stub.deduction_vision) },
               { label: 'YTD Gross', value: fmt(stub.ytd_gross) },
               { label: 'YTD Net', value: fmt(stub.ytd_net) },
+              { label: 'YTD Federal', value: fmt(stub.ytd_federal_tax) },
               { label: 'YTD 401k (EE)', value: fmt(stub.ytd_401k_employee) },
               { label: 'YTD 401k (ER)', value: fmt(stub.ytd_401k_employer) },
             ].map(({ label, value }) => (

@@ -8,10 +8,11 @@ import Modal from '@/components/ui/Modal'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AccountCard from '@/components/accounts/AccountCard'
 import AccountForm from '@/components/accounts/AccountForm'
-import { getAccounts, getAccountSnapshots } from '@/lib/api'
+import { getAccounts, getAccountSnapshots, createSnapshot } from '@/lib/api'
 import { Account, BalanceSnapshot } from '@/lib/types'
 import { formatCurrency, isLiability, formatDate } from '@/lib/utils'
-import { Plus, Wallet } from 'lucide-react'
+import { Plus, Wallet, History } from 'lucide-react'
+import Input from '@/components/ui/Input'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid
 } from 'recharts'
@@ -19,13 +20,45 @@ import {
 function BalanceHistoryModal({ account, onClose }: { account: Account; onClose: () => void }) {
   const [snapshots, setSnapshots] = useState<BalanceSnapshot[]>([])
   const [loading, setLoading] = useState(true)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newDate, setNewDate] = useState('')
+  const [newBalance, setNewBalance] = useState('')
+  const [newNotes, setNewNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
-  useEffect(() => {
+  const loadSnapshots = () => {
     getAccountSnapshots(account.id)
       .then(setSnapshots)
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [account.id])
+  }
+
+  useEffect(() => { loadSnapshots() }, [account.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAddSnapshot = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newDate || !newBalance) return
+    setSaving(true)
+    setSaveError('')
+    try {
+      await createSnapshot({
+        account_id: account.id,
+        date: newDate,
+        balance: parseFloat(newBalance),
+        notes: newNotes || undefined,
+      })
+      setNewDate('')
+      setNewBalance('')
+      setNewNotes('')
+      setShowAddForm(false)
+      loadSnapshots()
+    } catch {
+      setSaveError('Failed to save snapshot.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const chartData = [...snapshots]
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
@@ -37,29 +70,92 @@ function BalanceHistoryModal({ account, onClose }: { account: Account; onClose: 
         <div className="flex items-center justify-center py-12">
           <LoadingSpinner />
         </div>
-      ) : snapshots.length === 0 ? (
-        <p className="text-center text-text-secondary py-8">No balance history yet</p>
       ) : (
-        <div className="h-56">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis
-                tick={{ fill: '#94a3b8', fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-                tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                width={50}
-              />
-              <Tooltip
-                contentStyle={{ background: '#1a1f2e', border: '1px solid #2d3748', borderRadius: 8 }}
-                labelStyle={{ color: '#94a3b8' }}
-                itemStyle={{ color: '#10B981' }}
-              />
-              <Line type="monotone" dataKey="balance" stroke="#10B981" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="flex flex-col gap-4">
+          {snapshots.length === 0 ? (
+            <p className="text-center text-text-secondary py-4">No balance history yet. Add past statements below.</p>
+          ) : (
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    tick={{ fill: '#94a3b8', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                    width={50}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: '#1a1f2e', border: '1px solid #2d3748', borderRadius: 8 }}
+                    labelStyle={{ color: '#94a3b8' }}
+                    itemStyle={{ color: '#10B981' }}
+                  />
+                  <Line type="monotone" dataKey="balance" stroke="#10B981" strokeWidth={2} dot={{ fill: '#10B981', r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Recent snapshot list */}
+          {snapshots.length > 0 && (
+            <div className="max-h-40 overflow-y-auto flex flex-col gap-1">
+              {[...snapshots]
+                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                .map((s) => (
+                  <div key={s.id} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-surface-2 text-sm">
+                    <span className="text-text-secondary">{formatDate(s.date)}</span>
+                    <span className="text-text-primary font-semibold">{formatCurrency(s.balance)}</span>
+                    {s.notes && <span className="text-xs text-muted truncate max-w-[120px]">{s.notes}</span>}
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {/* Add past statement */}
+          <div className="border-t border-[#2d3748] pt-3">
+            <button
+              onClick={() => setShowAddForm(!showAddForm)}
+              className="flex items-center gap-2 text-sm text-primary hover:text-primary/80 transition-colors"
+            >
+              <History size={14} />
+              {showAddForm ? 'Cancel' : 'Add past statement / backdated balance'}
+            </button>
+            {showAddForm && (
+              <form onSubmit={handleAddSnapshot} className="flex flex-col gap-3 mt-3">
+                {saveError && <p className="text-xs text-danger">{saveError}</p>}
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label="Date"
+                    type="date"
+                    value={newDate}
+                    onChange={(e) => setNewDate(e.target.value)}
+                    required
+                  />
+                  <Input
+                    label="Balance ($)"
+                    type="number"
+                    step="0.01"
+                    placeholder="e.g. 12500"
+                    value={newBalance}
+                    onChange={(e) => setNewBalance(e.target.value)}
+                    required
+                  />
+                </div>
+                <Input
+                  label="Notes (optional)"
+                  type="text"
+                  placeholder="e.g. End of Q4 statement"
+                  value={newNotes}
+                  onChange={(e) => setNewNotes(e.target.value)}
+                />
+                <Button type="submit" variant="primary" size="sm" loading={saving}>
+                  Save Snapshot
+                </Button>
+              </form>
+            )}
+          </div>
         </div>
       )}
     </Modal>

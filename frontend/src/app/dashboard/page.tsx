@@ -160,8 +160,8 @@ function JointDashboard() {
         )
       })}
 
-      {/* Joint recent transactions */}
-      <RecentTransactions transactions={transactions} />
+      {/* Joint recent transactions — color-coded by owner */}
+      <RecentTransactions transactions={transactions} showOwner />
     </div>
   )
 }

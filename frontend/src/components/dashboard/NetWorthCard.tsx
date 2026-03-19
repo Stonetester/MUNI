@@ -4,6 +4,7 @@ import { DashboardData, ForecastPoint } from '@/lib/types'
 import { formatCurrency, formatMonth } from '@/lib/utils'
 import Card from '@/components/ui/Card'
 import { TrendingUp, TrendingDown } from 'lucide-react'
+import { useViewMode } from '@/lib/viewMode'
 import {
   ResponsiveContainer,
   LineChart,
@@ -30,6 +31,7 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
 
 export default function NetWorthCard({ data }: NetWorthCardProps) {
   const { net_worth, forecast_preview } = data
+  const { viewMode } = useViewMode()
 
   // Build sparkline from last 6 forecast preview points (reversed so oldest first)
   const sparklineData = forecast_preview
@@ -48,7 +50,7 @@ export default function NetWorthCard({ data }: NetWorthCardProps) {
     <Card className="col-span-full">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div className="flex-1">
-          <p className="text-sm text-text-secondary font-medium mb-1">Our Net Worth</p>
+          <p className="text-sm text-text-secondary font-medium mb-1">{viewMode === 'joint' ? 'Our Net Worth' : 'My Net Worth'}</p>
           <p className="text-4xl md:text-5xl font-bold text-text-primary">
             {formatCurrency(net_worth)}
           </p>

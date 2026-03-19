@@ -12,18 +12,29 @@ from app.schemas.transaction import TransactionOut, TransactionPage
 router = APIRouter(prefix="/joint", tags=["joint"])
 
 
-@router.get("/transactions", response_model=TransactionPage)
+@router.get("/transactions")
 def joint_transactions(
     limit: int = Query(default=50, le=500),
     offset: int = Query(default=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return transactions for all users (joint household view)."""
+    """Return transactions for all users (joint household view), with owner username."""
     query = db.query(Transaction).filter(Transaction.scenario_id.is_(None))
     total = query.count()
     items = query.order_by(Transaction.date.desc()).offset(offset).limit(limit).all()
-    return TransactionPage(items=items, total=total, skip=offset, limit=limit)
+
+    # Build user id → username map
+    user_map = {u.id: u.username for u in db.query(User).all()}
+
+    result = []
+    for item in items:
+        t = TransactionOut.model_validate(item)
+        t_dict = t.model_dump()
+        t_dict["owner"] = user_map.get(item.user_id)
+        result.append(t_dict)
+
+    return {"items": result, "total": total, "skip": offset, "limit": limit}
 
 
 @router.get("/accounts")

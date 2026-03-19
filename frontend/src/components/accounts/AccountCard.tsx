@@ -4,7 +4,7 @@ import { Account } from '@/lib/types'
 import { formatCurrency, accountTypeLabel, isLiability } from '@/lib/utils'
 import { AccountTypeBadge } from '@/components/ui/Badge'
 import { deleteAccount } from '@/lib/api'
-import { Edit2, Trash2, Building2, TrendingUp, CreditCard, PiggyBank, Wallet } from 'lucide-react'
+import { Edit2, Trash2, Building2, TrendingUp, CreditCard, PiggyBank, Wallet, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface AccountCardProps {
@@ -70,7 +70,15 @@ export default function AccountCard({ account, onEdit, onDeleted, onClick }: Acc
       </div>
 
       <div>
-        <p className="text-sm font-semibold text-text-primary">{account.name}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-semibold text-text-primary">{account.name}</p>
+          {account.is_joint && (
+            <span className="flex items-center gap-0.5 text-[10px] font-semibold text-blue-400 bg-blue-400/10 border border-blue-400/30 rounded-full px-2 py-0.5">
+              <Users size={10} />
+              Joint
+            </span>
+          )}
+        </div>
         {account.institution && (
           <p className="text-xs text-text-secondary mb-2">{account.institution}</p>
         )}

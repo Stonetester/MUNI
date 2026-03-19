@@ -41,6 +41,7 @@ class TransactionOut(TransactionBase):
     created_at: datetime
     category_name: Optional[str] = None
     account_name: Optional[str] = None
+    owner: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

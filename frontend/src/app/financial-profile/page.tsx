@@ -57,6 +57,14 @@ function Section({ title, icon: Icon, color, children, defaultOpen = true }: {
   )
 }
 
+// Pay period multipliers
+const PAY_FREQ_PERIODS: Record<string, number> = {
+  biweekly: 26,
+  semimonthly: 24,
+  monthly: 12,
+  weekly: 52,
+}
+
 // ─── Income & Salary section ─────────────────────────────────────────────────
 function IncomeSection({ profile, onSaved }: { profile: FinancialProfile | null; onSaved: () => void }) {
   const [salary, setSalary] = useState(profile?.salary?.toString() ?? '')
@@ -93,8 +101,16 @@ function IncomeSection({ profile, onSaved }: { profile: FinancialProfile | null;
     }
   }
 
+  const periods = PAY_FREQ_PERIODS[payFreq] ?? 26
+
+  // Auto-calc: if user enters per-paycheck gross we can derive annual salary
+  // salary field takes priority; if blank but netPer is filled we can show estimate only
   const annual = salary ? parseFloat(salary) : null
-  const perPeriod = annual && payFreq === 'biweekly' ? annual / 26 : annual ? annual / 24 : null
+  const perPeriod = annual ? annual / periods : null
+
+  const handleFreqChange = (freq: string) => {
+    setPayFreq(freq)
+  }
 
   return (
     <div className="mt-4 flex flex-col gap-4">
@@ -104,22 +120,48 @@ function IncomeSection({ profile, onSaved }: { profile: FinancialProfile | null;
           <label className="text-xs font-medium text-text-secondary">Pay Frequency</label>
           <select
             value={payFreq}
-            onChange={e => setPayFreq(e.target.value)}
+            onChange={e => handleFreqChange(e.target.value)}
             className="h-10 px-3 rounded-xl bg-surface-2 border border-[#2d3748] text-text-primary text-sm"
           >
             <option value="biweekly">Biweekly (26×/yr)</option>
             <option value="semimonthly">Semi-monthly (24×/yr)</option>
             <option value="monthly">Monthly (12×/yr)</option>
+            <option value="weekly">Weekly (52×/yr)</option>
           </select>
         </div>
-        <Input label="Net Pay per Paycheck ($)" type="number" value={netPer} onChange={e => setNetPer(e.target.value)} placeholder="3800" />
+        <div className="flex flex-col gap-1">
+          <Input
+            label={`Gross per Paycheck ($) · auto = ${perPeriod ? fmt(perPeriod) : '—'}`}
+            type="number"
+            value={salary ? (perPeriod?.toFixed(2) ?? '') : ''}
+            readOnly
+            placeholder="Calculated from salary above"
+            hint={annual ? `${salary} ÷ ${periods} periods` : 'Enter annual salary to auto-calculate'}
+          />
+        </div>
+        <Input
+          label="Net Pay per Paycheck ($)"
+          type="number"
+          value={netPer}
+          onChange={e => {
+            setNetPer(e.target.value)
+            // If salary not entered yet, derive annual from net (rough estimate)
+            if (!salary && e.target.value) {
+              const derived = parseFloat(e.target.value) * periods
+              setSalary(derived.toFixed(2))
+            }
+          }}
+          placeholder="3503"
+          hint="Entering net auto-estimates gross salary"
+        />
         <Input label="Employer 401k Match (%)" type="number" value={emp401k} onChange={e => setEmp401k(e.target.value)} placeholder="6" />
-        <Input label="Employee 401k per Paycheck ($)" type="number" value={ee401k} onChange={e => setEe401k(e.target.value)} placeholder="327" />
+        <Input label="Employee 401k per Paycheck ($)" type="number" value={ee401k} onChange={e => setEe401k(e.target.value)} placeholder="380" />
       </div>
-      {perPeriod && (
-        <div className="p-3 rounded-xl bg-surface-2 text-xs text-text-secondary flex gap-6">
+      {annual && (
+        <div className="p-3 rounded-xl bg-surface-2 text-xs text-text-secondary flex gap-6 flex-wrap">
           <span>Gross/period: <strong className="text-text-primary">{fmt(perPeriod)}</strong></span>
           <span>Annual: <strong className="text-text-primary">{fmt(annual)}</strong></span>
+          {emp401k && <span>Employer match/period: <strong className="text-primary">{fmt(annual * parseFloat(emp401k) / 100 / periods)}</strong></span>}
         </div>
       )}
       <div className="flex items-center gap-3">
@@ -180,11 +222,15 @@ function SavingsSection({ profile, onSaved }: { profile: FinancialProfile | null
 }
 
 // ─── Student Loans section ────────────────────────────────────────────────────
-function LoansSection() {
+function LoansSection({ accounts }: { accounts: Account[] }) {
   const [loans, setLoans] = useState<StudentLoan[]>([])
   const [adding, setAdding] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState<Record<string, string>>({ loan_name: '', servicer: '', original_balance: '', current_balance: '', interest_rate: '', minimum_payment: '' })
+  const [importing, setImporting] = useState(false)
+
+  // Student loan accounts not yet tracked in Financial Profile
+  const studentLoanAccounts = accounts.filter(a => a.account_type === 'student_loan' && a.is_active)
 
   const load = useCallback(async () => {
     const data = await getStudentLoans()
@@ -192,6 +238,25 @@ function LoansSection() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const handleImportFromAccounts = async () => {
+    setImporting(true)
+    const existingNames = new Set(loans.map(l => l.loan_name.toLowerCase()))
+    const toImport = studentLoanAccounts.filter(a => !existingNames.has(a.name.toLowerCase()))
+    for (const acct of toImport) {
+      await createStudentLoan({
+        loan_name: acct.name,
+        servicer: acct.institution,
+        original_balance: acct.balance,
+        current_balance: acct.balance,
+        interest_rate: 0,
+        minimum_payment: 0,
+        is_active: true,
+      })
+    }
+    setImporting(false)
+    load()
+  }
 
   const resetForm = () => setForm({ loan_name: '', servicer: '', original_balance: '', current_balance: '', interest_rate: '', minimum_payment: '' })
 
@@ -266,9 +331,16 @@ function LoansSection() {
         <LoanForm form={form} setForm={setForm} onSave={handleSave} onCancel={() => { setAdding(false); resetForm() }} />
       )}
       {!adding && !editId && (
-        <Button variant="secondary" size="sm" className="w-fit" onClick={() => setAdding(true)}>
-          <Plus size={14} /> Add Loan
-        </Button>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="secondary" size="sm" className="w-fit" onClick={() => setAdding(true)}>
+            <Plus size={14} /> Add Loan
+          </Button>
+          {studentLoanAccounts.length > 0 && (
+            <Button variant="secondary" size="sm" className="w-fit" loading={importing} onClick={handleImportFromAccounts}>
+              <Plus size={14} /> Import from Accounts ({studentLoanAccounts.filter(a => !loans.map(l => l.loan_name.toLowerCase()).includes(a.name.toLowerCase())).length} new)
+            </Button>
+          )}
+        </div>
       )}
     </div>
   )
@@ -590,7 +662,7 @@ export default function FinancialProfilePage() {
         </Section>
 
         <Section title="Student Loans" icon={BookOpen} color="bg-orange-500">
-          <LoansSection />
+          <LoansSection accounts={accounts} />
         </Section>
 
         <Section title="Investment Holdings" icon={TrendingUp} color="bg-blue-600" defaultOpen={false}>
