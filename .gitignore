@@ -7,6 +7,7 @@ venv/
 .venv/
 **/venv/
 **/.venv/
+backend/venv/
 
 # Next.js
 .next/
