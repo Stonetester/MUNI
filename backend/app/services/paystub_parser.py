@@ -100,6 +100,21 @@ def parse_paylocity(text: str) -> dict:
     d["holiday_pay"] = _parse_money(_re_val(r"Holiday\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))
     d["overtime_pay"] = _parse_money(_re_val(r"Overtime\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))
 
+    # Bonus / supplemental pay — Paylocity labels these several ways
+    bonus_pay = _parse_money(
+        _re_val(r"(?:Bonus|Supp Bonus|Performance Bonus|Annual Bonus|Supplemental)\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)
+        or _re_val(r"(?:Bonus|Supp Bonus|Performance Bonus|Annual Bonus|Supplemental)\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)
+    )
+    d["bonus_pay"] = bonus_pay
+
+    # Classify pay type: if there's a meaningful bonus line and little/no regular pay
+    # it's a bonus paystub; if bonus is non-zero alongside regular pay it's still
+    # worth flagging as "bonus" so the UI can display it correctly.
+    if bonus_pay > 0:
+        d["pay_type"] = "bonus"
+    else:
+        d["pay_type"] = "regular"
+
     # --- Employer 401k Safe Harbor (the "401 Safe H" line) ---
     d["employer_401k"] = _parse_money(_re_val(r"401 Safe H\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))
     d["ytd_401k_employer"] = _parse_money(_re_val(r"401 Safe H\s+[\d.]+\s+[\d.]+\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text))

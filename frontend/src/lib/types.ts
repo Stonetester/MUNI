@@ -9,6 +9,8 @@ export interface Account {
   is_active: boolean
   forecast_enabled: boolean
   notes?: string
+  is_joint: boolean
+  joint_user_id?: number
   created_at: string
 }
 
@@ -38,7 +40,9 @@ export interface Transaction {
   notes?: string
   payment_method?: string
   is_verified: boolean
+  import_source?: string     // e.g. "paystub:42", "sheets:JAN2025", "csv"
   scenario_id?: number
+  owner?: string
   created_at: string
 }
 
@@ -273,7 +277,7 @@ export interface CompensationEvent {
   created_at: string
 }
 
-// Paystubs
+// Paystubs — field names match the backend PaystubIn/PaystubOut schema exactly
 export interface Paystub {
   id: number
   user_id: number
@@ -282,34 +286,41 @@ export interface Paystub {
   pay_date?: string
   period_start?: string
   period_end?: string
+  pay_type?: string          // "regular" | "bonus"
   gross_pay?: number
   regular_pay?: number
+  bonus_pay?: number         // off-cycle bonus/supplemental amount
   holiday_pay?: number
   overtime_pay?: number
+  salary_per_period?: number
+  fed_taxable_income?: number
   employer_401k?: number
   tax_federal?: number
-  tax_state_md?: number
-  tax_state_md_cal?: number
+  tax_state?: number       // MD state tax
+  tax_county?: number      // MD county (CAL1)
   tax_social_security?: number
   tax_medicare?: number
+  tax_total?: number
   deduction_401k?: number
+  deduction_dental?: number
   deduction_vision?: number
-  deduction_gtl?: number
-  deduction_vlife?: number
-  deduction_add?: number
-  deduction_er_std_ltd?: number
+  deduction_life_insurance?: number
+  deduction_ad_and_d?: number
+  deduction_std_ltd?: number
+  deduction_total?: number
   net_pay?: number
   ytd_gross?: number
-  ytd_federal?: number
-  ytd_social_security?: number
-  ytd_medicare?: number
-  ytd_state_md?: number
-  ytd_state_md_cal?: number
+  ytd_net?: number
   ytd_401k_employee?: number
   ytd_401k_employer?: number
-  ytd_net?: number
+  ytd_federal_tax?: number
+  ytd_state_tax?: number
+  ytd_ss?: number
+  ytd_medicare?: number
+  ytd_taxes_total?: number
   parse_method?: string
   raw_pdf_path?: string
+  notes?: string
   created_at: string
 }
 

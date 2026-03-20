@@ -1,5 +1,13 @@
-"""Paystub upload, parse, and CRUD router."""
-import os
+"""Paystub upload, parse, and CRUD router.
+
+When a paystub is confirmed (POST /paystubs), the router automatically
+creates income transactions so the paystub shows up in transaction history:
+  - One "Salary" (or "Bonus") income transaction for net_pay
+  - One "Salary" transaction for employer_401k contribution (if > 0)
+
+Transactions are linked to the user's first checking account (or any
+non-loan, non-credit account if no checking exists).
+"""
 import shutil
 from datetime import date, datetime
 from pathlib import Path
@@ -11,13 +19,25 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
+from app.models.account import Account, AccountType
+from app.models.category import Category
 from app.models.paystub import Paystub
+from app.models.transaction import Transaction
 from app.models.user import User
 
 router = APIRouter(prefix="/paystubs", tags=["paystubs"])
 
 UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads" / "paystubs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Account types that can receive paycheck deposits (in priority order)
+_DEPOSIT_ACCOUNT_TYPES = [
+    AccountType.checking,
+    AccountType.savings,
+    AccountType.hysa,
+    AccountType.paycheck,
+    AccountType.other,
+]
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -28,8 +48,10 @@ class PaystubIn(BaseModel):
     pay_date: date
     period_start: Optional[date] = None
     period_end: Optional[date] = None
+    pay_type: Optional[str] = "regular"   # "regular" | "bonus"
     gross_pay: float = 0.0
     regular_pay: float = 0.0
+    bonus_pay: float = 0.0
     holiday_pay: float = 0.0
     overtime_pay: float = 0.0
     salary_per_period: float = 0.0
@@ -77,6 +99,109 @@ class ParsedPaystub(BaseModel):
     raw_text_excerpt: Optional[str] = None
 
 
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _find_deposit_account(user_id: int, db: Session) -> Optional[Account]:
+    """Return the best account to deposit a paycheck into."""
+    for acct_type in _DEPOSIT_ACCOUNT_TYPES:
+        acct = (
+            db.query(Account)
+            .filter(
+                Account.user_id == user_id,
+                Account.account_type == acct_type.value,
+                Account.is_active == True,
+            )
+            .first()
+        )
+        if acct:
+            return acct
+    return None
+
+
+def _find_category(db: Session, name: str, kind: str) -> Optional[Category]:
+    """Find a category by name (case-insensitive) and kind."""
+    return (
+        db.query(Category)
+        .filter(Category.name.ilike(name), Category.kind == kind)
+        .first()
+    )
+
+
+def _create_income_transactions(stub: Paystub, db: Session) -> None:
+    """
+    Create income transactions from a saved paystub.
+
+    - Net pay → "Salary" (regular) or "Bonus" (bonus pay_type) income category
+    - Employer 401k → "Salary" category (it's additional compensation)
+
+    Transactions are tagged import_source="paystub:{stub.id}" so they can be
+    identified and aren't duplicated on re-saves.
+    """
+    account = _find_deposit_account(stub.user_id, db)
+
+    # Pick income category based on pay type
+    if stub.pay_type == "bonus":
+        income_cat = (
+            _find_category(db, "Bonus", "income")
+            or _find_category(db, "Salary", "income")
+        )
+    else:
+        income_cat = (
+            _find_category(db, "Salary", "income")
+            or _find_category(db, "Side Income", "income")
+        )
+
+    employer_label = f" — {stub.employer}" if stub.employer else ""
+    source_tag = f"paystub:{stub.id}"
+
+    # Net pay transaction
+    if stub.net_pay and stub.net_pay > 0:
+        if stub.pay_type == "bonus":
+            desc = f"Bonus Paycheck{employer_label}"
+        else:
+            desc = f"Paycheck{employer_label}"
+
+        txn = Transaction(
+            user_id=stub.user_id,
+            account_id=account.id if account else None,
+            category_id=income_cat.id if income_cat else None,
+            date=stub.pay_date,
+            amount=stub.net_pay,
+            description=desc,
+            payment_method="direct_deposit",
+            is_verified=True,
+            import_source=source_tag,
+        )
+        db.add(txn)
+
+    # Employer 401k contribution (it's real compensation even if you never see it in checking)
+    if stub.employer_401k and stub.employer_401k > 0:
+        employer_401k_cat = (
+            _find_category(db, "Salary", "income")
+            or income_cat
+        )
+        txn_401k = Transaction(
+            user_id=stub.user_id,
+            account_id=account.id if account else None,
+            category_id=employer_401k_cat.id if employer_401k_cat else None,
+            date=stub.pay_date,
+            amount=stub.employer_401k,
+            description=f"Employer 401k Contribution{employer_label}",
+            payment_method="direct_deposit",
+            is_verified=True,
+            import_source=source_tag,
+        )
+        db.add(txn_401k)
+
+
+def _delete_paystub_transactions(stub_id: int, user_id: int, db: Session) -> None:
+    """Remove income transactions previously created from this paystub."""
+    db.query(Transaction).filter(
+        Transaction.user_id == user_id,
+        Transaction.import_source == f"paystub:{stub_id}",
+    ).delete()
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.post("/parse", response_model=ParsedPaystub)
@@ -89,7 +214,6 @@ async def parse_paystub(
     if suffix not in {".pdf", ".png", ".jpg", ".jpeg"}:
         raise HTTPException(400, "Only PDF, PNG, and JPEG files are supported.")
 
-    # Save temporarily
     tmp_path = UPLOAD_DIR / f"tmp_{current_user.id}_{datetime.utcnow().timestamp()}{suffix}"
     with open(tmp_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
@@ -100,9 +224,6 @@ async def parse_paystub(
     except RuntimeError as e:
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(422, str(e))
-    finally:
-        # Keep the file — will be moved to permanent location on confirm
-        pass
 
     result["_tmp_path"] = str(tmp_path)
     return ParsedPaystub(
@@ -119,13 +240,17 @@ def save_paystub(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Save a confirmed (reviewed) paystub to the database."""
+    """Save a confirmed (reviewed) paystub and auto-create income transactions."""
     stub = Paystub(
         user_id=current_user.id,
         raw_pdf_path=raw_pdf_path,
         **data.model_dump()
     )
     db.add(stub)
+    db.flush()  # get stub.id before creating transactions
+
+    _create_income_transactions(stub, db)
+
     db.commit()
     db.refresh(stub)
     return stub
@@ -163,11 +288,19 @@ def update_paystub(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Update a paystub and regenerate its income transactions."""
     stub = db.query(Paystub).filter(Paystub.id == stub_id, Paystub.user_id == current_user.id).first()
     if not stub:
         raise HTTPException(404, "Paystub not found")
+
+    # Remove old transactions then rebuild from updated data
+    _delete_paystub_transactions(stub_id, current_user.id, db)
+
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(stub, k, v)
+
+    _create_income_transactions(stub, db)
+
     db.commit()
     db.refresh(stub)
     return stub
@@ -179,7 +312,9 @@ def delete_paystub(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Delete a paystub and its associated income transactions."""
     stub = db.query(Paystub).filter(Paystub.id == stub_id, Paystub.user_id == current_user.id).first()
     if stub:
+        _delete_paystub_transactions(stub_id, current_user.id, db)
         db.delete(stub)
         db.commit()

@@ -20,6 +20,10 @@ function fmtDate(s?: string | null) {
   return new Date(s).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+function todayISO() {
+  return new Date().toISOString().split('T')[0]
+}
+
 // ─── Upload zone ──────────────────────────────────────────────────────────────
 function UploadZone({ onParsed }: { onParsed: (result: ParsedPaystub) => void }) {
   const [dragging, setDragging] = useState(false)
@@ -76,9 +80,13 @@ function UploadZone({ onParsed }: { onParsed: (result: ParsedPaystub) => void })
 
 // ─── Parsed review form ───────────────────────────────────────────────────────
 function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSaved: () => void; onCancel: () => void }) {
-  const [form, setForm] = useState({ ...parsed.parsed })
+  const [form, setForm] = useState<Partial<Paystub>>({
+    pay_date: todayISO(),
+    ...parsed.parsed,
+  })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
 
   const f = (key: keyof Paystub) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.type === 'number' ? (e.target.value ? parseFloat(e.target.value) : undefined) : e.target.value
@@ -86,11 +94,19 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
   }
 
   const handleSave = async () => {
+    if (!form.pay_date) {
+      setError('Pay date is required.')
+      return
+    }
     setSaving(true)
+    setError('')
     try {
       await savePaystub(form)
       setSaved(true)
       setTimeout(() => { setSaved(false); onSaved() }, 1000)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg || 'Failed to save paystub. Check that all required fields are filled in.')
     } finally {
       setSaving(false)
     }
@@ -103,18 +119,47 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
       </span>
     }>
       <div className="flex flex-col gap-4">
+        {error && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/20 text-danger text-sm">
+            <AlertCircle size={14} className="shrink-0" /> {error}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
           <Input label="Employer" value={form.employer ?? ''} onChange={f('employer')} />
-          <Input label="Pay Date" type="date" value={form.pay_date ?? ''} onChange={f('pay_date')} />
+          <Input label="Pay Date *" type="date" value={form.pay_date ?? ''} onChange={f('pay_date')} />
           <Input label="Period Start" type="date" value={form.period_start ?? ''} onChange={f('period_start')} />
           <Input label="Period End" type="date" value={form.period_end ?? ''} onChange={f('period_end')} />
         </div>
 
         <div className="h-px bg-[#2d3748]" />
         <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Earnings</p>
+
+        {/* Pay type toggle */}
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-muted">Pay Type:</p>
+          {(['regular', 'bonus'] as const).map(type => (
+            <button
+              key={type}
+              onClick={() => setForm(prev => ({ ...prev, pay_type: type }))}
+              className={cn(
+                'px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors',
+                form.pay_type === type
+                  ? type === 'bonus' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-primary/20 text-primary'
+                  : 'bg-surface text-muted hover:text-text-secondary'
+              )}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <Input label="Gross Pay ($)" type="number" step="0.01" value={form.gross_pay?.toString() ?? ''} onChange={f('gross_pay')} />
           <Input label="Regular Pay ($)" type="number" step="0.01" value={form.regular_pay?.toString() ?? ''} onChange={f('regular_pay')} />
+          {form.pay_type === 'bonus' && (
+            <Input label="Bonus Pay ($)" type="number" step="0.01" value={form.bonus_pay?.toString() ?? ''} onChange={f('bonus_pay')} />
+          )}
           <Input label="Net Pay ($)" type="number" step="0.01" value={form.net_pay?.toString() ?? ''} onChange={f('net_pay')} />
           <Input label="Employer 401k ($)" type="number" step="0.01" value={form.employer_401k?.toString() ?? ''} onChange={f('employer_401k')} />
         </div>
@@ -123,8 +168,8 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
         <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Taxes</p>
         <div className="grid grid-cols-2 gap-3">
           <Input label="Federal Tax ($)" type="number" step="0.01" value={form.tax_federal?.toString() ?? ''} onChange={f('tax_federal')} />
-          <Input label="MD State ($)" type="number" step="0.01" value={form.tax_state_md?.toString() ?? ''} onChange={f('tax_state_md')} />
-          <Input label="MD County ($)" type="number" step="0.01" value={form.tax_state_md_cal?.toString() ?? ''} onChange={f('tax_state_md_cal')} />
+          <Input label="MD State ($)" type="number" step="0.01" value={form.tax_state?.toString() ?? ''} onChange={f('tax_state')} />
+          <Input label="MD County ($)" type="number" step="0.01" value={form.tax_county?.toString() ?? ''} onChange={f('tax_county')} />
           <Input label="Social Security ($)" type="number" step="0.01" value={form.tax_social_security?.toString() ?? ''} onChange={f('tax_social_security')} />
           <Input label="Medicare ($)" type="number" step="0.01" value={form.tax_medicare?.toString() ?? ''} onChange={f('tax_medicare')} />
         </div>
@@ -141,7 +186,7 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
         <div className="grid grid-cols-2 gap-3">
           <Input label="YTD Gross ($)" type="number" step="0.01" value={form.ytd_gross?.toString() ?? ''} onChange={f('ytd_gross')} />
           <Input label="YTD Net ($)" type="number" step="0.01" value={form.ytd_net?.toString() ?? ''} onChange={f('ytd_net')} />
-          <Input label="YTD Federal ($)" type="number" step="0.01" value={form.ytd_federal?.toString() ?? ''} onChange={f('ytd_federal')} />
+          <Input label="YTD Federal ($)" type="number" step="0.01" value={form.ytd_federal_tax?.toString() ?? ''} onChange={f('ytd_federal_tax')} />
           <Input label="YTD 401k Employee ($)" type="number" step="0.01" value={form.ytd_401k_employee?.toString() ?? ''} onChange={f('ytd_401k_employee')} />
           <Input label="YTD 401k Employer ($)" type="number" step="0.01" value={form.ytd_401k_employer?.toString() ?? ''} onChange={f('ytd_401k_employer')} />
         </div>
@@ -162,8 +207,8 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
 function PaystubRow({ stub, onDelete }: { stub: Paystub; onDelete: () => void }) {
   const [expanded, setExpanded] = useState(false)
 
-  const effectiveTaxRate = stub.gross_pay && stub.tax_federal != null && stub.tax_state_md != null
-    ? ((stub.tax_federal + stub.tax_state_md + (stub.tax_state_md_cal ?? 0) + (stub.tax_social_security ?? 0) + (stub.tax_medicare ?? 0)) / stub.gross_pay * 100).toFixed(1)
+  const effectiveTaxRate = stub.gross_pay && stub.tax_federal != null && stub.tax_state != null
+    ? ((stub.tax_federal + stub.tax_state + (stub.tax_county ?? 0) + (stub.tax_social_security ?? 0) + (stub.tax_medicare ?? 0)) / stub.gross_pay * 100).toFixed(1)
     : null
 
   return (
@@ -173,11 +218,16 @@ function PaystubRow({ stub, onDelete }: { stub: Paystub; onDelete: () => void })
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-            <FileText size={14} className="text-primary" />
+          <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', stub.pay_type === 'bonus' ? 'bg-yellow-500/10' : 'bg-primary/10')}>
+            <FileText size={14} className={stub.pay_type === 'bonus' ? 'text-yellow-400' : 'text-primary'} />
           </div>
           <div className="text-left">
-            <p className="text-sm font-semibold text-text-primary">{fmtDate(stub.pay_date)}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-text-primary">{fmtDate(stub.pay_date)}</p>
+              {stub.pay_type === 'bonus' && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-400 font-semibold uppercase tracking-wider">Bonus</span>
+              )}
+            </div>
             <p className="text-xs text-text-secondary">{stub.employer ?? 'Unknown employer'}</p>
           </div>
         </div>
@@ -208,10 +258,11 @@ function PaystubRow({ stub, onDelete }: { stub: Paystub; onDelete: () => void })
             {[
               { label: 'Pay Period', value: stub.period_start && stub.period_end ? `${fmtDate(stub.period_start)} – ${fmtDate(stub.period_end)}` : '—' },
               { label: 'Gross Pay', value: fmt(stub.gross_pay) },
+              ...(stub.bonus_pay ? [{ label: 'Bonus Pay', value: fmt(stub.bonus_pay) }] : []),
               { label: 'Net Pay', value: fmt(stub.net_pay) },
               { label: 'Federal Tax', value: fmt(stub.tax_federal) },
-              { label: 'MD State Tax', value: fmt(stub.tax_state_md) },
-              { label: 'MD County Tax', value: fmt(stub.tax_state_md_cal) },
+              { label: 'MD State Tax', value: fmt(stub.tax_state) },
+              { label: 'MD County Tax', value: fmt(stub.tax_county) },
               { label: 'Social Security', value: fmt(stub.tax_social_security) },
               { label: 'Medicare', value: fmt(stub.tax_medicare) },
               { label: '401k (Employee)', value: fmt(stub.deduction_401k) },
@@ -219,6 +270,7 @@ function PaystubRow({ stub, onDelete }: { stub: Paystub; onDelete: () => void })
               { label: 'Vision', value: fmt(stub.deduction_vision) },
               { label: 'YTD Gross', value: fmt(stub.ytd_gross) },
               { label: 'YTD Net', value: fmt(stub.ytd_net) },
+              { label: 'YTD Federal', value: fmt(stub.ytd_federal_tax) },
               { label: 'YTD 401k (EE)', value: fmt(stub.ytd_401k_employee) },
               { label: 'YTD 401k (ER)', value: fmt(stub.ytd_401k_employer) },
             ].map(({ label, value }) => (
@@ -228,7 +280,11 @@ function PaystubRow({ stub, onDelete }: { stub: Paystub; onDelete: () => void })
               </div>
             ))}
           </div>
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs text-green-400/80">
+              <CheckCircle size={12} />
+              <span>Income transaction recorded in history</span>
+            </div>
             <button onClick={onDelete} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-danger hover:bg-danger/10 transition-colors">
               <Trash2 size={13} /> Delete
             </button>
@@ -251,10 +307,14 @@ export default function PaystubsPage() {
 
   useEffect(() => { load() }, [load])
 
-  // Summary stats
+  // Summary stats — exclude bonus paystubs from the avg net/check so it reflects regular pay
   const latestYtdGross = stubs[0]?.ytd_gross
   const latestYtdNet = stubs[0]?.ytd_net
-  const avgNet = stubs.length > 0 ? stubs.reduce((s, p) => s + (p.net_pay ?? 0), 0) / stubs.length : null
+  const regularStubs = stubs.filter(p => p.pay_type !== 'bonus')
+  const avgNet = regularStubs.length > 0
+    ? regularStubs.reduce((s, p) => s + (p.net_pay ?? 0), 0) / regularStubs.length
+    : stubs.length > 0 ? stubs.reduce((s, p) => s + (p.net_pay ?? 0), 0) / stubs.length : null
+  const bonusCount = stubs.filter(p => p.pay_type === 'bonus').length
 
   return (
     <AppLayout>
@@ -270,11 +330,12 @@ export default function PaystubsPage() {
             {[
               { label: 'YTD Gross', value: fmt(latestYtdGross), color: 'text-text-primary' },
               { label: 'YTD Net', value: fmt(latestYtdNet), color: 'text-green-400' },
-              { label: 'Avg Net/Check', value: fmt(avgNet), color: 'text-primary' },
-            ].map(({ label, value, color }) => (
+              { label: 'Avg Net/Check', value: fmt(avgNet), sub: bonusCount > 0 ? `excl. ${bonusCount} bonus` : undefined, color: 'text-primary' },
+            ].map(({ label, value, sub, color }) => (
               <Card key={label} className="text-center">
                 <p className="text-xs text-muted mb-1">{label}</p>
                 <p className={cn('text-xl font-bold', color)}>{value}</p>
+                {sub && <p className="text-[10px] text-muted mt-0.5">{sub}</p>}
               </Card>
             ))}
           </div>
