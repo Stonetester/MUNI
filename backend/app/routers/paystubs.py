@@ -28,8 +28,10 @@ class PaystubIn(BaseModel):
     pay_date: date
     period_start: Optional[date] = None
     period_end: Optional[date] = None
+    pay_type: Optional[str] = "regular"   # "regular" | "bonus"
     gross_pay: float = 0.0
     regular_pay: float = 0.0
+    bonus_pay: float = 0.0
     holiday_pay: float = 0.0
     overtime_pay: float = 0.0
     salary_per_period: float = 0.0

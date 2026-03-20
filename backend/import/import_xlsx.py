@@ -10,14 +10,28 @@ Usage:
     python import_xlsx.py                    # Full import (both users)
     python import_xlsx.py --user keaton      # Keaton only
     python import_xlsx.py --user katherine   # Katherine only
-    python import_xlsx.py --skip-paystubs    # Balance snapshots + transactions only
-    python import_xlsx.py --skip-snapshots   # Paystubs + transactions only
-    python import_xlsx.py --skip-transactions
+    python import_xlsx.py --skip-paystubs    # Skip paystubs
+    python import_xlsx.py --skip-snapshots   # Skip balance snapshots
+    python import_xlsx.py --skip-transactions  # Skip income transactions
+    python import_xlsx.py --skip-loans       # Skip student loan payment transactions
+    python import_xlsx.py --skip-bonuses     # Skip bonus income transactions
+
+What gets imported:
+    - Keaton paystubs (7 records: Feb-Aug 2025)
+    - Katherine paystub (1 record: Mar 2025)
+    - Keaton balance snapshots (Jan + Mar 2025)
+    - Monthly income totals Sep 2024 - Jan 2025 (KD/KAK Ongoing Tracker row 20)
+    - Student loan payments Sep 2024 - Jan 2025 (KD row 132 / KAK row 108)
+      NOTE: Student loan account must exist in the app before running.
+            The import posts payments as expense transactions. Set your starting
+            balance as a balance snapshot manually in the app.
+    - Bonus income, all months with a value (KD row 30 / KAK rows 26-27)
+      Bonuses are manual entries in the Rework sheet not captured in Google Sheets.
 
 Prerequisites:
     1. Backend must be running on localhost:8000
-    2. Accounts must exist in the app (they need to be created first in the UI
-       or via the API -- the script will skip any account types not found)
+    2. Accounts must exist in the app (created in UI first):
+       - Student Loans account (type: student_loan) for each user who had loans
     3. pip install openpyxl requests
 """
 
@@ -160,6 +174,44 @@ def discover_income_category(api_base: str, token: str) -> int | None:
         if cat.get("kind") == "income":
             return cat["id"]
     return None
+
+
+def discover_category_by_name(api_base: str, token: str, name: str) -> int | None:
+    """Return the category ID matching the given name (case-insensitive). None if not found."""
+    resp = requests.get(
+        f"{api_base}/categories",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    name_lower = name.lower()
+    for cat in resp.json():
+        if cat.get("name", "").lower() == name_lower:
+            return cat["id"]
+    return None
+
+
+def get_existing_transaction_keys(api_base: str, token: str) -> set:
+    """
+    Return set of (date_str, description) tuples for all existing xlsx-imported transactions.
+    Used to prevent duplicate imports on re-runs.
+    """
+    resp = requests.get(
+        f"{api_base}/transactions",
+        params={"limit": 2000, "offset": 0},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    if resp.status_code == 404:
+        return set()
+    resp.raise_for_status()
+    data = resp.json()
+    items = data.get("items", data) if isinstance(data, dict) else data
+    return {
+        (item["date"], item["description"])
+        for item in items
+        if "(xlsx import)" in item.get("description", "")
+    }
 
 
 def get_existing_paystub_dates(api_base: str, token: str) -> set:
@@ -446,6 +498,141 @@ def extract_tracker_income_transactions(
     return results
 
 
+def extract_student_loan_payments(
+    ws_kd, ws_kak,
+    keaton_accounts: dict, katherine_accounts: dict,
+    loan_cat_id: int | None, cutoff_date: date
+) -> list:
+    """
+    Extract monthly student loan payment transactions from KD/KAK Ongoing Trackers.
+
+    Only imports months BEFORE cutoff_date (the Google Sheets sync start date).
+    After cutoff, the monthly spending Google Sheet is the source of truth.
+
+    Sheet rows (1-indexed):
+      KD  row 132 = Keaton's combined student loan payment line
+      KAK row 108 = Katherine's combined student loan payment line
+      Row 6       = month headers (datetime objects)
+
+    Payments are posted as expense transactions against the user's student_loan account.
+    The student_loan account MUST exist in the app first. The user should manually
+    add a balance snapshot for the starting balance (Sep 2024).
+    """
+    results = []
+    loan_row_nums = {"keaton": 132, "katherine": 108}
+
+    for username, ws, account_ids in [
+        ("keaton",    ws_kd,  keaton_accounts),
+        ("katherine", ws_kak, katherine_accounts),
+    ]:
+        loan_acct_id = account_ids.get("student_loan")
+        if not loan_acct_id:
+            print(f"  [SKIP] {username}: no 'student_loan' account found in app -- create it first")
+            continue
+        if not loan_cat_id:
+            print(f"  [SKIP] No 'Student Loans' expense category found -- loan transactions skipped")
+            break
+
+        row_num = loan_row_nums[username]
+        month_row = [ws.cell(6,       col).value for col in range(1, 40)]
+        loan_row  = [ws.cell(row_num, col).value for col in range(1, 40)]
+
+        for col_idx in range(1, len(month_row)):
+            month_dt = month_row[col_idx]
+            if not isinstance(month_dt, datetime):
+                continue
+
+            month_date = month_dt.date()
+            snap_date  = last_day_of_month(month_date.year, month_date.month)
+            if snap_date >= cutoff_date:
+                continue  # covered by Google Sheets sync
+
+            amount = _num(loan_row[col_idx])
+            if amount is None or amount <= 0:
+                continue
+
+            results.append((username, {
+                "date":        snap_date.isoformat(),
+                "amount":      abs(amount),
+                "description": f"Student loan payment {month_date.strftime('%b %Y')} (xlsx import)",
+                "category_id": loan_cat_id,
+                "account_id":  loan_acct_id,
+                "is_verified": True,
+            }))
+
+    return results
+
+
+def extract_bonus_transactions(
+    ws_kd, ws_kak,
+    keaton_accounts: dict, katherine_accounts: dict,
+    bonus_cat_id: int | None,
+) -> list:
+    """
+    Extract bonus income transactions from KD/KAK Ongoing Trackers.
+
+    Bonuses are manual input cells in the Rework sheet and are NOT captured in the
+    monthly spending Google Sheets, so we import ALL months with a non-zero value
+    (no date cutoff applied).
+
+    Sheet rows (1-indexed):
+      KD  row 30       = Keaton bonus income
+      KAK rows 26, 27  = Katherine bonus income (two lines, e.g. one per employer)
+      Row 6            = month headers (datetime objects)
+
+    Bonus transactions are posted as income against the user's checking account.
+    """
+    results = []
+    bonus_row_nums = {"keaton": [30], "katherine": [26, 27]}
+
+    for username, ws, account_ids in [
+        ("keaton",    ws_kd,  keaton_accounts),
+        ("katherine", ws_kak, katherine_accounts),
+    ]:
+        checking_id = account_ids.get("checking")
+        if not checking_id:
+            print(f"  [SKIP] {username}: no 'checking' account found -- bonus transactions skipped")
+            continue
+        if not bonus_cat_id:
+            print(f"  [SKIP] No 'Bonus' income category found -- bonus transactions skipped")
+            break
+
+        month_row = [ws.cell(6, col).value for col in range(1, 40)]
+
+        for row_num in bonus_row_nums[username]:
+            # Read the row label from column A so the description is descriptive
+            row_label = ws.cell(row_num, 1).value
+            label = str(row_label).strip() if row_label else "Bonus"
+            # Normalize label to something clean
+            if not label or label.lower() in ("none", ""):
+                label = "Bonus"
+
+            bonus_row = [ws.cell(row_num, col).value for col in range(1, 40)]
+
+            for col_idx in range(1, len(month_row)):
+                month_dt = month_row[col_idx]
+                if not isinstance(month_dt, datetime):
+                    continue
+
+                amount = _num(bonus_row[col_idx])
+                if amount is None or amount <= 0:
+                    continue
+
+                month_date = month_dt.date()
+                snap_date  = last_day_of_month(month_date.year, month_date.month)
+
+                results.append((username, {
+                    "date":        snap_date.isoformat(),
+                    "amount":      amount,
+                    "description": f"{label} {month_date.strftime('%b %Y')} (xlsx import)",
+                    "category_id": bonus_cat_id,
+                    "account_id":  checking_id,
+                    "is_verified": True,
+                }))
+
+    return results
+
+
 # -----------------------------------------------------------------------------
 # API post helpers
 # -----------------------------------------------------------------------------
@@ -542,7 +729,9 @@ def main():
     parser.add_argument("--user",              choices=["keaton", "katherine"], help="Import one user only")
     parser.add_argument("--skip-paystubs",     action="store_true")
     parser.add_argument("--skip-snapshots",    action="store_true")
-    parser.add_argument("--skip-transactions", action="store_true")
+    parser.add_argument("--skip-transactions", action="store_true", help="Skip monthly income transactions")
+    parser.add_argument("--skip-loans",        action="store_true", help="Skip student loan payment transactions")
+    parser.add_argument("--skip-bonuses",      action="store_true", help="Skip bonus income transactions")
     args = parser.parse_args()
 
     cfg      = load_config()
@@ -700,6 +889,86 @@ def main():
                 print(f"    [{username}] [DRY RUN] {tx['date']}  ${tx['amount']:,.2f}  {tx['description'][:50]}")
             else:
                 post_transaction(api_base, token, tx, False)
+
+    # -- STUDENT LOAN PAYMENTS (Sep 2024 - Jan 2025) ---------------------------
+    if not args.skip_loans:
+        print("\n--- STUDENT LOAN PAYMENTS (from tracker) ----------------")
+        print("  NOTE: 'Student Loans' account must exist in app for each user.")
+        print("        Payments are only imported for Sep 2024 - Jan 2025")
+        print("        (Google Sheets covers Feb 2025 onward).")
+
+        loan_cat_id = None
+        if not args.dry_run:
+            active_token = token_k or token_kat
+            if active_token:
+                loan_cat_id = discover_category_by_name(api_base, active_token, "Student Loans")
+                if loan_cat_id:
+                    print(f"  OK 'Student Loans' category id={loan_cat_id}")
+                else:
+                    print("  WARN 'Student Loans' category not found -- loan payments skipped")
+        else:
+            loan_cat_id = "?"
+
+        cutoff = date(2025, 2, 1)
+        loan_txns = extract_student_loan_payments(
+            ws_kd, ws_kak,
+            keaton_account_ids, katherine_account_ids,
+            loan_cat_id, cutoff
+        )
+        print(f"  Found {len(loan_txns)} loan payment records")
+
+        for username, tx in loan_txns:
+            if args.user and args.user != username:
+                continue
+            token = token_k if username == "keaton" else token_kat
+            if args.dry_run:
+                print(f"    [{username}] [DRY RUN] {tx['date']}  ${tx['amount']:,.2f}  {tx['description'][:60]}")
+            else:
+                existing = get_existing_transaction_keys(api_base, token)
+                key = (tx["date"], tx["description"])
+                if key in existing:
+                    print(f"    [SKIP] {tx['date']} {tx['description'][:50]} already exists")
+                else:
+                    post_transaction(api_base, token, tx, False)
+
+    # -- BONUS INCOME (all months with a value) --------------------------------
+    if not args.skip_bonuses:
+        print("\n--- BONUS INCOME (from tracker) -------------------------")
+        print("  Bonuses are manual entries in Rework, not in monthly spending sheets.")
+        print("  Importing all months with a non-zero bonus value.")
+
+        bonus_cat_id = None
+        if not args.dry_run:
+            active_token = token_k or token_kat
+            if active_token:
+                bonus_cat_id = discover_category_by_name(api_base, active_token, "Bonus")
+                if bonus_cat_id:
+                    print(f"  OK 'Bonus' category id={bonus_cat_id}")
+                else:
+                    print("  WARN 'Bonus' income category not found -- bonus transactions skipped")
+        else:
+            bonus_cat_id = "?"
+
+        bonus_txns = extract_bonus_transactions(
+            ws_kd, ws_kak,
+            keaton_account_ids, katherine_account_ids,
+            bonus_cat_id,
+        )
+        print(f"  Found {len(bonus_txns)} bonus records")
+
+        for username, tx in bonus_txns:
+            if args.user and args.user != username:
+                continue
+            token = token_k if username == "keaton" else token_kat
+            if args.dry_run:
+                print(f"    [{username}] [DRY RUN] {tx['date']}  ${tx['amount']:,.2f}  {tx['description'][:60]}")
+            else:
+                existing = get_existing_transaction_keys(api_base, token)
+                key = (tx["date"], tx["description"])
+                if key in existing:
+                    print(f"    [SKIP] {tx['date']} {tx['description'][:50]} already exists")
+                else:
+                    post_transaction(api_base, token, tx, False)
 
     print(f"\n{'='*60}")
     print("  Import complete.")

@@ -64,25 +64,42 @@ these in the app UI if they don't already exist.
 
 **Log in as keaton → go to /accounts → Add Account:**
 
-| Name | Type |
-|------|------|
-| Keaton Checking | Checking |
-| Keaton Savings | Savings |
-| EverBank HYSA | HYSA / High-Yield Savings |
-| Keaton 401k | 401k |
-| Keaton IRA | IRA |
+| Name | Type | Notes |
+|------|------|-------|
+| Keaton Checking | Checking | |
+| Keaton Savings | Savings | |
+| EverBank HYSA | HYSA / High-Yield Savings | |
+| Keaton 401k | 401k | |
+| Keaton IRA | IRA | |
+| Keaton Student Loans | Student Loan | Set balance to **$0** for now — you'll add a starting snapshot after import |
 
 **Log out → log in as katherine → go to /accounts → Add Account:**
 
-| Name | Type |
-|------|------|
-| Katherine Checking | Checking |
-| Katherine Savings | Savings |
-| Katherine 401k | 401k |
-| Katherine IRA | IRA |
+| Name | Type | Notes |
+|------|------|-------|
+| Katherine Checking | Checking | |
+| Katherine Savings | Savings | |
+| Katherine 401k | 401k | |
+| Katherine IRA | IRA | |
+| Katherine Student Loans | Student Loan | Katherine paid these off. Create the account so her payment history imports. Set balance to $0. |
 
-> That's it — **no manual ID lookup needed**. The script calls `GET /accounts`
-> and `GET /categories` at runtime to discover IDs automatically.
+> **No manual ID lookup needed** — the script calls `GET /accounts` and
+> `GET /categories` at runtime to discover all IDs automatically.
+
+### After import — add starting balance snapshots for student loans
+
+The import posts the monthly payment transactions, but you need to add the
+**Sep 2024 starting balance** manually so the balance history chart is accurate.
+
+**Keaton:** Go to `/accounts` → click "Keaton Student Loans" → Add Snapshot:
+- Date: `2024-09-01`
+- Balance: (your combined loan balance as of Sep 2024 — check your loan servicer)
+- Estimated: ~$12,000–15,000 (you can refine this later)
+
+**Katherine:** Go to `/accounts` → click "Katherine Student Loans" → Add Snapshot:
+- Date: `2024-09-01`
+- Balance: (her loan balance as of Sep 2024 — she paid off in Sep 2025)
+- The payment transactions will show the payoff progression
 
 ---
 
@@ -132,10 +149,24 @@ print a preview of every record it would post:
   Importing months before 2025-02-01 (Sep 2024 - Jan 2025)
     [keaton] [DRY RUN] 2024-09-30  $6,979.00  Monthly income Sep 2024 (xlsx import)
     [keaton] [DRY RUN] 2024-10-31  $6,979.00  Monthly income Oct 2024 (xlsx import)
-    [keaton] [DRY RUN] 2024-11-30  $6,979.00  Monthly income Nov 2024 (xlsx import)
-    [keaton] [DRY RUN] 2024-12-31  $6,979.00  Monthly income Dec 2024 (xlsx import)
-    [keaton] [DRY RUN] 2025-01-31  $7,263.00  Monthly income Jan 2025 (xlsx import)
+    ...
+
+--- STUDENT LOAN PAYMENTS (from tracker) ---
+  NOTE: 'Student Loans' account must exist in app for each user.
+    [keaton]    [DRY RUN] 2024-09-30  $800.00  Student loan payment Sep 2024 (xlsx import)
+    [keaton]    [DRY RUN] 2024-10-31  $800.00  Student loan payment Oct 2024 (xlsx import)
+    ...
+    [katherine] [DRY RUN] 2024-09-30  $XXX.XX  Student loan payment Sep 2024 (xlsx import)
+    ...
+
+--- BONUS INCOME (from tracker) ---
+  Bonuses are manual entries in Rework, not in monthly spending sheets.
+    [keaton]    [DRY RUN] 2025-03-31  $X,XXX.XX  Bonus Mar 2025 (xlsx import)
+    [katherine] [DRY RUN] ...
 ```
+
+> If loan/bonus sections show `[SKIP] no 'student_loan' account found`, go back
+> to Step 3 and create the Student Loans accounts first.
 
 Check that the numbers look right. If anything looks off, stop here and tune
 the script before running live.
@@ -153,6 +184,10 @@ python import_xlsx.py
 # Or one user at a time if you want to verify between users
 python import_xlsx.py --user keaton
 python import_xlsx.py --user katherine
+
+# Run only specific sections (all can be combined)
+python import_xlsx.py --skip-paystubs --skip-snapshots --skip-transactions  # loans + bonuses only
+python import_xlsx.py --skip-loans --skip-bonuses                            # paystubs + snapshots + income only
 ```
 
 The script outputs OK/FAIL for each record. If it says FAIL, it will show the

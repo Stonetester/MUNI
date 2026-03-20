@@ -285,8 +285,10 @@ export interface Paystub {
   pay_date?: string
   period_start?: string
   period_end?: string
+  pay_type?: string          // "regular" | "bonus"
   gross_pay?: number
   regular_pay?: number
+  bonus_pay?: number         // off-cycle bonus/supplemental amount
   holiday_pay?: number
   overtime_pay?: number
   salary_per_period?: number

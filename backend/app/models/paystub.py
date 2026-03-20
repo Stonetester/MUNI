@@ -18,9 +18,13 @@ class Paystub(Base):
     period_start = Column(Date, nullable=True)
     period_end = Column(Date, nullable=True)
 
+    # Pay type — "regular" for normal paychecks, "bonus" for off-cycle bonus/supplemental
+    pay_type = Column(String, nullable=True, default="regular")
+
     # Earnings (current period)
     gross_pay = Column(Float, nullable=True)
     regular_pay = Column(Float, nullable=True)
+    bonus_pay = Column(Float, nullable=True, default=0.0)   # off-cycle bonus/supplemental amount
     holiday_pay = Column(Float, nullable=True, default=0.0)
     overtime_pay = Column(Float, nullable=True, default=0.0)
     salary_per_period = Column(Float, nullable=True)       # base salary this period
