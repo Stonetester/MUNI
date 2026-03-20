@@ -25,9 +25,9 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 class PaystubIn(BaseModel):
     employer: Optional[str] = None
     voucher_number: Optional[str] = None
-    pay_date: str                     # ISO date string
-    period_start: Optional[str] = None
-    period_end: Optional[str] = None
+    pay_date: date
+    period_start: Optional[date] = None
+    period_end: Optional[date] = None
     gross_pay: float = 0.0
     regular_pay: float = 0.0
     holiday_pay: float = 0.0
@@ -123,11 +123,7 @@ def save_paystub(
     stub = Paystub(
         user_id=current_user.id,
         raw_pdf_path=raw_pdf_path,
-        pay_date=date.fromisoformat(data.pay_date),
-        period_start=date.fromisoformat(data.period_start) if data.period_start else None,
-        period_end=date.fromisoformat(data.period_end) if data.period_end else None,
-        **{k: v for k, v in data.model_dump().items()
-           if k not in {"pay_date", "period_start", "period_end"}}
+        **data.model_dump()
     )
     db.add(stub)
     db.commit()
@@ -148,6 +144,18 @@ def list_paystubs(
     )
 
 
+@router.get("/{stub_id}", response_model=PaystubOut)
+def get_paystub(
+    stub_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    stub = db.query(Paystub).filter(Paystub.id == stub_id, Paystub.user_id == current_user.id).first()
+    if not stub:
+        raise HTTPException(404, "Paystub not found")
+    return stub
+
+
 @router.put("/{stub_id}", response_model=PaystubOut)
 def update_paystub(
     stub_id: int,
@@ -159,10 +167,7 @@ def update_paystub(
     if not stub:
         raise HTTPException(404, "Paystub not found")
     for k, v in data.model_dump(exclude_unset=True).items():
-        if k in {"pay_date", "period_start", "period_end"}:
-            setattr(stub, k, date.fromisoformat(v) if v else None)
-        else:
-            setattr(stub, k, v)
+        setattr(stub, k, v)
     db.commit()
     db.refresh(stub)
     return stub

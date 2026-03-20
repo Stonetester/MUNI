@@ -56,6 +56,15 @@ def create_account(
     return account
 
 
+@router.get("/{account_id}", response_model=AccountOut)
+def get_account(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_account_or_404(account_id, current_user, db)
+
+
 @router.put("/{account_id}", response_model=AccountOut)
 def update_account(
     account_id: int,
