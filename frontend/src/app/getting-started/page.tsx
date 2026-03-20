@@ -7,7 +7,7 @@ import {
   Info, UserCircle, FileText, ChevronRight, Layers,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getAccounts, getTransactions, getRecurringRules, getCategories, getSyncConfig, getStudentLoans, getFinancialProfile } from '@/lib/api'
+import { getAccounts, getTransactions, getRecurringRules, getCategories, getSyncConfig, getStudentLoans, getFinancialProfile, getPaystubs } from '@/lib/api'
 import { formatCurrency } from '@/lib/utils'
 import AppLayout from '@/components/layout/AppLayout'
 
@@ -28,13 +28,14 @@ export default function GettingStartedPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [accounts, txData, rules, cats, profile, loans] = await Promise.all([
+        const [accounts, txData, rules, cats, profile, loans, paystubs] = await Promise.all([
           getAccounts().catch(() => []),
           getTransactions({ limit: 1 }).catch(() => ({ items: [], total: 0, skip: 0, limit: 1 })),
           getRecurringRules().catch(() => []),
           getCategories().catch(() => []),
           getFinancialProfile().catch(() => null),
           getStudentLoans().catch(() => []),
+          getPaystubs().catch(() => []),
         ])
 
         let syncEnabled = false
@@ -45,6 +46,7 @@ export default function GettingStartedPage() {
 
         const hasAccounts = accounts.length > 0
         const hasTransactions = txData.total > 0
+        const hasPaystubs = paystubs.length > 0
         const hasRecurring = rules.length > 0
         const hasBudgets = cats.some(c => (c.budget_amount ?? 0) > 0)
         const hasSalary = !!profile?.salary
@@ -100,15 +102,26 @@ export default function GettingStartedPage() {
             linkLabel: investAcct ? 'View accounts' : 'Add investment account →',
           },
           {
+            id: 'paystubs',
+            label: 'Upload a paystub PDF',
+            detail: hasPaystubs
+              ? `${paystubs.length} paystub${paystubs.length !== 1 ? 's' : ''} saved — income transactions created automatically`
+              : 'Upload a Paylocity PDF — income transactions are created automatically on save',
+            done: hasPaystubs,
+            value: hasPaystubs ? `${paystubs.length} paystub${paystubs.length !== 1 ? 's' : ''}` : undefined,
+            linkHref: '/paystubs',
+            linkLabel: hasPaystubs ? 'View paystubs' : 'Upload first paystub →',
+          },
+          {
             id: 'transactions',
-            label: 'Import or sync transactions',
+            label: 'Sync or import expense transactions',
             detail: hasTransactions
-              ? `${txData.total.toLocaleString()} transaction${txData.total !== 1 ? 's' : ''} imported`
-              : 'Import a CSV from your bank or connect Google Sheets',
+              ? `${txData.total.toLocaleString()} transaction${txData.total !== 1 ? 's' : ''} in history`
+              : 'Connect Google Sheets for auto-sync, or import a CSV from your bank',
             done: hasTransactions,
             value: hasTransactions ? `${txData.total.toLocaleString()} transactions` : undefined,
             linkHref: '/transactions',
-            linkLabel: hasTransactions ? 'View transactions' : 'Import transactions →',
+            linkLabel: hasTransactions ? 'View transactions' : 'Go to transactions →',
           },
           {
             id: 'sheets',

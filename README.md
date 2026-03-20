@@ -59,12 +59,7 @@ npm run dev
 Open **http://localhost:3000**
 
 ### Login
-| User | Password |
-|------|----------|
-| keaton | finance123 |
-| katherine | finance123 |
-
-> Change passwords in Settings after first login.
+Click **Keaton** or **Katherine** on the login screen — no password required. Access is secured via Tailscale subnet routing.
 
 ---
 
@@ -78,25 +73,27 @@ Sample data seeded by `seed/seed_data.py`:
 
 ---
 
-## Adding Your Data
+## Getting Data In
 
-### Import Transactions (Easiest)
+### Income — Paystub PDFs
+1. Go to **Paystubs** in the sidebar
+2. Drag a Paylocity PDF onto the upload zone
+3. Review the auto-extracted fields, then hit **Save**
+4. A Salary income transaction is created automatically on the pay date — no manual entry needed
+
+Bonus paystubs are detected automatically (yellow badge, excluded from avg-net stats).
+
+### Expenses — Google Sheets Sync
+1. Go to **Settings → Google Sheets Sync**
+2. Paste your Spreadsheet ID (from the sheet URL)
+3. Share the sheet with the service account email in `backend/credentials/google-sheets-key.json`
+4. Hit **Sync Now** — expense transactions import from each monthly tab
+5. Syncs automatically every 30 minutes when enabled
+
+### CSV Import (backfill / one-off)
 1. Export from your bank as CSV
 2. Go to **Transactions → Import**
-3. Map columns (the tool remembers your mapping)
-
-### CSV Import Format Supported
-Your existing spreadsheet format works directly:
-```
-Column 1, Transaction Date, Type, Price, Status
-Chic fil a, 7/1/2024, Eating out, 12.82, Debit Card
-```
-
-Standard bank CSV format also works:
-```
-Date, Description, Amount, Type
-2024-07-01, WALMART, -45.23, Debit
-```
+3. Upload — columns are mapped automatically
 
 ### Manual Entry
 - **Transactions**: Add button on Transactions page
@@ -144,9 +141,9 @@ Scenarios let you clone the baseline and ask "what if I cut dining out by 50%?" 
 
 ---
 
-## Updating Your Data
+## Monthly Routine
 
-The app gets smarter as you add data. Best practice:
-1. **Monthly**: Import previous month's transactions from your bank exports
-2. **Quarterly**: Update account balances (401k, HYSA, student loan)
-3. **Annually**: Review and update recurring rules (salary changes, new subscriptions)
+1. **Each paycheck**: Upload the paystub PDF → income transaction created automatically
+2. **Expenses**: Google Sheets auto-syncs every 30 min — or hit Sync Now after entering spending
+3. **Quarterly**: Update account balances (401k, HYSA, student loans) via balance snapshots
+4. **Annually**: Review recurring rules (salary changes, new subscriptions)

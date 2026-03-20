@@ -54,16 +54,9 @@ Open: `http://localhost:3000`
 
 ---
 
-## 3) Login Accounts
+## 3) Login
 
-Default seeded users:
-
-| Username | Password |
-|---|---|
-| `keaton` | `finance123` |
-| `katherine` | `finance123` |
-
-After login, go to **Settings** and change your password.
+Click **Keaton** or **Katherine** on the login screen. No password is required — access is secured via Tailscale subnet routing. Use the **Profile Switcher** in the top-right header to toggle between profiles without logging out.
 
 ---
 
@@ -123,20 +116,29 @@ Dashboard gives you the quickest full-picture view.
 
 ## 6) Transactions
 
-Use this page for search, filtering, import, and CRUD.
+Where every dollar in and out is recorded. Income comes from paystubs; expenses from Google Sheets sync.
+
+### How data gets in
+
+**Income (paychecks):**
+1. Go to **Paystubs** and upload a paystub PDF.
+2. Review extracted fields, then hit **Save**.
+3. A Salary (or Bonus) income transaction is automatically created on the pay date, linked to your checking account.
+
+**Expenses (Google Sheets):**
+- Connect your monthly spending sheet in **Settings → Google Sheets Sync**.
+- Transactions import automatically from each monthly tab every 30 minutes.
+- Hit **Sync Now** to import immediately.
+
+**CSV import (backfill / one-off):**
+1. Export from your bank as CSV.
+2. Go to **Transactions → Import**.
+3. Columns are mapped automatically.
 
 ### Core actions
-- Add transaction manually
-- Edit/delete transaction
-- Filter by date/account/category/search
-- Import CSV/XLSX
-- Export CSV
-
-### Import workflow (recommended monthly)
-1. Export monthly transaction file from your bank/card.
-2. Go to Transactions → Import.
-3. Upload file and confirm mapping.
-4. Review imported rows and duplicates.
+- Add/edit/delete transactions manually
+- Filter by date, account, category, or keyword
+- Export filtered view as CSV
 
 ### Data conventions
 - Positive amount = income
@@ -253,11 +255,7 @@ Alerts page centralizes proactive warnings.
 
 ## 13) Settings
 
-Use Settings to manage account security and Google Sheets sync integration.
-
-### Recommended immediately after first login
-- Change default password
-- Verify account identity details
+Use Settings to manage profile cards, Google Sheets sync, and email notifications.
 
 ### Google Sheets Sync
 Connect a Google Sheet to auto-import transactions. The sheet is synced every 30 minutes when enabled.
@@ -308,41 +306,46 @@ Each user has their own financial profile page at `/financial-profile`. Fill in 
 
 ## 15) Paystubs
 
-Upload Paylocity PDF paystubs to extract and store all payroll data automatically.
+Upload Paylocity PDF paystubs to extract all payroll data and **automatically record income transactions**.
 
 ### Upload workflow
 1. Go to **Paystubs** in the sidebar.
 2. Drag a PDF onto the upload zone or click to browse.
 3. The parser (pdfplumber) extracts all fields automatically.
 4. Review the pre-filled form — correct any fields if needed.
-5. Click **Save Paystub** to store.
+5. Click **Save Paystub**.
+
+### What happens when you save
+- A **Salary income transaction** for net pay is posted to your checking account on the pay date.
+- An **Employer 401k transaction** is posted separately if an employer contribution is on the stub.
+- Both are tagged `import_source=paystub:{id}` — deleting the paystub removes its transactions too.
+- Bonus paystubs (detected automatically) get a yellow badge and are excluded from the avg-net calculation.
 
 ### Fields extracted automatically
 - Gross pay, net pay, pay period dates, employer name
 - Federal income tax (FITW)
 - MD state tax, MD county tax (MD-CAL1)
 - Social Security, Medicare
-- 401k employee deduction
-- Employer Safe Harbor 401k contribution
+- 401k employee deduction, employer Safe Harbor 401k contribution
 - Vision insurance deduction
 - YTD: gross, net, federal, SS, Medicare, state, 401k (employee + employer)
 
 ### Summary stats (once you have saved stubs)
 - YTD Gross and YTD Net from the most recent stub
-- Average net pay per paycheck across all saved stubs
+- Average net pay per paycheck (bonus stubs excluded, count shown)
 
 ---
 
 ## 16) Suggested Monthly Routine
 
-1. Run Google Sheets **Sync Now** to import new transactions (or wait for auto-sync)
-2. Verify categories for uncategorized rows
-3. Update key account balances (HYSA, 401k, student loans via balance snapshots)
-4. Upload new paystub PDF for the month
-5. Review budget overages
-6. Review alerts
-7. Check forecast for next 3–6 months
-8. Update life event schedule/cost assumptions if needed
+1. **Each paycheck** — Upload the paystub PDF at `/paystubs` → income transaction created automatically
+2. **Expenses** — Google Sheets auto-syncs every 30 min; or hit **Sync Now** after entering spending
+3. Verify categories for any uncategorized rows in Transactions
+4. Update key account balances (HYSA, 401k, student loans via balance snapshots on Accounts page)
+5. Review budget overages on the Budget page
+6. Review any active Alerts
+7. Check the Forecast for the next 3–6 months
+8. Update life event schedule or cost assumptions if plans have changed
 
 ---
 

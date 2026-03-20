@@ -1,5 +1,5 @@
 # Muni — Claude Project Context
-_Last updated: 2026-03-19 (session 4). See NEXT_PHASE_PLAN.md for the full build plan._
+_Last updated: 2026-03-20 (session 5). See NEXT_PHASE_PLAN.md for the full build plan._
 
 ---
 
@@ -58,13 +58,10 @@ systemctl restart muni-backend
 
 ---
 
-## Git State (as of 2026-03-19)
-- **Active branch**: `main` — all work merged here, pushed to origin
-- **All branches merged into main**:
-  - `dev` — Docker, cleanup, bug fixes
-  - `feature/insights` — calendar, insights, profile switcher, tutorial, getting started
-  - `feature/mobile-ai-reports` — AI report page, email notifications
-- **Workflow**: develop locally on `main` (or a feature branch), push to origin, then `muni-deploy` on the server
+## Git State (as of 2026-03-20)
+- **Active branch**: `feature/paystub-income-sync` — paystub → income transaction auto-creation, docs cleanup
+- **Main branch**: all previously merged work
+- **Workflow**: develop on feature branch, merge to `main`, then `muni-deploy` on the server
 
 ---
 
@@ -94,8 +91,10 @@ systemctl restart muni-backend
 19. ✅ AI Financial Report (`/ai-report`): Claude-powered monthly report
 20. ✅ Notifications (`/notifications`): weekly email digest, SMTP config, preview
 21. ✅ Google Sheets Sync (`/settings`): connect sheet ID, auto-sync every 30 min, manual sync
-22. ✅ Tutorial modal: `?` button in sidebar → 10-step walkthrough
-23. ✅ Getting Started (`/getting-started`): interactive 6-section setup checklist
+22. ✅ Tutorial modal: `?` button in sidebar → step-by-step walkthrough
+23. ✅ Getting Started (`/getting-started`): interactive setup checklist (auto-completes as you use the app)
+24. ✅ **Paystubs** (`/paystubs`): upload Paylocity PDF → parse all fields → save → auto-creates income transactions (Salary + Employer 401k) in transaction history; bonus paystub detection; YTD tracking; avg net excludes bonus stubs
+25. ✅ **Financial Profile** (`/financial-profile`): salary, loans, investment holdings, compensation history
 
 ---
 
@@ -118,6 +117,7 @@ systemctl restart muni-backend
   - `/insights` — statistical spending analysis page
   - `/ai-report` — Claude-powered monthly financial report
   - `/getting-started` — interactive new-user setup guide
+  - `/paystubs` — PDF upload, parse review, history, income transaction auto-creation
 - UI components: `frontend/src/components/ui/`
   - `MonthDetailModal.tsx` — clickable month detail (forecast data + category breakdown)
 - Auth: `frontend/src/lib/auth.ts` — `login()`, `switchProfiles()`, `getAltUser()`, `storeAltProfile()`
@@ -145,16 +145,15 @@ _Used when building projections, profile defaults, loan trackers._
 
 ---
 
-## Phase 4 — Planned Features (NOT YET BUILT)
-_See NEXT_PHASE_PLAN.md — Phase 4 section for full details._
+## Phase 4 — Feature Status
 
-### A. Paystub PDF Parser
-- Upload paystub PDF → pdfplumber extracts all fields (Paylocity format confirmed)
-- Extracts: gross/net pay, all taxes, all deductions, 401k employee + employer, YTD figures
-- `/paystubs` page: upload, timeline, summary stats
-- **No API key** — pdfplumber is free and local
+### ✅ A. Paystub PDF Parser (DONE — `feature/paystub-income-sync`)
+- Upload paystub PDF → pdfplumber extracts all fields (Paylocity format)
+- Saving auto-creates income transactions (net pay + employer 401k)
+- Bonus paystub detection (`pay_type`, `bonus_pay` fields)
+- Alembic migration 002 adds the two new columns
 
-### B. Historical Data Entry
+### B. Historical Data Entry (still planned)
 - Past paystubs: batch upload + parse
 - Investment statements: manual form for 401k/IRA quarterly statements
 

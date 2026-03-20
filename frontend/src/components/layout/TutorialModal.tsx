@@ -23,7 +23,7 @@ const steps = [
           >
             <PlusCircle size={14} /> Getting Started Guide →
           </Link>
-          <span className="text-muted">Step-by-step: add accounts, import transactions, set up forecast.</span>
+          <span className="text-muted">Step-by-step: add accounts, upload paystubs for income, connect Google Sheets for expenses.</span>
         </div>
       </div>
     ),
@@ -55,16 +55,16 @@ const steps = [
     bg: 'bg-yellow-400/10',
     content: (
       <div className="flex flex-col gap-3 text-sm text-text-secondary">
-        <p>Every dollar in and out lives here. This is where you keep your data current.</p>
+        <p>Every dollar in and out lives here. Income comes from paystubs; expenses come from Google Sheets sync.</p>
         <ul className="flex flex-col gap-2">
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">Import</span>Upload a CSV or XLSX from your bank. The app maps columns automatically.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">Add manual</span>Use the Add button to enter a transaction by hand.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">Income</span>Upload paystub PDFs — the app auto-creates income transactions when you save a stub.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">Expenses</span>Connect Google Sheets (Settings) to sync your monthly spending sheets automatically.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">CSV import</span>Upload a CSV from your bank if you need to backfill data manually.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">Add manual</span>Use the Add button to enter any one-off transaction by hand.</li>
           <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">Filter</span>Filter by date range, account, category, or keyword search.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">Edit/Delete</span>Click any row to edit or remove it.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[80px]">Export</span>Download your filtered transactions as CSV.</li>
         </ul>
         <div className="p-3 rounded-xl bg-surface-2 text-xs">
-          <span className="font-semibold text-text-primary">CSV format tip:</span> Standard bank exports work directly. Positive = income, negative = expense.
+          <span className="font-semibold text-text-primary">Income flow:</span> Paystubs page → upload PDF → review → Save. A "Salary" income transaction is created automatically on the pay date.
         </div>
       </div>
     ),
@@ -208,12 +208,13 @@ const steps = [
     bg: 'bg-orange-400/10',
     content: (
       <div className="flex flex-col gap-3 text-sm text-text-secondary">
-        <p>Upload Paylocity paystub PDFs and the app automatically extracts every field — no manual entry needed.</p>
+        <p>Upload Paylocity paystub PDFs — the app extracts every field and <strong className="text-text-primary">automatically posts income transactions</strong> to your transaction history.</p>
         <ul className="flex flex-col gap-2">
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">Upload PDF</span>Drag and drop or click to browse. Supports Paylocity digital PDFs.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">Review & edit</span>All extracted fields are shown for review. Correct anything before saving.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">History</span>Saved stubs show gross/net per check and effective tax rate at a glance.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">YTD tracking</span>Year-to-date totals (gross, net, 401k, federal tax) are captured automatically.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">Upload PDF</span>Drag and drop or click to browse. Supports Paylocity digital PDFs.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">Review & save</span>All extracted fields shown for review. Correct anything, then hit Save.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">Auto-income</span>Saving creates a Salary transaction (net pay) + Employer 401k transaction on the pay date.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">Bonus paystubs</span>The parser detects bonus/supplemental pay. Bonus stubs get a yellow badge and are excluded from avg-net stats.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[120px]">YTD tracking</span>Year-to-date totals (gross, net, 401k, taxes) captured from each stub.</li>
         </ul>
         <div className="p-3 rounded-xl bg-surface-2 text-xs">
           Fields extracted: gross pay, net pay, federal/MD/SS/Medicare taxes, 401k (employee + employer Safe Harbor), vision, GTL, and all YTD figures.
@@ -251,14 +252,17 @@ const steps = [
     bg: 'bg-surface-2',
     content: (
       <div className="flex flex-col gap-3 text-sm text-text-secondary">
-        <p>Settings manages your account security and Google Sheets integration.</p>
+        <p>Settings manages your profile cards and Google Sheets sync integration.</p>
         <ul className="flex flex-col gap-2">
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Change password</span>Enter your current password and a new one. Takes effect immediately.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Google Sheets Sync</span>Configure your Sheet ID, toggle auto-sync, and trigger manual syncs.</li>
-          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Account info</span>Shows which user you are logged in as.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Profile cards</span>Shows Keaton and Katherine — click to switch the active profile (no password needed).</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Google Sheets Sync</span>Paste your Sheet ID, toggle auto-sync every 30 min, or hit Sync Now for immediate import.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Email digest</span>Configure weekly spending summary emails via Notifications settings.</li>
         </ul>
-        <div className="p-3 rounded-xl bg-surface-2 text-xs">
-          <span className="text-text-primary font-semibold">Do this first:</span> Change the default password (<span className="font-mono">finance123</span>) as soon as you log in for the first time.
+        <div className="p-3 rounded-xl bg-surface-2 text-xs flex flex-col gap-1">
+          <span className="text-text-primary font-semibold">Google Sheets setup:</span>
+          <span>1. Get your Sheet ID from the URL (between <span className="font-mono">/d/</span> and <span className="font-mono">/edit</span>)</span>
+          <span>2. Share the sheet with the service account email from your credentials file</span>
+          <span>3. Paste the ID → Save → Sync Now</span>
         </div>
         <p className="mt-1 text-center text-text-primary font-medium">You are all set — go explore!</p>
       </div>
