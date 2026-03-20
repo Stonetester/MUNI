@@ -53,14 +53,14 @@ cd C:\Users\keato\financeTool\frontend
 npm run dev
 ```
 
-Open http://localhost:3000 and log in as **keaton / finance123**
+Open http://localhost:3000 and log in as **keaton**
 
 ---
 
 ## Step 3 — Create the accounts in the app
 
-The import needs account IDs to post balance snapshots. Create these accounts
-in the app UI first if they don't already exist.
+The import needs accounts to exist so it can auto-discover their IDs. Create
+these in the app UI if they don't already exist.
 
 **Log in as keaton → go to /accounts → Add Account:**
 
@@ -81,92 +81,23 @@ in the app UI first if they don't already exist.
 | Katherine 401k | 401k |
 | Katherine IRA | IRA |
 
----
-
-## Step 4 — Get the account IDs
-
-**Option A — from the app URL:**
-Click any account in the app. The URL will show `/accounts?id=5` or similar.
-
-**Option B — from the API directly:**
-
-Open a new terminal (keep the backend running):
-
-```bash
-# Get Keaton's token first
-curl -s -X POST http://localhost:8000/api/v1/auth/login \
-  -d "username=keaton&password=finance123" \
-  -H "Content-Type: application/x-www-form-urlencoded" | python -m json.tool
-```
-
-Copy the `access_token` value, then:
-
-```bash
-# List Keaton's accounts
-curl -s http://localhost:8000/api/v1/accounts \
-  -H "Authorization: Bearer PASTE_TOKEN_HERE" | python -m json.tool
-```
-
-You'll see output like:
-```json
-[
-  { "id": 1, "name": "Keaton Checking", "account_type": "checking", ... },
-  { "id": 2, "name": "Keaton Savings",  "account_type": "savings",  ... },
-  ...
-]
-```
-
-Do the same for katherine to get her account IDs.
-
-**Get the income category ID:**
-
-```bash
-curl -s http://localhost:8000/api/v1/categories \
-  -H "Authorization: Bearer PASTE_TOKEN_HERE" | python -m json.tool
-```
-
-Find the entry where `"name": "Income"` and note its `"id"`.
+> That's it — **no manual ID lookup needed**. The script calls `GET /accounts`
+> and `GET /categories` at runtime to discover IDs automatically.
 
 ---
 
-## Step 5 — Fill in account_map.json
+## Step 4 — Dry run (always do this first)
 
-Edit `backend/import/account_map.json` — replace every `null` with the real IDs:
-
-```json
-{
-  "keaton": {
-    "checking_id":  1,
-    "savings_id":   2,
-    "hysa_id":      3,
-    "k401_id":      4,
-    "ira_id":       5
-  },
-  "katherine": {
-    "checking_id":  6,
-    "savings_id":   7,
-    "hysa_id":      null,
-    "k401_id":      8,
-    "ira_id":       9
-  },
-  "income_category_id": 1,
-  ...
-}
-```
-
-If Katherine doesn't have a HYSA account yet, leave it `null` — the script
-skips fields that are null.
-
----
-
-## Step 6 — Dry run (always do this first)
+Open a third terminal:
 
 ```bash
 cd C:\Users\keato\financeTool\backend\import
 python import_xlsx.py --dry-run
 ```
 
-Expected output:
+The script will log in as both users, auto-discover their account IDs, then
+print a preview of every record it would post:
+
 ```
 ============================================================
   FinanceTrack Historical Import
@@ -174,6 +105,9 @@ Expected output:
 ============================================================
 
 --- KEATON ---
+  Logging in as keaton...
+  OK  Found 5 accounts: ['checking', 'savings', 'hysa', '401k', 'ira']
+  OK  Income category id = 1
 
   [Paystubs]
   Found 7 paystub records
@@ -187,10 +121,11 @@ Expected output:
 
   [Balance Snapshots]
   Found 10 snapshot records
-    [DRY RUN] POST /balance-snapshots  acct_id=1  date=2025-03-31  balance=5656.12
-    [DRY RUN] POST /balance-snapshots  acct_id=2  date=2025-03-31  balance=2398.27
-    ...
-    [DRY RUN] POST /balance-snapshots  acct_id=1  date=2025-01-31  balance=5656.12
+    [DRY RUN] POST /balance-snapshots  acct=checking  date=2025-01-31  balance=5656.12
+    [DRY RUN] POST /balance-snapshots  acct=savings   date=2025-01-31  balance=2398.27
+    [DRY RUN] POST /balance-snapshots  acct=hysa      date=2025-01-31  balance=48265.92
+    [DRY RUN] POST /balance-snapshots  acct=401k      date=2025-01-31  balance=68534.76
+    [DRY RUN] POST /balance-snapshots  acct=ira       date=2025-01-31  balance=3516.68
     ...
 
 --- MONTHLY INCOME TRANSACTIONS (from tracker) ---
@@ -207,7 +142,7 @@ the script before running live.
 
 ---
 
-## Step 7 — Run the actual import
+## Step 5 — Run the actual import
 
 Once the dry run looks correct:
 
@@ -226,7 +161,7 @@ automatically skipped.
 
 ---
 
-## Step 8 — Verify in the app
+## Step 6 — Verify in the app
 
 After the import:
 

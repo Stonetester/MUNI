@@ -14,7 +14,7 @@ from the spreadsheet. Run it once; it skips records that already exist.
 
 ---
 
-## Setup (5 steps)
+## Setup (3 steps)
 
 ### 1. Make sure the app is running
 ```bash
@@ -37,36 +37,10 @@ Log in as **katherine** and create:
 - Katherine 401k (401k)
 - Katherine IRA (ira)
 
-### 3. Get account IDs and income category ID
-```bash
-# Get Keaton's accounts
-curl -s http://localhost:8000/api/v1/accounts \
-  -H "Authorization: Bearer <keaton_token>" | python -m json.tool
+> **No manual ID lookup required.** The script automatically discovers account IDs
+> and the income category ID by querying the API at runtime.
 
-# Get categories (find the "Income" category ID)
-curl -s http://localhost:8000/api/v1/categories \
-  -H "Authorization: Bearer <keaton_token>" | python -m json.tool
-```
-Or just browse to http://localhost:3000/accounts — the account ID is in the URL
-when you click an account.
-
-### 4. Fill in account_map.json
-Edit `backend/import/account_map.json` and replace `null` with numeric IDs:
-```json
-{
-  "keaton": {
-    "checking_id":  12,
-    "savings_id":   13,
-    "hysa_id":      14,
-    "k401_id":      15,
-    "ira_id":       16
-  },
-  ...
-  "income_category_id": 1
-}
-```
-
-### 5. Install dependencies (if not already installed)
+### 3. Install dependencies (if not already installed)
 ```bash
 pip install openpyxl requests
 ```
@@ -101,6 +75,26 @@ The script is **idempotent** — re-running it skips records that already exist.
 
 ---
 
+## Configuration
+
+On first run the script creates `config.json` next to itself with defaults:
+
+```json
+{
+  "xlsx_path": "C:\\Users\\keato\\Downloads\\KK Finances_ Rework.xlsx",
+  "api_base": "http://localhost:8000/api/v1",
+  "keaton_username": "keaton",
+  "keaton_password": "finance123",
+  "katherine_username": "katherine",
+  "katherine_password": "finance123"
+}
+```
+
+Edit only if your path, port, or credentials differ. **No account IDs needed** —
+those are auto-discovered from the API at runtime.
+
+---
+
 ## After Import
 
 - **Accounts page** → click each account → chart should show historical data points
@@ -115,8 +109,8 @@ The script is **idempotent** — re-running it skips records that already exist.
 | Error | Fix |
 |-------|-----|
 | `Connection refused` | Make sure the backend is running on port 8000 |
-| `401 Unauthorized` | Check credentials in account_map.json credentials section |
+| `401 Unauthorized` | Check credentials in config.json |
 | `422 Unprocessable` | A field type mismatch — check API is up to date |
-| `Excel file not found` | Update `xlsx_path` in account_map.json |
-| Snapshots show 0 records | Fill in account IDs in account_map.json |
-| Transactions show 0 records | Fill in `income_category_id` in account_map.json |
+| `Excel file not found` | Update `xlsx_path` in config.json |
+| `No accounts found` | Create accounts in the app first (Step 2 above) |
+| `No income category found` | Run `python seed/seed_data.py` to seed default categories |
