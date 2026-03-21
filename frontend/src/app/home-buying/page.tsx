@@ -266,7 +266,7 @@ function EditGoalModal({ goal, onSave, onClose }: {
                   ].join(' ')}
                 >
                   {opt.label}
-                  {opt.recommended && (
+                  {'recommended' in opt && opt.recommended && (
                     <span className="ml-2 text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded font-medium">Recommended</span>
                   )}
                 </button>
