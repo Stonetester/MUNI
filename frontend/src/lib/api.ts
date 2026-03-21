@@ -22,6 +22,7 @@ import type {
   CompensationEvent,
   Paystub,
   ParsedPaystub,
+  HomeBuyingGoal,
 } from './types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -89,6 +90,10 @@ export async function getAccountSnapshots(accountId: number): Promise<BalanceSna
 export async function createSnapshot(data: Partial<BalanceSnapshot>): Promise<BalanceSnapshot> {
   const res: AxiosResponse<BalanceSnapshot> = await api.post('/balance-snapshots', data)
   return res.data
+}
+
+export async function deleteSnapshot(id: number): Promise<void> {
+  await api.delete(`/balance-snapshots/${id}`)
 }
 
 // Categories
@@ -399,8 +404,52 @@ export async function getPaystubs(): Promise<Paystub[]> {
   return res.data
 }
 
+export async function updatePaystub(id: number, data: Partial<Paystub>): Promise<Paystub> {
+  const res: AxiosResponse<Paystub> = await api.put(`/paystubs/${id}`, data)
+  return res.data
+}
+
 export async function deletePaystub(id: number): Promise<void> {
   await api.delete(`/paystubs/${id}`)
+}
+
+export async function deleteAllPaystubs(): Promise<void> {
+  await api.delete('/paystubs')
+}
+
+// Home Buying
+export async function getHomeBuyingGoal(): Promise<HomeBuyingGoal> {
+  const res: AxiosResponse<HomeBuyingGoal> = await api.get('/home-buying/goal')
+  return res.data
+}
+
+export async function getHomeBuyingGoals(): Promise<HomeBuyingGoal[]> {
+  const res: AxiosResponse<HomeBuyingGoal[]> = await api.get('/home-buying/goals')
+  return res.data
+}
+
+export async function updateHomeBuyingGoal(data: HomeBuyingGoal): Promise<HomeBuyingGoal> {
+  const res: AxiosResponse<HomeBuyingGoal> = await api.put('/home-buying/goal', data)
+  return res.data
+}
+
+export async function createHomeBuyingGoal(data: Omit<HomeBuyingGoal, 'id'>): Promise<HomeBuyingGoal> {
+  const res: AxiosResponse<HomeBuyingGoal> = await api.post('/home-buying/goals', data)
+  return res.data
+}
+
+export async function updateHomeBuyingGoalById(id: number, data: HomeBuyingGoal): Promise<HomeBuyingGoal> {
+  const res: AxiosResponse<HomeBuyingGoal> = await api.put(`/home-buying/goals/${id}`, data)
+  return res.data
+}
+
+export async function activateHomeBuyingGoal(id: number): Promise<HomeBuyingGoal> {
+  const res: AxiosResponse<HomeBuyingGoal> = await api.post(`/home-buying/goals/${id}/activate`)
+  return res.data
+}
+
+export async function deleteHomeBuyingGoal(id: number): Promise<void> {
+  await api.delete(`/home-buying/goals/${id}`)
 }
 
 // AI Monthly Report

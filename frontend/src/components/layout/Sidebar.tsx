@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Sparkles,
   Mail,
+  Home,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { APP_VERSION, APP_NAME } from '@/lib/version'
@@ -40,6 +41,7 @@ const primaryItems = [
   { label: 'Life Events', icon: Calendar, href: '/events' },
   { label: 'Recurring', icon: RefreshCw, href: '/recurring' },
   { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
+  { label: 'Home Buying', icon: Home, href: '/home-buying' },
   { label: 'Paystubs', icon: FileText, href: '/paystubs' },
   { label: 'Settings', icon: Settings, href: '/settings' },
 ]

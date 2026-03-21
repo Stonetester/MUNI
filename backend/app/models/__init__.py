@@ -12,6 +12,7 @@ from app.models.student_loan import StudentLoan
 from app.models.investment_holding import InvestmentHolding
 from app.models.compensation_event import CompensationEvent
 from app.models.paystub import Paystub
+from app.models.home_buying import HomeBuyingGoal
 
 __all__ = [
     "User",
@@ -28,4 +29,5 @@ __all__ = [
     "InvestmentHolding",
     "CompensationEvent",
     "Paystub",
+    "HomeBuyingGoal",
 ]

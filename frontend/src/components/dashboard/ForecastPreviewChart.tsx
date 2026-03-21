@@ -11,6 +11,7 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  ReferenceArea,
   TooltipProps,
 } from 'recharts'
 
@@ -36,12 +37,17 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
 }
 
 export default function ForecastPreviewChart({ forecastPreview }: ForecastPreviewChartProps) {
+  const currentMonth = new Date().toISOString().slice(0, 7)
   const chartData = forecastPreview.slice(0, 6).map((p) => ({
     month: formatMonth(p.month),
+    rawMonth: p.month,
     net_worth: p.net_worth,
     low_net_worth: p.low_cash,
     high_net_worth: p.high_cash,
   }))
+  // First point is current month (actual), rest are future predictions
+  const futureStartLabel = chartData.find((d) => d.rawMonth > currentMonth)?.month
+  const lastLabel = chartData[chartData.length - 1]?.month
 
   return (
     <Card title="Net Worth Forecast (6 months)" className="col-span-full md:col-span-1">
@@ -73,6 +79,16 @@ export default function ForecastPreviewChart({ forecastPreview }: ForecastPrevie
               width={50}
             />
             <Tooltip content={<CustomTooltip />} />
+            {futureStartLabel && lastLabel && (
+              <ReferenceArea
+                x1={futureStartLabel}
+                x2={lastLabel}
+                fill="#0f1117"
+                fillOpacity={0.38}
+                stroke="none"
+                isFront
+              />
+            )}
             <Area
               type="monotone"
               dataKey="high_net_worth"

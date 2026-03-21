@@ -15,9 +15,10 @@ import {
 import type { FinancialProfile, StudentLoan, InvestmentHolding, CompensationEvent, Account } from '@/lib/types'
 import {
   UserCircle, DollarSign, BookOpen, TrendingUp, Trophy, ChevronDown, ChevronUp,
-  Plus, Trash2, Save, Edit2, X, CheckCircle,
+  Plus, Trash2, Save, Edit2, X, CheckCircle, PiggyBank, BarChart3,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import InfoTooltip from '@/components/ui/InfoTooltip'
 
 function fmt(n?: number | null) {
   if (n == null) return '—'
@@ -30,12 +31,13 @@ function fmtPct(n?: number | null) {
 }
 
 // ─── Collapsible section wrapper ────────────────────────────────────────────
-function Section({ title, icon: Icon, color, children, defaultOpen = true }: {
+function Section({ title, icon: Icon, color, children, defaultOpen = true, tooltip }: {
   title: string
   icon: React.ElementType
   color: string
   children: React.ReactNode
   defaultOpen?: boolean
+  tooltip?: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
@@ -49,6 +51,11 @@ function Section({ title, icon: Icon, color, children, defaultOpen = true }: {
             <Icon size={16} className="text-white" />
           </div>
           <span className="text-sm font-semibold text-text-primary">{title}</span>
+          {tooltip && (
+            <span onClick={(e) => e.stopPropagation()}>
+              {tooltip}
+            </span>
+          )}
         </div>
         {open ? <ChevronUp size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
       </button>
@@ -132,18 +139,16 @@ function IncomeSection({ profile, onSaved }: { profile: FinancialProfile | null;
   )
 }
 
-// ─── HYSA & IRA section ───────────────────────────────────────────────────────
-function SavingsSection({ profile, onSaved }: { profile: FinancialProfile | null; onSaved: () => void }) {
+// ─── HYSA section ─────────────────────────────────────────────────────────────
+function HysaSection({ profile, onSaved }: { profile: FinancialProfile | null; onSaved: () => void }) {
   const [hysaApy, setHysaApy] = useState(profile?.hysa_apy?.toString() ?? '')
   const [hysaContrib, setHysaContrib] = useState(profile?.hysa_monthly_contribution?.toString() ?? '')
-  const [iraContrib, setIraContrib] = useState(profile?.ira_monthly_contribution?.toString() ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     setHysaApy(profile?.hysa_apy?.toString() ?? '')
     setHysaContrib(profile?.hysa_monthly_contribution?.toString() ?? '')
-    setIraContrib(profile?.ira_monthly_contribution?.toString() ?? '')
   }, [profile])
 
   const handleSave = async () => {
@@ -152,7 +157,6 @@ function SavingsSection({ profile, onSaved }: { profile: FinancialProfile | null
       await updateFinancialProfile({
         hysa_apy: hysaApy ? parseFloat(hysaApy) : undefined,
         hysa_monthly_contribution: hysaContrib ? parseFloat(hysaContrib) : undefined,
-        ira_monthly_contribution: iraContrib ? parseFloat(iraContrib) : undefined,
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -166,9 +170,71 @@ function SavingsSection({ profile, onSaved }: { profile: FinancialProfile | null
     <div className="mt-4 flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4">
         <Input label="HYSA APY (%)" type="number" step="0.01" value={hysaApy} onChange={e => setHysaApy(e.target.value)} placeholder="3.9" />
-        <Input label="Monthly HYSA Contribution ($)" type="number" value={hysaContrib} onChange={e => setHysaContrib(e.target.value)} placeholder="1600" />
+        <Input label="Monthly Contribution ($)" type="number" value={hysaContrib} onChange={e => setHysaContrib(e.target.value)} placeholder="1600" />
+      </div>
+      {hysaApy && hysaContrib && (
+        <div className="p-3 rounded-xl bg-surface-2 text-xs text-text-secondary">
+          At {hysaApy}% APY, ${parseFloat(hysaContrib).toLocaleString()}/mo grows to{' '}
+          <strong className="text-text-primary">
+            {fmt(parseFloat(hysaContrib) * 12 * 1.039)}
+          </strong>{' '}
+          after 1 year (approx, on contributions only)
+        </div>
+      )}
+      <div className="flex items-center gap-3">
+        <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
+          <Save size={14} /> Save
+        </Button>
+        {saved && <span className="text-xs text-green-400 flex items-center gap-1"><CheckCircle size={12} /> Saved</span>}
+      </div>
+    </div>
+  )
+}
+
+// ─── IRA section ──────────────────────────────────────────────────────────────
+function IraSection({ profile, onSaved }: { profile: FinancialProfile | null; onSaved: () => void }) {
+  const [iraContrib, setIraContrib] = useState(profile?.ira_monthly_contribution?.toString() ?? '')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    setIraContrib(profile?.ira_monthly_contribution?.toString() ?? '')
+  }, [profile])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await updateFinancialProfile({
+        ira_monthly_contribution: iraContrib ? parseFloat(iraContrib) : undefined,
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      onSaved()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const annualContrib = iraContrib ? parseFloat(iraContrib) * 12 : null
+  const limit2026 = 7000  // IRA contribution limit 2026
+
+  return (
+    <div className="mt-4 flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <Input label="Monthly IRA Contribution ($)" type="number" value={iraContrib} onChange={e => setIraContrib(e.target.value)} placeholder="583" />
       </div>
+      {annualContrib !== null && (
+        <div className="p-3 rounded-xl bg-surface-2 text-xs text-text-secondary flex gap-4">
+          <span>Annual contribution: <strong className="text-text-primary">{fmt(annualContrib)}</strong></span>
+          <span className={annualContrib > limit2026 ? 'text-danger' : ''}>
+            2026 limit: <strong className={annualContrib > limit2026 ? 'text-danger' : 'text-text-primary'}>{fmt(limit2026)}</strong>
+            {annualContrib > limit2026 && ' ⚠ over limit'}
+          </span>
+        </div>
+      )}
+      <p className="text-xs text-text-secondary -mt-2">
+        Add your specific fund holdings (SWPPX, SWISX, etc.) in the Investment Holdings section below.
+      </p>
       <div className="flex items-center gap-3">
         <Button variant="primary" size="sm" loading={saving} onClick={handleSave}>
           <Save size={14} /> Save
@@ -355,6 +421,14 @@ function HoldingsSection({ accounts }: { accounts: Account[] }) {
   const totalValue = holdings.reduce((s, h) => s + h.current_value, 0)
   const accountName = (id: number) => accounts.find(a => a.id === id)?.name ?? `Account #${id}`
 
+  // Group holdings by account for display
+  const holdingsByAccount = investmentAccounts
+    .map(acct => ({
+      acct,
+      items: holdings.filter(h => h.account_id === acct.id),
+    }))
+    .filter(g => g.items.length > 0)
+
   return (
     <div className="mt-4 flex flex-col gap-3">
       {holdings.length > 0 && (
@@ -362,28 +436,35 @@ function HoldingsSection({ accounts }: { accounts: Account[] }) {
           Total investment holdings: <strong className="text-text-primary">{fmt(totalValue)}</strong>
         </div>
       )}
-      <div className="flex flex-col gap-2">
-        {holdings.map(h => (
-          editId === h.id ? (
-            <HoldingForm key={h.id} form={form} setForm={setForm} accounts={investmentAccounts} onSave={handleSave} onCancel={() => { setEditId(null); resetForm() }} />
-          ) : (
-            <div key={h.id} className="flex items-center justify-between p-3 rounded-xl bg-surface-2">
-              <div className="flex flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  {h.ticker && <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-primary/10 text-primary">{h.ticker}</span>}
-                  <span className="text-sm font-medium text-text-primary">{h.fund_name}</span>
-                </div>
-                <span className="text-xs text-text-secondary">{accountName(h.account_id)} · +{fmt(h.monthly_contribution)}/mo · {h.assumed_annual_return}% return</span>
-              </div>
-              <div className="flex items-center gap-4">
-                <span className="text-sm font-semibold text-green-400">{fmt(h.current_value)}</span>
-                <div className="flex gap-1">
-                  <button onClick={() => startEdit(h)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-surface transition-colors"><Edit2 size={14} /></button>
-                  <button onClick={async () => { await deleteHolding(h.id); load() }} className="p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-surface transition-colors"><Trash2 size={14} /></button>
-                </div>
-              </div>
+      <div className="flex flex-col gap-4">
+        {holdingsByAccount.map(({ acct, items }) => (
+          <div key={acct.id}>
+            <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-1.5">{acct.name}</p>
+            <div className="flex flex-col gap-2">
+              {items.map(h => (
+                editId === h.id ? (
+                  <HoldingForm key={h.id} form={form} setForm={setForm} accounts={investmentAccounts} onSave={handleSave} onCancel={() => { setEditId(null); resetForm() }} />
+                ) : (
+                  <div key={h.id} className="flex items-center justify-between p-3 rounded-xl bg-surface-2">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2">
+                        {h.ticker && <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-primary/10 text-primary">{h.ticker}</span>}
+                        <span className="text-sm font-medium text-text-primary">{h.fund_name}</span>
+                      </div>
+                      <span className="text-xs text-text-secondary">+{fmt(h.monthly_contribution)}/mo · {h.assumed_annual_return}% return</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-semibold text-green-400">{fmt(h.current_value)}</span>
+                      <div className="flex gap-1">
+                        <button onClick={() => startEdit(h)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-surface transition-colors"><Edit2 size={14} /></button>
+                        <button onClick={async () => { await deleteHolding(h.id); load() }} className="p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-surface transition-colors"><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              ))}
             </div>
-          )
+          </div>
         ))}
       </div>
       {adding && !editId && (
@@ -585,15 +666,62 @@ export default function FinancialProfilePage() {
           <IncomeSection profile={profile} onSaved={loadProfile} />
         </Section>
 
-        <Section title="HYSA & IRA Contributions" icon={TrendingUp} color="bg-green-600">
-          <SavingsSection profile={profile} onSaved={loadProfile} />
+        <Section title="HYSA" icon={PiggyBank} color="bg-green-600" tooltip={
+          <InfoTooltip
+            title="High-Yield Savings Account"
+            content={
+              <div className="flex flex-col gap-2">
+                <p><strong className="text-text-primary">APY (Annual Percentage Yield)</strong> is the effective annual return including compounding. At 3.9% APY, $10,000 grows to ~$10,390 in a year.</p>
+                <p><strong className="text-text-primary">Monthly contribution</strong> is how much you add each month. The forecast uses both your starting balance and contributions to project your HYSA month-over-month.</p>
+              </div>
+            }
+          />
+        }>
+          <HysaSection profile={profile} onSaved={loadProfile} />
         </Section>
 
-        <Section title="Student Loans" icon={BookOpen} color="bg-orange-500">
+        <Section title="IRA Contributions" icon={BarChart3} color="bg-indigo-600" tooltip={
+          <InfoTooltip
+            title="Individual Retirement Account"
+            content={
+              <div className="flex flex-col gap-2">
+                <p><strong className="text-text-primary">IRA (Individual Retirement Account)</strong> lets you invest up to $7,000/year (2026 limit) with tax advantages — traditional IRA contributions are pre-tax, Roth IRA contributions are post-tax but grow tax-free.</p>
+                <p>Add the specific funds you hold (SWPPX, SWISX, etc.) in the <strong className="text-text-primary">Investment Holdings</strong> section below to track per-fund performance and assumed returns.</p>
+              </div>
+            }
+          />
+        }>
+          <IraSection profile={profile} onSaved={loadProfile} />
+        </Section>
+
+        <Section title="Student Loans" icon={BookOpen} color="bg-orange-500" tooltip={
+          <InfoTooltip
+            title="Loan tracking & amortization"
+            content={
+              <div className="flex flex-col gap-2">
+                <p>Track your student loans here so the forecast can project payoff dates and interest costs accurately.</p>
+                <p><strong className="text-text-primary">Interest rate:</strong> Your loan&apos;s annual interest rate (APR). Each month, interest = balance × (rate ÷ 12). Your payment covers interest first, then reduces principal.</p>
+                <p><strong className="text-text-primary">Amortization:</strong> As your balance decreases, less of each payment goes to interest and more goes to principal — this accelerates payoff over time.</p>
+              </div>
+            }
+          />
+        }>
           <LoansSection />
         </Section>
 
-        <Section title="Investment Holdings" icon={TrendingUp} color="bg-blue-600" defaultOpen={false}>
+        <Section title="Investment Holdings" icon={TrendingUp} color="bg-blue-600" defaultOpen={false} tooltip={
+          <InfoTooltip
+            title="Investment holdings & return rates"
+            content={
+              <div className="flex flex-col gap-2">
+                <p>Enter each fund or stock you hold in your investment accounts (401k, IRA, brokerage). The app blends their return rates to project your account&apos;s growth.</p>
+                <p><strong className="text-text-primary">Assumed Annual Return (%)</strong> is the expected yearly growth rate for that holding. Common defaults: S&amp;P 500 index funds ~10%, international index ~7–8%, bond funds ~3–5%.</p>
+                <p><strong className="text-text-primary">Blended return:</strong> If you hold multiple funds, the app weights their returns by current value to calculate the overall expected return for the account.</p>
+                <p className="text-muted">Returns are not guaranteed — use historical averages as a guide, not a prediction.</p>
+              </div>
+            }
+          />
+        }>
           <HoldingsSection accounts={accounts} />
         </Section>
 

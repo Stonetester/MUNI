@@ -73,7 +73,7 @@ function DayModal({
       <div className="relative bg-surface border border-[#2d3748] rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-[#2d3748]">
           <div>
-            <p className="text-xs text-muted uppercase tracking-wider">Daily Spending</p>
+            <p className="text-xs text-muted uppercase tracking-wider">Daily Transactions</p>
             <h2 className="text-base font-bold text-text-primary">{label}</h2>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors">
@@ -213,6 +213,10 @@ export default function CalendarPage() {
     return Object.values(catTotals)
   }
 
+  function getDayIncome(dayTxns: Transaction[]) {
+    return dayTxns.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0)
+  }
+
   const selectedTxns = selectedDay ? (byDay[selectedDay] || []) : []
 
   // Monthly summary
@@ -273,13 +277,14 @@ export default function CalendarPage() {
             <div className="grid grid-cols-7">
               {cells.map((day, i) => {
                 if (!day) {
-                  return <div key={`empty-${i}`} className="min-h-[80px] border-b border-r border-[#2d3748]/50" />
+                  return <div key={`empty-${i}`} className="min-h-[60px] sm:min-h-[80px] border-b border-r border-[#2d3748]/50" />
                 }
                 const key = getDayKey(day)
                 const dayTxns = byDay[key] || []
                 const segments = getPieSegments(dayTxns)
                 const hasSpending = segments.length > 0
                 const dayTotal = dayTxns.filter((t) => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0)
+                const dayIncome = getDayIncome(dayTxns)
                 const hasTxns = dayTxns.length > 0
 
                 return (
@@ -287,29 +292,33 @@ export default function CalendarPage() {
                     key={key}
                     onClick={() => hasTxns && setSelectedDay(key)}
                     className={[
-                      'min-h-[80px] border-b border-r border-[#2d3748]/50 p-1.5 flex flex-col items-center gap-1 transition-colors',
+                      'min-h-[60px] sm:min-h-[88px] border-b border-r border-[#2d3748]/50 p-0.5 sm:p-1 flex flex-col items-center gap-0.5 transition-colors',
                       hasTxns ? 'cursor-pointer hover:bg-surface-2' : '',
                       isToday(day) ? 'bg-primary/5' : '',
                     ].join(' ')}
                   >
                     <span className={[
-                      'text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full',
+                      'text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full flex-shrink-0',
                       isToday(day) ? 'bg-primary text-white' : 'text-text-secondary',
                     ].join(' ')}>
                       {day}
                     </span>
 
+                    {/* Income — shown separately above spending */}
+                    {dayIncome > 0 && (
+                      <span className="text-[9px] font-semibold text-green-400 leading-none px-1 py-0.5 bg-green-400/10 rounded">
+                        +{formatCurrency(dayIncome)}
+                      </span>
+                    )}
+
+                    {/* Spending pie + amount */}
                     {hasSpending && (
                       <>
                         <MiniPie segments={segments} />
-                        <span className="text-[10px] text-text-secondary leading-none">
-                          {formatCurrency(dayTotal)}
+                        <span className="text-[9px] text-red-400 leading-none">
+                          −{formatCurrency(dayTotal)}
                         </span>
                       </>
-                    )}
-
-                    {!hasSpending && dayTxns.length > 0 && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-green-400 mt-1" title="Income only" />
                     )}
                   </div>
                 )
@@ -321,10 +330,13 @@ export default function CalendarPage() {
         {/* Legend */}
         {!loading && categories.length > 0 && (() => {
           const usedNames = new Set(transactions.map(t => t.category_name).filter(Boolean))
-          const legendCats = categories.filter(c => usedNames.has(c.name))
-          if (legendCats.length === 0) return null
+          const legendCats = categories.filter(c => usedNames.has(c.name) && c.kind === 'expense')
           return (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="flex items-center gap-1.5 text-xs text-green-400 font-medium">
+                <div className="w-2.5 h-2.5 rounded bg-green-400/20 border border-green-400/40" />
+                Income / payday
+              </div>
               {legendCats.map((c) => (
                 <div key={c.id} className="flex items-center gap-1.5 text-xs text-text-secondary">
                   <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c.color }} />

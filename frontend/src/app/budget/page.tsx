@@ -48,6 +48,7 @@ import {
 } from '@/lib/utils'
 import { Plus, Edit2, Trash2, Target, RefreshCw, Sparkles, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import InfoTooltip from '@/components/ui/InfoTooltip'
 
 // ---- Category Form ----
 function CategoryForm({
@@ -323,17 +324,17 @@ export default function BudgetPage() {
     <AppLayout>
       <div className="flex flex-col gap-4">
         {/* Tabs */}
-        <div className="flex items-center gap-1 bg-surface border border-[#2d3748] rounded-xl p-1 w-fit">
+        <div className="flex items-center gap-1 bg-surface border border-[#2d3748] rounded-xl p-1 w-full sm:w-fit overflow-x-auto">
           {(['budget', 'categories', 'recurring'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className={cn(
-                'px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize',
+                'px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors whitespace-nowrap flex-1 sm:flex-none',
                 tab === t ? 'bg-primary text-white' : 'text-text-secondary hover:text-text-primary'
               )}
             >
-              {t === 'recurring' ? 'Recurring Rules' : t === 'budget' ? 'Budget vs Actual' : 'Categories'}
+              {t === 'recurring' ? 'Recurring' : t === 'budget' ? 'Budget' : 'Categories'}
             </button>
           ))}
         </div>
@@ -346,7 +347,21 @@ export default function BudgetPage() {
             {tab === 'budget' && (
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
-                  <p className="text-text-secondary text-sm">{formatMonth(month)} spending progress</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-text-secondary text-sm">{formatMonth(month)} spending progress</p>
+                    <InfoTooltip
+                      title="Budget progress bars"
+                      content={
+                        <div className="flex flex-col gap-1.5">
+                          <p>Each bar shows how much of your monthly budget you&apos;ve spent so far this month.</p>
+                          <p><strong className="text-text-primary">Green (under 80%)</strong> — on track.</p>
+                          <p><strong className="text-yellow-400">Yellow (80–100%)</strong> — approaching your limit.</p>
+                          <p><strong className="text-red-400">Red (over 100%)</strong> — over budget for the month.</p>
+                          <p className="text-muted">Budget amounts are set per category. You can edit them in the Categories tab.</p>
+                        </div>
+                      }
+                    />
+                  </div>
                 </div>
                 {expensesBudget.length === 0 ? (
                   <div className="text-center py-16 text-text-secondary">

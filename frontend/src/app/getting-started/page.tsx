@@ -4,10 +4,10 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   CheckCircle2, Circle, Wallet, ArrowUpDown, RefreshCw, Target,
-  Info, UserCircle, FileText, ChevronRight, Layers,
+  Info, UserCircle, FileText, ChevronRight, Layers, Home,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getAccounts, getTransactions, getRecurringRules, getCategories, getSyncConfig, getStudentLoans, getFinancialProfile, getPaystubs } from '@/lib/api'
+import { getAccounts, getTransactions, getRecurringRules, getCategories, getSyncConfig, getStudentLoans, getFinancialProfile, getPaystubs, getHomeBuyingGoals } from '@/lib/api'
 import { formatCurrency } from '@/lib/utils'
 import AppLayout from '@/components/layout/AppLayout'
 
@@ -28,7 +28,7 @@ export default function GettingStartedPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [accounts, txData, rules, cats, profile, loans, paystubs] = await Promise.all([
+        const [accounts, txData, rules, cats, profile, loans, paystubs, homeBuyingGoals] = await Promise.all([
           getAccounts().catch(() => []),
           getTransactions({ limit: 1 }).catch(() => ({ items: [], total: 0, skip: 0, limit: 1 })),
           getRecurringRules().catch(() => []),
@@ -36,6 +36,7 @@ export default function GettingStartedPage() {
           getFinancialProfile().catch(() => null),
           getStudentLoans().catch(() => []),
           getPaystubs().catch(() => []),
+          getHomeBuyingGoals().catch(() => []),
         ])
 
         let syncEnabled = false
@@ -51,6 +52,7 @@ export default function GettingStartedPage() {
         const hasBudgets = cats.some(c => (c.budget_amount ?? 0) > 0)
         const hasSalary = !!profile?.salary
         const hasLoans = loans.length > 0
+        const hasHomeBuyingGoal = homeBuyingGoals.some(g => g.current_savings > 0 || g.target_price_min !== 380000 || g.monthly_savings_contribution !== 1600)
 
         const checkingAcct = accounts.find(a => a.account_type === 'checking')
         const savingsAcct = accounts.find(a => ['savings', 'hysa'].includes(a.account_type))
@@ -178,6 +180,17 @@ export default function GettingStartedPage() {
             linkHref: '/financial-profile',
             linkLabel: hasLoans ? 'View loans' : 'Add student loans →',
           },
+          {
+            id: 'home-buying',
+            label: 'Set up a home buying goal',
+            detail: hasHomeBuyingGoal
+              ? `Home buying goal configured — savings target, price range, and DPA eligibility tracked`
+              : 'Enter your target price range, savings, and mortgage structure to unlock MD down payment assistance analysis',
+            done: hasHomeBuyingGoal,
+            value: hasHomeBuyingGoal ? 'Configured' : undefined,
+            linkHref: '/home-buying',
+            linkLabel: hasHomeBuyingGoal ? 'View home buying plan' : 'Set up home buying goal →',
+          },
         ])
       } catch {
         setChecks([])
@@ -295,6 +308,7 @@ export default function GettingStartedPage() {
               { label: 'Upload Paystub', href: '/paystubs', icon: FileText },
               { label: 'Sync Settings', href: '/settings', icon: RefreshCw },
               { label: 'View Forecast', href: '/forecast', icon: Info },
+              { label: 'Home Buying', href: '/home-buying', icon: Home },
             ].map(({ label, href, icon: Icon }) => (
               <Link
                 key={label + href}

@@ -24,6 +24,7 @@ import {
   Shield, Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import InfoTooltip from '@/components/ui/InfoTooltip'
 
 // ─── Pure math helpers (K-Dense / Quant Analyst methodology) ─────────────────
 
@@ -452,6 +453,20 @@ export default function InsightsPage() {
         ) : (
           <>
             {/* ── Financial Health Scorecard ───────────────────────────── */}
+            <div className="flex items-center gap-1.5 mb-1">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Financial Health Scorecard</p>
+              <InfoTooltip
+                title="How these scores are calculated"
+                content={
+                  <div className="flex flex-col gap-2">
+                    <p><strong className="text-text-primary">Emergency Fund:</strong> Your HYSA balance ÷ your average monthly expenses. 3–6 months is the standard recommendation; 6+ is strong.</p>
+                    <p><strong className="text-text-primary">Savings Rate:</strong> (Income − Expenses) ÷ Income, averaged over the selected period. 20%+ is excellent; 10–20% is good.</p>
+                    <p><strong className="text-text-primary">Debt-to-Income:</strong> Monthly debt payments ÷ monthly gross income. Under 15% is healthy; above 28% is high.</p>
+                    <p><strong className="text-text-primary">Avg Monthly Net:</strong> Average of (income − expenses) each month. Positive means you&apos;re saving; negative means spending exceeds income.</p>
+                  </div>
+                }
+              />
+            </div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <HealthCard
                 title="Emergency Fund"
@@ -570,7 +585,18 @@ export default function InsightsPage() {
             </div>
 
             {/* ── Category Intelligence (K-Dense rolling stats methodology) ── */}
-            <Card title="Category Trend Analysis">
+            <Card title="Category Trend Analysis" action={
+              <InfoTooltip
+                title="How trends & anomalies are detected"
+                content={
+                  <div className="flex flex-col gap-2">
+                    <p><strong className="text-text-primary">Trend:</strong> Compares your 3-month trailing average to your longer-term average for the same category. Up = spending more recently; Down = spending less.</p>
+                    <p><strong className="text-text-primary">Anomaly (z-score):</strong> A month is flagged when its spending is more than 1.5 standard deviations above your average for that category. Standard deviation measures how much your spending varies — a z-score of 1.5 means it was unusually high, not just a little above average.</p>
+                    <p className="text-muted">These thresholds follow standard statistical practice for identifying outliers in personal finance data.</p>
+                  </div>
+                }
+              />
+            }>
               <p className="text-xs text-muted mb-3">
                 Trend = 3-month trailing avg vs {period}-month avg. Anomaly = month where spending was unusually high (z-score &gt; 1.5).
               </p>
@@ -626,7 +652,18 @@ export default function InsightsPage() {
 
             {/* ── Anomaly Summary ──────────────────────────────────────── */}
             {categoryStats.some((s) => s.anomalyMonths.length > 0) && (
-              <Card title="Spending Anomalies Detected">
+              <Card title="Spending Anomalies Detected" action={
+                <InfoTooltip
+                  title="What is a spending anomaly?"
+                  content={
+                    <div className="flex flex-col gap-2">
+                      <p>An anomaly is a month where you spent significantly more than usual in a category — specifically, more than 1.5 standard deviations above your average.</p>
+                      <p><strong className="text-text-primary">Standard deviation</strong> measures how spread out your monthly spending is. If your grocery spending is usually $400 ± $50, a month at $600 would be flagged as an anomaly.</p>
+                      <p className="text-muted">Anomalies aren&apos;t always bad — they may reflect one-time purchases like travel or gifts. Review them to decide if spending was intentional.</p>
+                    </div>
+                  }
+                />
+              }>
                 <p className="text-xs text-muted mb-3">
                   Months where spending in a category was more than 1.5 standard deviations above your average (K-Dense z-score method).
                 </p>

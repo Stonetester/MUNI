@@ -8,7 +8,7 @@ import Input from '@/components/ui/Input'
 import { getSyncConfig, updateSyncConfig, runSync } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 import type { SyncConfig, SyncResult } from '@/lib/types'
-import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight } from 'lucide-react'
+import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home } from 'lucide-react'
 import { switchProfiles, getAltUser } from '@/lib/auth'
 
 function fmtDate(s?: string | null) {
@@ -28,6 +28,7 @@ export default function SettingsPage() {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [syncError, setSyncError] = useState('')
   const [syncSaved, setSyncSaved] = useState(false)
+  const [resourcesOpen, setResourcesOpen] = useState(false)
 
   useEffect(() => {
     const token = getToken()
@@ -210,6 +211,52 @@ export default function SettingsPage() {
               </a>
             </div>
           </div>
+        </Card>
+
+        {/* Home Buying Resources */}
+        <Card>
+          <button
+            className="w-full flex items-center justify-between"
+            onClick={() => setResourcesOpen(o => !o)}
+          >
+            <div className="flex items-center gap-2">
+              <Home size={15} className="text-blue-400" />
+              <span className="text-sm font-semibold text-text-primary">Home Buying Resources</span>
+              <span className="text-[10px] text-text-secondary">Official sources for MD programs</span>
+            </div>
+            {resourcesOpen ? <ChevronUp size={15} className="text-muted" /> : <ChevronDown size={15} className="text-muted" />}
+          </button>
+          {resourcesOpen && (
+            <div className="mt-3 pt-3 border-t border-[#2d3748] flex flex-col gap-2">
+              {[
+                { label: 'Maryland Mortgage Program (MMP)', url: 'https://mmp.maryland.gov/', desc: 'Official state DPA program — eligibility, loan types, income limits' },
+                { label: 'MD DHCD — Homeownership Programs', url: 'https://dhcd.maryland.gov/Homeownership/Pages/MMP.aspx', desc: 'MD Dept of Housing & Community Development hub' },
+                { label: 'Frederick County HAP', url: 'https://www.frederickcountymd.gov/8057/Homeownership-Assistance-Program', desc: '$12,000 county down payment assistance grant details' },
+                { label: 'Find an MMP Participating Lender', url: 'https://mmp.maryland.gov/Pages/find-a-lender.aspx', desc: 'Only MMP-approved lenders can offer MMP loans + Partner Match' },
+                { label: 'MD Transfer & Recordation Tax', url: 'https://dat.maryland.gov/realproperty/pages/transfer-and-recordation-tax.aspx', desc: 'State transfer tax rates and first-time buyer exemptions' },
+                { label: 'CFPB: Buying a House Guide', url: 'https://www.consumerfinance.gov/owning-a-home/', desc: 'Federal guide to the mortgage process, closing costs, affordability' },
+                { label: 'Frederick County Property Search (SDAT)', url: 'https://sdat.dat.maryland.gov/RealProperty/Pages/default.aspx', desc: 'Look up any MD property assessment, ownership, and tax records' },
+                { label: 'Zillow — Frederick County MD', url: 'https://www.zillow.com/frederick-county-md/', desc: 'Current listings, price trends, and area market data' },
+              ].map((r) => (
+                <a
+                  key={r.url}
+                  href={r.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-2.5 p-2.5 rounded-xl border border-[#2d3748] bg-surface-2 hover:border-blue-500/40 hover:bg-blue-500/5 transition-colors group"
+                >
+                  <ExternalLink size={11} className="text-blue-400 flex-shrink-0 mt-0.5 group-hover:text-blue-300" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-text-primary group-hover:text-blue-300">{r.label}</p>
+                    <p className="text-[10px] text-text-secondary mt-0.5">{r.desc}</p>
+                  </div>
+                </a>
+              ))}
+              <p className="text-[10px] text-muted pt-1">
+                Income limits and program details verified as of early 2026. Confirm current limits with an MMP-approved lender before applying.
+              </p>
+            </div>
+          )}
         </Card>
 
         {/* App Info */}

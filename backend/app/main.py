@@ -30,6 +30,7 @@ from app.routers import (
 )
 from app.routers import google_sheets, financial_profile, paystubs, joint
 from app.routers import ai_report, notifications
+from app.routers import home_buying
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,7 @@ app.include_router(paystubs.router, prefix=PREFIX)
 app.include_router(joint.router, prefix=PREFIX)
 app.include_router(ai_report.router, prefix=PREFIX)
 app.include_router(notifications.router, prefix=PREFIX)
+app.include_router(home_buying.router, prefix=PREFIX)
 
 # Serve Next.js static export if it exists
 FRONTEND_BUILD = os.path.join(

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { X, ChevronLeft, ChevronRight, LayoutDashboard, ArrowUpDown, Wallet, Target, TrendingUp, Calendar, FlaskConical, BellRing, Settings, HelpCircle, PlusCircle, UserCircle, FileText, RefreshCw } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, LayoutDashboard, ArrowUpDown, Wallet, Target, TrendingUp, Calendar, FlaskConical, BellRing, Settings, HelpCircle, PlusCircle, UserCircle, FileText, RefreshCw, Home } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const steps = [
@@ -241,6 +241,29 @@ const steps = [
           <span>1. Get your Sheet ID from the URL</span>
           <span>2. Share the sheet with the service account email from your credentials file</span>
           <span>3. Paste the ID into Settings → Google Sheets Sync → Save → Sync Now</span>
+        </div>
+      </div>
+    ),
+  },
+  {
+    icon: Home,
+    title: 'Home Buying',
+    color: 'text-teal-400',
+    bg: 'bg-teal-400/10',
+    content: (
+      <div className="flex flex-col gap-3 text-sm text-text-secondary">
+        <p>The Home Buying page is your dedicated house-purchase planning hub — built around Maryland's down payment assistance programs and your specific financial situation.</p>
+        <ul className="flex flex-col gap-2">
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">DPA eligibility</span>Checks whether Keaton alone (income $130,935) qualifies for Maryland Mortgage Program — stacking up to $20,500 in assistance (MMP $6K + HAP $12K + Partner Match $2.5K).</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Down pmt scenarios</span>Compare 5%, 10%, 15%, and 20% down across your target price range — shows P&I, PMI, and total monthly payment for each combo.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Savings tracker</span>Tracks your current house savings vs the down payment target and projects your monthly savings rate.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">DTI calculator</span>Front-end (28%) and back-end (36%) debt-to-income checks against your estimated mortgage payment.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Multi-profile goals</span>Save multiple named goal profiles (e.g., "Conservative", "Stretch") — switch which is active and compare any two side-by-side.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[140px]">Resources</span>Links to official sources: DHCD MMP, Frederick County HAP, MDHFA, CFPB mortgage tools, and more.</li>
+        </ul>
+        <div className="p-3 rounded-xl bg-surface-2 text-xs flex flex-col gap-1">
+          <span className="text-text-primary font-semibold">Key insight:</span>
+          <span>Keaton-only mortgage ($130,935 income) keeps you under the MMP income limit ($196,680 for 1–2 persons in Frederick County). Combined income ($207,935) would disqualify you from all three programs. The page highlights this and shows the $20,500 trade-off.</span>
         </div>
       </div>
     ),

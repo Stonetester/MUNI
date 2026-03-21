@@ -107,13 +107,19 @@ def parse_paylocity(text: str) -> dict:
     )
     d["bonus_pay"] = bonus_pay
 
-    # Classify pay type: if there's a meaningful bonus line and little/no regular pay
-    # it's a bonus paystub; if bonus is non-zero alongside regular pay it's still
-    # worth flagging as "bonus" so the UI can display it correctly.
-    if bonus_pay > 0:
-        d["pay_type"] = "bonus"
-    else:
-        d["pay_type"] = "regular"
+    # Classify pay type.
+    # Only flag as a bonus paystub if:
+    #   1. There's a bonus earnings line, AND
+    #   2. There's no regular pay (it's a standalone bonus check), OR
+    #      the bonus dominates gross pay (≥50%) — i.e., it was actually paid this period.
+    # This avoids false positives caused by YTD bonus amounts showing up on every
+    # subsequent regular paystub after the original bonus was paid.
+    regular_pay = d.get("regular_pay", 0.0)
+    gross = d.get("gross_pay", 0.0) or (bonus_pay + regular_pay)
+    is_bonus_stub = bonus_pay > 0 and (
+        regular_pay == 0 or (gross > 0 and bonus_pay / gross >= 0.5)
+    )
+    d["pay_type"] = "bonus" if is_bonus_stub else "regular"
 
     # --- Employer 401k Safe Harbor (the "401 Safe H" line) ---
     d["employer_401k"] = _parse_money(_re_val(r"401 Safe H\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))

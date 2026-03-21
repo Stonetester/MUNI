@@ -1,5 +1,7 @@
 from datetime import date, datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
+
+from dateutil.relativedelta import relativedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -16,6 +18,7 @@ from app.schemas.dashboard import (
     DashboardResponse,
     MonthSummary,
 )
+from app.schemas.forecast import ForecastPoint
 from app.schemas.transaction import TransactionOut
 from app.services.forecasting import run_forecast
 
@@ -38,9 +41,8 @@ def _month_summary(transactions: List[Transaction], categories_map: dict) -> Mon
             income += txn.amount
         else:
             spending += abs(txn.amount)
-
-        cat_name = categories_map.get(txn.category_id, "Uncategorized") if txn.category_id else "Uncategorized"
-        by_category[cat_name] = by_category.get(cat_name, 0.0) + abs(txn.amount)
+            cat_name = categories_map.get(txn.category_id, "Uncategorized") if txn.category_id else "Uncategorized"
+            by_category[cat_name] = by_category.get(cat_name, 0.0) + abs(txn.amount)
 
     savings = income - spending
     return MonthSummary(income=income, spending=spending, savings=savings, by_category=by_category)
@@ -131,15 +133,74 @@ def get_dashboard(
         .all()
     )
 
-    # Forecast preview (6 months, baseline)
+    # Forecast preview (6 bars: current month actual + 5 future forecast months)
     baseline = (
         db.query(Scenario)
         .filter(Scenario.user_id == current_user.id, Scenario.is_baseline == True)
         .first()
     )
     baseline_id = baseline.id if baseline else None
-    forecast = run_forecast(user=current_user, db=db, scenario_id=baseline_id, months=6)
+    forecast = run_forecast(user=current_user, db=db, scenario_id=baseline_id, months=7)
+
+    # Replace month-0 (current month) with actual transaction data so paystub
+    # income and real expenses appear in the Monthly Cash Flow chart.
+    if forecast.points:
+        p0 = forecast.points[0]
+        actual_income_amt = sum(t.amount for t in this_month_txns if t.amount > 0)
+        actual_expense_amt = sum(abs(t.amount) for t in this_month_txns if t.amount < 0)
+        # Build by_category using names so the detail modal can display them
+        actual_by_cat: Dict[str, float] = {}
+        for txn in this_month_txns:
+            if txn.amount == 0:
+                continue
+            cat_name = categories_map.get(txn.category_id, "Uncategorized") if txn.category_id else "Uncategorized"
+            actual_by_cat[cat_name] = actual_by_cat.get(cat_name, 0.0) + txn.amount
+        p0.income = round(actual_income_amt, 2)
+        p0.expenses = round(actual_expense_amt, 2)
+        p0.net = round(actual_income_amt - actual_expense_amt, 2)
+        p0.by_category = actual_by_cat
+
     forecast_preview = forecast.points[:6]
+
+    # Build flow_months: 6 past months (actual) + current actual + 5 future forecast
+    past_flow: List[ForecastPoint] = []
+    for i in range(6, 0, -1):
+        pm_start = (this_month_start - relativedelta(months=i))
+        import calendar as _cal
+        last_day_pm = _cal.monthrange(pm_start.year, pm_start.month)[1]
+        pm_end = pm_start.replace(day=last_day_pm)
+        pm_key = pm_start.strftime("%Y-%m")
+
+        pm_txns = (
+            db.query(Transaction)
+            .filter(
+                Transaction.user_id == current_user.id,
+                Transaction.date >= pm_start,
+                Transaction.date <= pm_end,
+                Transaction.scenario_id.is_(None),
+            )
+            .all()
+        )
+        pm_income = sum(t.amount for t in pm_txns if t.amount > 0)
+        pm_expenses = sum(abs(t.amount) for t in pm_txns if t.amount < 0)
+        pm_by_cat: Dict[str, float] = {}
+        for txn in pm_txns:
+            if txn.amount == 0:
+                continue
+            cat_name = categories_map.get(txn.category_id, "Uncategorized") if txn.category_id else "Uncategorized"
+            pm_by_cat[cat_name] = pm_by_cat.get(cat_name, 0.0) + txn.amount
+        past_flow.append(ForecastPoint(
+            month=pm_key,
+            income=round(pm_income, 2),
+            expenses=round(pm_expenses, 2),
+            net=round(pm_income - pm_expenses, 2),
+            cash=0.0, net_worth=0.0, savings_total=0.0,
+            low_cash=0.0, high_cash=0.0, event_impact=0.0,
+            by_category=pm_by_cat,
+        ))
+
+    # past 6 + current actual (forecast.points[0]) + 5 future = 12 bars
+    flow_months = past_flow + forecast.points[:6]
 
     # Recent transactions (last 10)
     recent_transactions = (
@@ -159,5 +220,6 @@ def get_dashboard(
         last_month=last_month,
         upcoming_events=upcoming_events,
         forecast_preview=forecast_preview,
+        flow_months=flow_months,
         recent_transactions=recent_transactions,
     )

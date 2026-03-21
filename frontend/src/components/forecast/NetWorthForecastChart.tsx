@@ -5,6 +5,7 @@ import { ForecastPoint } from '@/lib/types'
 import { formatCurrency, formatMonth } from '@/lib/utils'
 import Card from '@/components/ui/Card'
 import MonthDetailModal from '@/components/ui/MonthDetailModal'
+import InfoTooltip from '@/components/ui/InfoTooltip'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -14,6 +15,7 @@ import {
   Tooltip,
   CartesianGrid,
   ReferenceLine,
+  ReferenceArea,
   TooltipProps,
 } from 'recharts'
 
@@ -41,14 +43,22 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
 
 export default function NetWorthForecastChart({ points, showEvents = true }: NetWorthForecastChartProps) {
   const [selectedPoint, setSelectedPoint] = useState<ForecastPoint | null>(null)
+  const currentMonth = new Date().toISOString().slice(0, 7)
   const chartData = points.map((p) => ({
     month: formatMonth(p.month),
+    rawMonth: p.month,
     net_worth: p.net_worth,
     low_cash: p.low_cash,
     high_cash: p.high_cash,
     hasEvent: p.event_impact !== 0,
     eventTotal: p.event_impact,
   }))
+  const currentIndex = chartData.findIndex((d) => d.rawMonth === currentMonth)
+  // Start of future = one month after "now" (or first point if all data is future)
+  const futureStartLabel = currentIndex >= 0
+    ? chartData[currentIndex + 1]?.month
+    : chartData[0]?.month
+  const lastLabel = chartData[chartData.length - 1]?.month
 
   const allValues = chartData.flatMap((d) => [d.net_worth, d.low_cash, d.high_cash])
   const minVal = Math.min(...allValues)
@@ -64,7 +74,19 @@ export default function NetWorthForecastChart({ points, showEvents = true }: Net
 
   return (
     <>
-    <Card title="Net Worth Projection">
+    <Card title="Net Worth Projection" action={
+      <InfoTooltip
+        title="How this forecast works"
+        content={
+          <div className="flex flex-col gap-2">
+            <p><strong className="text-text-primary">Expected line:</strong> Your projected net worth using average recurring income, expenses, and compound growth on investments.</p>
+            <p><strong className="text-text-primary">Low / High band:</strong> A range based on your historical spending variability. If your spending fluctuates a lot month-to-month, the band is wider. It's calculated using the coefficient of variation of your past 12 months of expenses.</p>
+            <p><strong className="text-text-primary">Net worth</strong> = all asset balances (checking, savings, investments) minus liabilities (loans, credit cards).</p>
+            <p className="text-muted">Investments grow using compound interest with your configured return rates. Darker area = past, lighter area = future predictions.</p>
+          </div>
+        }
+      />
+    }>
       <p className="text-xs text-muted mb-2">Click any month for details</p>
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
@@ -96,6 +118,15 @@ export default function NetWorthForecastChart({ points, showEvents = true }: Net
             />
             <Tooltip content={<CustomTooltip />} />
             {minVal < 0 && <ReferenceLine y={0} stroke="#4a5568" strokeDasharray="4 4" />}
+            {currentIndex >= 0 && (
+              <ReferenceLine
+                x={chartData[currentIndex]?.month}
+                stroke="#60a5fa"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                label={{ value: 'Now', position: 'top', fill: '#60a5fa', fontSize: 10 }}
+              />
+            )}
             <Area
               type="monotone"
               dataKey="high_cash"
@@ -110,6 +141,16 @@ export default function NetWorthForecastChart({ points, showEvents = true }: Net
               fill="#0f1117"
               legendType="none"
             />
+            {futureStartLabel && lastLabel && (
+              <ReferenceArea
+                x1={futureStartLabel}
+                x2={lastLabel}
+                fill="#0f1117"
+                fillOpacity={0.38}
+                stroke="none"
+                isFront
+              />
+            )}
             <Area
               type="monotone"
               dataKey="net_worth"

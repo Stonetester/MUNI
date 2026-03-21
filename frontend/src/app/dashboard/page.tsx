@@ -15,30 +15,46 @@ import ForecastPreviewChart from '@/components/dashboard/ForecastPreviewChart'
 import UpcomingEventsCard from '@/components/dashboard/UpcomingEventsCard'
 import RecentTransactions from '@/components/dashboard/RecentTransactions'
 import AlertsCard from '@/components/dashboard/AlertsCard'
+import StatDetailModal, { BreakdownItem } from '@/components/dashboard/StatDetailModal'
 import { TrendingUp, TrendingDown, DollarSign, CreditCard } from 'lucide-react'
 import { useViewMode } from '@/lib/viewMode'
 import { cn } from '@/lib/utils'
+
+const ASSET_TYPES = new Set(['checking', 'savings', 'hysa', 'brokerage', 'ira', '401k', 'hsa', 'other', 'paycheck'])
+const LIABILITY_TYPES = new Set(['credit_card', 'student_loan', 'car_loan', 'mortgage'])
+
+// Category colors for spending breakdown
+const CATEGORY_COLORS: Record<string, string> = {
+  Housing: '#6366f1', Food: '#f59e0b', Transport: '#3b82f6', Healthcare: '#10b981',
+  Entertainment: '#8b5cf6', Shopping: '#ec4899', Utilities: '#14b8a6', Education: '#f97316',
+}
 
 function QuickStat({
   label,
   value,
   icon: Icon,
   color,
+  onClick,
 }: {
   label: string
   value: number
   icon: typeof DollarSign
   color: string
+  onClick?: () => void
 }) {
   return (
-    <Card className="flex items-center gap-4">
+    <Card
+      className={`flex items-center gap-4 ${onClick ? 'cursor-pointer hover:border-primary/40 transition-colors' : ''}`}
+      onClick={onClick}
+    >
       <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
         <Icon size={20} className="text-white" />
       </div>
-      <div>
+      <div className="flex-1 min-w-0">
         <p className="text-xs text-text-secondary">{label}</p>
         <p className="text-lg font-bold text-text-primary">{formatCurrency(value)}</p>
       </div>
+      {onClick && <span className="text-xs text-muted pr-1">↗</span>}
     </Card>
   )
 }
@@ -166,12 +182,22 @@ function JointDashboard() {
   )
 }
 
+interface StatModal {
+  title: string
+  description: string
+  value: number
+  valueColor: string
+  breakdown: BreakdownItem[]
+  note?: string
+}
+
 export default function DashboardPage() {
   const { mode } = useViewMode()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [alerts, setAlerts] = useState<AlertItem[]>([])
+  const [statModal, setStatModal] = useState<StatModal | null>(null)
 
   useEffect(() => {
     if (mode === 'joint') return
@@ -223,6 +249,94 @@ export default function DashboardPage() {
     )
   }
 
+  // Build breakdown data for each clickable stat
+  function openAssets() {
+    const breakdown: BreakdownItem[] = data!.balances_by_type
+      .filter((b) => ASSET_TYPES.has(b.account_type) && b.total > 0)
+      .flatMap((b) =>
+        b.accounts.map((a) => ({
+          label: a.name,
+          sublabel: accountTypeLabel(b.account_type),
+          value: a.balance,
+          color: '#10b981',
+        }))
+      )
+      .sort((a, b) => b.value - a.value)
+    setStatModal({
+      title: 'Total Assets',
+      description: 'Sum of all your accounts that hold positive value — checking, savings, investments, and more.',
+      value: data!.total_assets,
+      valueColor: 'text-primary',
+      breakdown,
+      note: 'Only accounts with a positive balance are counted as assets.',
+    })
+  }
+
+  function openLiabilities() {
+    const breakdown: BreakdownItem[] = data!.balances_by_type
+      .filter((b) => LIABILITY_TYPES.has(b.account_type))
+      .flatMap((b) =>
+        b.accounts.map((a) => ({
+          label: a.name,
+          sublabel: accountTypeLabel(b.account_type),
+          value: Math.abs(a.balance),
+          color: '#f87171',
+        }))
+      )
+      .sort((a, b) => b.value - a.value)
+    setStatModal({
+      title: 'Total Liabilities',
+      description: 'Sum of all debt balances — credit cards, student loans, car loans, and mortgages.',
+      value: data!.total_liabilities,
+      valueColor: 'text-danger',
+      breakdown,
+      note: 'Paying these down increases your net worth directly.',
+    })
+  }
+
+  function openIncome() {
+    const currentMonth = new Date().toISOString().slice(0, 7)
+    const incomeTxns = data!.recent_transactions
+      .filter((t) => t.date.startsWith(currentMonth) && t.amount > 0)
+      .sort((a, b) => b.amount - a.amount)
+    const breakdown: BreakdownItem[] = incomeTxns.map((t) => ({
+      label: t.description,
+      sublabel: t.account_name ? `${t.account_name} · ${t.date}` : t.date,
+      value: t.amount,
+      color: '#10b981',
+    }))
+    setStatModal({
+      title: 'This Month Income',
+      description: 'Total money coming in this calendar month — paystubs, employer 401k contributions, and any other income transactions.',
+      value: data!.this_month.income,
+      valueColor: 'text-primary',
+      breakdown,
+      note: breakdown.length === 0
+        ? 'No income transactions found in recent history for this month.'
+        : `Showing ${breakdown.length} income transaction${breakdown.length !== 1 ? 's' : ''} from recent history. Import paystubs to see full detail.`,
+    })
+  }
+
+  function openSpending() {
+    const byCategory = data!.this_month.by_category || {}
+    const breakdown: BreakdownItem[] = Object.entries(byCategory)
+      .filter(([, v]) => v > 0)
+      .sort(([, a], [, b]) => b - a)
+      .map(([name, val]) => ({
+        label: name,
+        value: val,
+        color: CATEGORY_COLORS[name] || '#94a3b8',
+      }))
+    setStatModal({
+      title: 'This Month Spending',
+      description: 'Total expenses recorded this calendar month, broken down by category.',
+      value: data!.this_month.spending,
+      valueColor: 'text-warning',
+      breakdown,
+      note: 'Spending data comes from your synced transactions. Categories with no spend are hidden.',
+    })
+  }
+
   return (
     <AppLayout>
       <div className="flex flex-col gap-4 md:gap-5">
@@ -231,10 +345,10 @@ export default function DashboardPage() {
 
         {/* Quick Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-          <QuickStat label="Total Assets" value={data.total_assets} icon={TrendingUp} color="bg-primary" />
-          <QuickStat label="Total Liabilities" value={data.total_liabilities} icon={TrendingDown} color="bg-danger" />
-          <QuickStat label="This Month Income" value={data.this_month.income} icon={DollarSign} color="bg-info" />
-          <QuickStat label="This Month Spending" value={data.this_month.spending} icon={CreditCard} color="bg-warning" />
+          <QuickStat label="Total Assets" value={data.total_assets} icon={TrendingUp} color="bg-primary" onClick={openAssets} />
+          <QuickStat label="Total Liabilities" value={data.total_liabilities} icon={TrendingDown} color="bg-danger" onClick={openLiabilities} />
+          <QuickStat label="This Month Income" value={data.this_month.income} icon={DollarSign} color="bg-info" onClick={openIncome} />
+          <QuickStat label="This Month Spending" value={data.this_month.spending} icon={CreditCard} color="bg-warning" onClick={openSpending} />
         </div>
 
         {/* Accounts Grid */}
@@ -242,7 +356,7 @@ export default function DashboardPage() {
 
         {/* Charts row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <MonthlyFlowCard forecastPreview={data.forecast_preview} />
+          <MonthlyFlowCard flowMonths={data.flow_months} />
           <SpendingByCategoryChart byCategory={data.this_month.by_category} />
         </div>
 
@@ -256,6 +370,18 @@ export default function DashboardPage() {
         {/* Recent Transactions */}
         <RecentTransactions transactions={data.recent_transactions} />
       </div>
+
+      {statModal && (
+        <StatDetailModal
+          title={statModal.title}
+          description={statModal.description}
+          value={statModal.value}
+          valueColor={statModal.valueColor}
+          breakdown={statModal.breakdown}
+          note={statModal.note}
+          onClose={() => setStatModal(null)}
+        />
+      )}
     </AppLayout>
   )
 }

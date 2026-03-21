@@ -233,6 +233,24 @@ async def parse_paystub(
     )
 
 
+@router.delete("", status_code=204)
+def delete_all_paystubs(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete every paystub and all linked income transactions for the current user."""
+    # Bulk-delete all transactions sourced from any paystub (import_source = "paystub:N")
+    db.query(Transaction).filter(
+        Transaction.user_id == current_user.id,
+        Transaction.import_source.like("paystub:%"),
+    ).delete(synchronize_session=False)
+    # Bulk-delete all paystub records
+    db.query(Paystub).filter(
+        Paystub.user_id == current_user.id,
+    ).delete(synchronize_session=False)
+    db.commit()
+
+
 @router.post("", response_model=PaystubOut, status_code=201)
 def save_paystub(
     data: PaystubIn,
@@ -241,6 +259,18 @@ def save_paystub(
     db: Session = Depends(get_db),
 ):
     """Save a confirmed (reviewed) paystub and auto-create income transactions."""
+    # Duplicate guard: one paystub per pay_date per user
+    existing = db.query(Paystub).filter(
+        Paystub.user_id == current_user.id,
+        Paystub.pay_date == data.pay_date,
+    ).first()
+    if existing:
+        raise HTTPException(
+            409,
+            f"A paystub for {data.pay_date} already exists (id {existing.id}). "
+            "Delete the existing one first, or correct the pay date.",
+        )
+
     stub = Paystub(
         user_id=current_user.id,
         raw_pdf_path=raw_pdf_path,

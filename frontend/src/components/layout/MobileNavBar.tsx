@@ -23,6 +23,7 @@ import {
   FileText,
   Sparkles,
   Mail,
+  Home,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import TutorialModal from './TutorialModal'
@@ -40,6 +41,7 @@ const moreItems = [
   { label: 'Calendar', icon: CalendarDays, href: '/calendar' },
   { label: 'Life Events', icon: Calendar, href: '/events' },
   { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
+  { label: 'Home Buying', icon: Home, href: '/home-buying' },
   { label: 'Paystubs', icon: FileText, href: '/paystubs' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },

@@ -112,6 +112,18 @@ export interface ForecastPoint {
   by_category?: Record<string, number>
 }
 
+// Per-account balance projection
+export interface AccountForecast {
+  account_id: number
+  account_name: string
+  account_type: string
+  starting_balance: number
+  ending_balance: number
+  monthly_balances: number[]       // one per forecast month
+  annual_return_pct: number        // blended annual return used
+  monthly_contribution: number
+}
+
 // Matches backend ForecastResponse schema exactly
 export interface ForecastResponse {
   scenario_id?: number
@@ -121,6 +133,7 @@ export interface ForecastResponse {
   ending_net_worth: number
   total_income: number
   total_expenses: number
+  account_forecasts: AccountForecast[]
 }
 
 export interface AccountBalanceSummary {
@@ -146,6 +159,7 @@ export interface DashboardData {
   last_month: MonthSummary
   upcoming_events: LifeEvent[]
   forecast_preview: ForecastPoint[]
+  flow_months: ForecastPoint[]
   recent_transactions: Transaction[]
 }
 
@@ -328,4 +342,23 @@ export interface ParsedPaystub {
   parsed: Partial<Paystub>
   parse_method: string
   raw_text_excerpt?: string
+}
+
+// Home Buying Goal
+export type MortgageStructure = 'keaton_only' | 'katherine_only' | 'both'
+
+export interface HomeBuyingGoal {
+  id?: number
+  name: string
+  is_active: boolean
+  target_price_min: number
+  target_price_max: number
+  target_date: string
+  down_payment_target: number
+  current_savings: number
+  monthly_savings_contribution: number
+  mortgage_structure: MortgageStructure
+  keaton_income: number
+  katherine_income: number
+  notes?: string
 }

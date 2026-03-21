@@ -6,15 +6,17 @@ interface CardProps {
   className?: string
   title?: string
   action?: ReactNode
+  onClick?: () => void
 }
 
-export default function Card({ children, className, title, action }: CardProps) {
+export default function Card({ children, className, title, action, onClick }: CardProps) {
   return (
     <div
       className={cn(
         'bg-surface rounded-xl border border-[#2d3748] p-4 md:p-6',
         className
       )}
+      onClick={onClick}
     >
       {(title || action) && (
         <div className="flex items-center justify-between mb-4">

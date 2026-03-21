@@ -9,9 +9,10 @@ For each future month:
 5. Life events: spread total_cost across monthly_breakdown entries
 6. Scenario overrides: apply difference vs baseline recurring rules
 7. Roll forward cash: prev_cash + income + expenses + event_impacts
-8. Net worth: assets - liabilities using account balances + accumulated cash
-9. Savings total: sum of savings/hysa/ira/401k account balances
-10. Variance bands: ±15% based on historical spending variance
+8. Net worth: cash pool + compound-grown investment accounts - liabilities
+9. Compound interest: investment accounts (401k, IRA, brokerage, HYSA) grow monthly
+   using blended return from InvestmentHolding records or FinancialProfile APY
+10. Variance bands: ±historical CV on expenses
 """
 
 from __future__ import annotations
@@ -25,11 +26,12 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
 from app.models.account import Account
+from app.models.category import Category
 from app.models.life_event import LifeEvent
 from app.models.recurring_rule import RecurringRule
 from app.models.transaction import Transaction
 from app.models.user import User
-from app.schemas.forecast import ForecastPoint, ForecastResponse
+from app.schemas.forecast import AccountForecast, ForecastPoint, ForecastResponse
 
 # Account type sets
 ASSET_TYPES = {
@@ -37,6 +39,22 @@ ASSET_TYPES = {
 }
 LIABILITY_TYPES = {"credit_card", "student_loan", "car_loan", "mortgage"}
 SAVINGS_TYPES = {"savings", "hysa", "ira", "401k"}
+
+# Liquid types that act as the "cash pool" — no compound growth, absorb net income/expense
+CASH_POOL_TYPES = {"checking", "paycheck"}
+
+# Investment / savings types that grow with compound interest
+COMPOUND_TYPES = {"savings", "hysa", "ira", "401k", "hsa", "brokerage"}
+
+# Default annual returns by account type (if no holdings are configured)
+DEFAULT_ANNUAL_RETURNS: Dict[str, float] = {
+    "401k": 8.0,
+    "ira": 7.0,
+    "brokerage": 8.0,
+    "hsa": 6.0,
+    "savings": 3.0,
+    "hysa": 3.9,   # overridden by FinancialProfile.hysa_apy if set
+}
 
 FREQUENCY_MONTHS: Dict[str, float] = {
     "weekly": 1 / 4.33,       # occurrences per month
@@ -58,7 +76,6 @@ def _rule_applies_to_month(rule: RecurringRule, month_start: date, month_end: da
     if rule.end_date and rule.end_date < month_start:
         return False
     if rule.frequency == "one_time":
-        # Only applies in the month its start_date falls in
         return rule.start_date >= month_start and rule.start_date <= month_end
     return True
 
@@ -97,7 +114,6 @@ def _get_historical_category_averages(
         .all()
     )
 
-    # Accumulate by category and period
     sums_12: Dict[Optional[int], float] = defaultdict(float)
     sums_6: Dict[Optional[int], float] = defaultdict(float)
     sums_3: Dict[Optional[int], float] = defaultdict(float)
@@ -123,7 +139,7 @@ def _get_historical_category_averages(
 def _get_historical_variance(user_id: int, db: Session, reference_date: date) -> float:
     """
     Compute the coefficient of variation of monthly spending over the last 12 months.
-    Returns a fraction (e.g. 0.15 = 15% variance).  Clamped to [0.05, 0.30].
+    Returns a fraction (e.g. 0.15 = 15% variance). Clamped to [0.05, 0.30].
     """
     twelve_months_ago = reference_date - relativedelta(months=12)
     transactions = (
@@ -132,14 +148,14 @@ def _get_historical_variance(user_id: int, db: Session, reference_date: date) ->
             Transaction.user_id == user_id,
             Transaction.date >= twelve_months_ago,
             Transaction.date < reference_date,
-            Transaction.amount < 0,  # expenses only
+            Transaction.amount < 0,
             Transaction.scenario_id.is_(None),
         )
         .all()
     )
 
     if not transactions:
-        return 0.15  # default
+        return 0.15
 
     monthly: Dict[str, float] = defaultdict(float)
     for txn in transactions:
@@ -175,7 +191,6 @@ def _event_impact_for_month(events: List[LifeEvent], month_str: str) -> float:
                     if getattr(entry, "month", None) == month_str:
                         total += getattr(entry, "amount", 0.0)
         else:
-            # Evenly distribute total_cost across the event's active months
             start = event.start_date
             end = event.end_date or start
 
@@ -186,9 +201,78 @@ def _event_impact_for_month(events: List[LifeEvent], month_str: str) -> float:
                 cursor = (cursor + relativedelta(months=1)).replace(day=1)
 
             if month_str in event_months and len(event_months) > 0:
-                total += -(event.total_cost / len(event_months))  # cost = negative cash flow
+                total += -(event.total_cost / len(event_months))
 
     return total
+
+
+def _build_compound_account_config(
+    accounts: List[Account],
+    db: Session,
+    user_id: int,
+) -> tuple[Dict[int, float], Dict[int, float]]:
+    """
+    Returns (monthly_rate_map, monthly_contrib_map) for each account.
+    Pulls from InvestmentHolding records first, then FinancialProfile defaults.
+    Uses DEFAULT_ANNUAL_RETURNS as the final fallback for compound-type accounts.
+    """
+    from app.models.investment_holding import InvestmentHolding
+    from app.models.financial_profile import FinancialProfile
+
+    account_ids = [a.id for a in accounts]
+    holdings = (
+        db.query(InvestmentHolding)
+        .filter(InvestmentHolding.account_id.in_(account_ids))
+        .all()
+    )
+
+    profile = (
+        db.query(FinancialProfile)
+        .filter(FinancialProfile.user_id == user_id)
+        .first()
+    )
+
+    monthly_rate: Dict[int, float] = {}
+    monthly_contrib: Dict[int, float] = {}
+
+    # 1. Build from InvestmentHolding records (highest priority)
+    for acc in accounts:
+        acc_holdings = [h for h in holdings if h.account_id == acc.id]
+        if acc_holdings:
+            total_val = sum(h.current_value or 0.0 for h in acc_holdings) or 1.0
+            # Value-weighted blended annual return
+            blended_annual = sum(
+                (h.assumed_annual_return or 0.0) * (h.current_value or 0.0) / total_val
+                for h in acc_holdings
+            )
+            monthly_rate[acc.id] = blended_annual / 100.0 / 12.0
+            monthly_contrib[acc.id] = sum(h.monthly_contribution or 0.0 for h in acc_holdings)
+
+    # 2. FinancialProfile overrides for HYSA and IRA (if not already set by holdings)
+    if profile:
+        for acc in accounts:
+            if acc.account_type == "hysa":
+                if acc.id not in monthly_rate and (profile.hysa_apy or 0) > 0:
+                    monthly_rate[acc.id] = (profile.hysa_apy or 0) / 100.0 / 12.0
+                if acc.id not in monthly_contrib and (profile.hysa_monthly_contribution or 0) > 0:
+                    monthly_contrib[acc.id] = profile.hysa_monthly_contribution or 0.0
+
+        ira_without_holdings = [
+            a for a in accounts
+            if a.account_type == "ira" and a.id not in monthly_contrib
+        ]
+        if ira_without_holdings and (profile.ira_monthly_contribution or 0) > 0:
+            per_acc = (profile.ira_monthly_contribution or 0.0) / len(ira_without_holdings)
+            for acc in ira_without_holdings:
+                monthly_contrib[acc.id] = per_acc
+
+    # 3. Default annual returns for compound accounts with no other source
+    for acc in accounts:
+        if acc.account_type in COMPOUND_TYPES and acc.id not in monthly_rate:
+            default_annual = DEFAULT_ANNUAL_RETURNS.get(acc.account_type, 5.0)
+            monthly_rate[acc.id] = default_annual / 100.0 / 12.0
+
+    return monthly_rate, monthly_contrib
 
 
 def run_forecast(
@@ -200,15 +284,31 @@ def run_forecast(
     today = date.today()
     month_start = today.replace(day=1)
 
-    # Load accounts
+    # ── Accounts ──────────────────────────────────────────────────────────────
     accounts = (
         db.query(Account)
         .filter(Account.user_id == user.id, Account.is_active == True)
         .all()
     )
 
-    # Starting balances
-    account_balances: Dict[int, float] = {a.id: a.balance for a in accounts}
+    # Categories map: id → name
+    categories_map: Dict[Optional[int], str] = {
+        c.id: c.name
+        for c in db.query(Category).filter(Category.user_id == user.id).all()
+    }
+
+    # ── Compound interest config ───────────────────────────────────────────────
+    account_monthly_rate, account_monthly_contrib = _build_compound_account_config(
+        accounts, db, user.id
+    )
+
+    # ── Starting balances ─────────────────────────────────────────────────────
+    account_balances: Dict[int, float] = {a.id: float(a.balance) for a in accounts}
+
+    # Separate accounts into cash pool (no compound growth) vs compound accounts
+    cash_pool_ids = {a.id for a in accounts if a.account_type in CASH_POOL_TYPES}
+    compound_ids = {a.id for a in accounts if a.account_type in COMPOUND_TYPES}
+    liability_ids = {a.id for a in accounts if a.account_type in LIABILITY_TYPES}
 
     # Starting net worth
     starting_assets = sum(
@@ -221,14 +321,22 @@ def run_forecast(
     )
     starting_net_worth = starting_assets - starting_liabilities
 
-    # Current cash = sum of liquid accounts
-    liquid_types = {"checking", "savings", "hysa", "paycheck"}
-    current_cash = sum(a.balance for a in accounts if a.account_type in liquid_types)
+    # Running cash pool = checking + paycheck accounts
+    running_cash = sum(a.balance for a in accounts if a.id in cash_pool_ids)
 
-    # Savings total
+    # Running compound balances for investment/savings accounts
+    running_compound: Dict[int, float] = {
+        a.id: float(a.balance)
+        for a in accounts if a.id in compound_ids
+    }
+
+    # For backward compat: savings_total starts as HYSA + savings + IRA + 401k balances
     savings_total = sum(a.balance for a in accounts if a.account_type in SAVINGS_TYPES)
 
-    # Load recurring rules (baseline = no scenario filter + scenario-specific)
+    # Per-account balance history for account_forecasts output
+    account_balance_history: Dict[int, List[float]] = {a.id: [] for a in accounts}
+
+    # ── Recurring rules ───────────────────────────────────────────────────────
     base_rules = (
         db.query(RecurringRule)
         .filter(
@@ -253,7 +361,7 @@ def run_forecast(
 
     all_rules = base_rules + scenario_rules
 
-    # Load life events
+    # ── Life events ───────────────────────────────────────────────────────────
     all_events = (
         db.query(LifeEvent)
         .filter(
@@ -267,20 +375,16 @@ def run_forecast(
         .all()
     )
 
-    # Historical averages
+    # ── Historical averages ───────────────────────────────────────────────────
     hist_avgs = _get_historical_category_averages(user.id, db, today)
     variance_pct = _get_historical_variance(user.id, db, today)
 
-    # Categories with recurring rules (use recurring, not historical)
     categories_with_rules = {r.category_id for r in all_rules if r.category_id is not None}
 
+    # ── Main forecast loop ────────────────────────────────────────────────────
     points: List[ForecastPoint] = []
     total_income = 0.0
     total_expenses = 0.0
-    running_cash = current_cash
-    running_savings = savings_total
-    # Track per-account deltas for net worth
-    running_account_balances: Dict[int, float] = dict(account_balances)
 
     for i in range(months):
         ms = (month_start + relativedelta(months=i)).replace(day=1)
@@ -306,17 +410,24 @@ def run_forecast(
         for cat_id, avgs in hist_avgs.items():
             if cat_id in categories_with_rules:
                 continue
-            # Use weighted average (prefer shorter window for stability)
-            hist_amount = (avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2)
+            hist_amount = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
             if hist_amount < 0:
                 month_expenses += hist_amount
-            # Don't double-count income; recurring rules handle that
+            elif hist_amount > 0:
+                month_income += hist_amount
+            # Also add to by_category so the table shows real category breakdown
+            if hist_amount != 0:
+                cat_key = categories_map.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+                by_category[cat_key] = by_category.get(cat_key, 0.0) + hist_amount
 
-        # by_category: sum recurring rules by category
+        # by_category: use category names for MonthDetailModal
         for rule in all_rules:
             if _rule_applies_to_month(rule, ms, me):
                 amount = _rule_monthly_amount(rule, ms, me)
-                cat_key = str(rule.category_id) if rule.category_id else "Uncategorized"
+                cat_key = (
+                    categories_map.get(rule.category_id, "Uncategorized")
+                    if rule.category_id else "Uncategorized"
+                )
                 by_category[cat_key] = by_category.get(cat_key, 0.0) + amount
 
         # Life event impacts
@@ -325,35 +436,42 @@ def run_forecast(
         net = month_income + month_expenses  # expenses are negative
         running_cash += net + event_impact
 
-        # Accumulate into savings accounts (simplified: contributions from recurring rules
-        # tagged to savings account types)
-        savings_contribution = sum(
-            _rule_monthly_amount(r, ms, me)
-            for r in all_rules
-            if _rule_applies_to_month(r, ms, me)
-            and r.account_id is not None
-            and any(a.id == r.account_id and a.account_type in SAVINGS_TYPES for a in accounts)
-        )
-        running_savings += savings_contribution
+        # ── Compound growth on investment/savings accounts ─────────────────
+        for acc_id in list(running_compound.keys()):
+            rate = account_monthly_rate.get(acc_id, 0.0)
+            contrib = account_monthly_contrib.get(acc_id, 0.0)
+            # FV formula per month: balance = balance * (1 + r) + contribution
+            running_compound[acc_id] = running_compound[acc_id] * (1.0 + rate) + contrib
 
-        # Net worth: starting + cumulative net flows
-        asset_accounts_balance = sum(
-            b for acc_id, b in running_account_balances.items()
-            if any(a.id == acc_id and a.account_type in ASSET_TYPES for a in accounts)
-        )
-        liability_accounts_balance = sum(
-            abs(b) for acc_id, b in running_account_balances.items()
-            if any(a.id == acc_id and a.account_type in LIABILITY_TYPES for a in accounts)
-        )
-        # Adjust cash position into net worth
-        current_net_worth = running_cash + running_savings + (
-            asset_accounts_balance - sum(
-                a.balance for a in accounts
-                if a.account_type in liquid_types or a.account_type in SAVINGS_TYPES
-            )
-        ) - liability_accounts_balance
+        # Record per-account balances for account_forecasts
+        for acc in accounts:
+            if acc.id in cash_pool_ids:
+                # Approximate: distribute running_cash proportionally to starting balance
+                pool_total = sum(account_balances[aid] for aid in cash_pool_ids) or 1.0
+                share = account_balances[acc.id] / pool_total
+                account_balance_history[acc.id].append(round(running_cash * share, 2))
+            elif acc.id in compound_ids:
+                account_balance_history[acc.id].append(round(running_compound[acc.id], 2))
+            else:
+                # Liability or non-compound other — static for now
+                account_balance_history[acc.id].append(round(account_balances[acc.id], 2))
 
-        # Variance bands ±variance_pct on expenses
+        # ── Net worth ─────────────────────────────────────────────────────────
+        # = liquid cash pool + compound investment balances - liabilities
+        compound_total = sum(running_compound.values())
+        liability_total = sum(
+            abs(account_balances[acc_id]) for acc_id in liability_ids
+        )
+        current_net_worth = running_cash + compound_total - liability_total
+
+        # savings_total = sum of savings-type compound balances (for savings_total field)
+        current_savings_total = sum(
+            running_compound[acc_id]
+            for acc_id in compound_ids
+            if any(a.id == acc_id and a.account_type in SAVINGS_TYPES for a in accounts)
+        )
+
+        # Variance bands on cash position
         low_cash = running_cash - abs(month_expenses) * variance_pct
         high_cash = running_cash + abs(month_expenses) * variance_pct
 
@@ -368,7 +486,7 @@ def run_forecast(
                 net=round(net, 2),
                 cash=round(running_cash, 2),
                 net_worth=round(current_net_worth, 2),
-                savings_total=round(running_savings, 2),
+                savings_total=round(current_savings_total, 2),
                 low_cash=round(low_cash, 2),
                 high_cash=round(high_cash, 2),
                 event_impact=round(event_impact, 2),
@@ -378,6 +496,27 @@ def run_forecast(
 
     ending_net_worth = points[-1].net_worth if points else starting_net_worth
 
+    # ── Build account_forecasts ───────────────────────────────────────────────
+    account_forecasts: List[AccountForecast] = []
+    for acc in accounts:
+        if acc.account_type not in (ASSET_TYPES | LIABILITY_TYPES):
+            continue
+        history = account_balance_history[acc.id]
+        annual_return = account_monthly_rate.get(acc.id, 0.0) * 12.0 * 100.0
+        contrib = account_monthly_contrib.get(acc.id, 0.0)
+        account_forecasts.append(
+            AccountForecast(
+                account_id=acc.id,
+                account_name=acc.name,
+                account_type=acc.account_type,
+                starting_balance=account_balances[acc.id],
+                ending_balance=history[-1] if history else account_balances[acc.id],
+                monthly_balances=history,
+                annual_return_pct=round(annual_return, 2),
+                monthly_contribution=round(contrib, 2),
+            )
+        )
+
     return ForecastResponse(
         scenario_id=scenario_id,
         months=months,
@@ -386,4 +525,5 @@ def run_forecast(
         ending_net_worth=round(ending_net_worth, 2),
         total_income=round(total_income, 2),
         total_expenses=round(total_expenses, 2),
+        account_forecasts=account_forecasts,
     )

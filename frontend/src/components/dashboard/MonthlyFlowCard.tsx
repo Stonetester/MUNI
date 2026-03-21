@@ -1,24 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { ForecastPoint } from '@/lib/types'
 import { formatCurrency, formatMonth } from '@/lib/utils'
 import Card from '@/components/ui/Card'
 import MonthDetailModal from '@/components/ui/MonthDetailModal'
 import {
-  ResponsiveContainer,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
   Legend,
+  ReferenceLine,
   TooltipProps,
 } from 'recharts'
 
 interface MonthlyFlowCardProps {
-  forecastPreview: ForecastPoint[]
+  flowMonths: ForecastPoint[]
 }
 
 function CustomTooltip({ active, payload, label }: TooltipProps<number, string>) {
@@ -39,33 +40,65 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
   return null
 }
 
-export default function MonthlyFlowCard({ forecastPreview }: MonthlyFlowCardProps) {
+const BAR_WIDTH = 56  // px per month group
+
+export default function MonthlyFlowCard({ flowMonths }: MonthlyFlowCardProps) {
   const [selectedPoint, setSelectedPoint] = useState<ForecastPoint | null>(null)
-  const points = forecastPreview.slice(0, 6)
-  const chartData = points.map((p) => ({
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  const currentMonth = new Date().toISOString().slice(0, 7) // "YYYY-MM"
+
+  const chartData = flowMonths.map((p) => ({
     month: formatMonth(p.month),
+    rawMonth: p.month,
     Income: p.income,
-    Spending: p.expenses,
+    Spending: Math.abs(p.expenses),
+    isCurrent: p.month === currentMonth,
   }))
 
-  function handleClick(data: { activeLabel?: string }) {
-    const label = data?.activeLabel
-    if (!label) return
-    const point = points.find((p) => formatMonth(p.month) === label)
+  const currentIndex = chartData.findIndex((d) => d.rawMonth === currentMonth)
+
+  // Auto-scroll so the current month bar is visible (centered-ish)
+  useEffect(() => {
+    if (scrollRef.current && currentIndex >= 0) {
+      const containerWidth = scrollRef.current.clientWidth
+      const scrollTarget = currentIndex * BAR_WIDTH - containerWidth / 2 + BAR_WIDTH / 2
+      scrollRef.current.scrollLeft = Math.max(0, scrollTarget)
+    }
+  }, [currentIndex])
+
+  function handleClick(data: { activePayload?: Array<{ payload: typeof chartData[0] }> }) {
+    const item = data?.activePayload?.[0]?.payload
+    if (!item) return
+    const point = flowMonths.find((p) => p.month === item.rawMonth)
     if (point) setSelectedPoint(point)
   }
+
+  const totalWidth = Math.max(chartData.length * BAR_WIDTH, 400)
 
   return (
     <>
       <Card title="Monthly Cash Flow" className="col-span-full md:col-span-2">
-        <p className="text-xs text-muted mb-2">Click any month for details</p>
-        <div className="h-56">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} barGap={4} barCategoryGap="30%" onClick={handleClick} style={{ cursor: 'pointer' }}>
+        <p className="text-xs text-muted mb-2">Scroll to see past months · Click any bar for details</p>
+        <div
+          ref={scrollRef}
+          className="overflow-x-auto"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
+          <div style={{ width: totalWidth, height: 224 }}>
+            <BarChart
+              width={totalWidth}
+              height={224}
+              data={chartData}
+              barGap={2}
+              barCategoryGap="28%"
+              onClick={handleClick}
+              style={{ cursor: 'pointer' }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" vertical={false} />
               <XAxis
                 dataKey="month"
-                tick={{ fill: '#94a3b8', fontSize: 11 }}
+                tick={{ fill: '#94a3b8', fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -74,14 +107,32 @@ export default function MonthlyFlowCard({ forecastPreview }: MonthlyFlowCardProp
                 axisLine={false}
                 tickLine={false}
                 tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                width={50}
+                width={46}
               />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: '12px', color: '#94a3b8' }} />
-              <Bar dataKey="Income" fill="#10B981" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Spending" fill="#f87171" radius={[4, 4, 0, 0]} />
+              {/* Highlight current month */}
+              {currentIndex >= 0 && (
+                <ReferenceLine
+                  x={chartData[currentIndex]?.month}
+                  stroke="#60a5fa"
+                  strokeWidth={2}
+                  strokeDasharray="4 3"
+                  label={{ value: 'Now', position: 'top', fill: '#60a5fa', fontSize: 10 }}
+                />
+              )}
+              <Bar dataKey="Income" fill="#10B981" radius={[4, 4, 0, 0]} maxBarSize={24}>
+                {chartData.map((_, i) => (
+                  <Cell key={`income-${i}`} fillOpacity={i > currentIndex ? 0.38 : 1} />
+                ))}
+              </Bar>
+              <Bar dataKey="Spending" fill="#f87171" radius={[4, 4, 0, 0]} maxBarSize={24}>
+                {chartData.map((_, i) => (
+                  <Cell key={`spending-${i}`} fillOpacity={i > currentIndex ? 0.38 : 1} />
+                ))}
+              </Bar>
             </BarChart>
-          </ResponsiveContainer>
+          </div>
         </div>
       </Card>
       {selectedPoint && <MonthDetailModal point={selectedPoint} onClose={() => setSelectedPoint(null)} />}

@@ -28,5 +28,6 @@ class DashboardResponse(BaseModel):
     this_month: MonthSummary
     last_month: MonthSummary
     upcoming_events: List[LifeEventOut]
-    forecast_preview: List[ForecastPoint]
+    forecast_preview: List[ForecastPoint]   # 6 forward months (for net-worth chart)
+    flow_months: List[ForecastPoint]         # 12 months: 6 past actual + current + 5 future
     recent_transactions: List[TransactionOut]

@@ -9,6 +9,7 @@ import Select from '@/components/ui/Select'
 import NetWorthForecastChart from '@/components/forecast/NetWorthForecastChart'
 import ForecastChart from '@/components/forecast/ForecastChart'
 import CategoryForecastTable from '@/components/forecast/CategoryForecastTable'
+import AccountForecastChart from '@/components/forecast/AccountForecastChart'
 import { getForecast, getScenarios } from '@/lib/api'
 import { ForecastResponse, Scenario } from '@/lib/types'
 import { formatCurrency } from '@/lib/utils'
@@ -61,20 +62,20 @@ export default function ForecastPage() {
     <AppLayout>
       <div className="flex flex-col gap-4">
         {/* Controls */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           <Select
             placeholder="All scenarios"
             options={scenarioOptions}
             value={scenarioId || ''}
             onChange={(e) => setScenarioId(e.target.value ? Number(e.target.value) : undefined)}
-            className="w-48"
+            className="w-full sm:w-44"
           />
-          <div className="flex items-center gap-2 bg-surface border border-[#2d3748] rounded-xl p-1">
+          <div className="flex items-center gap-1 bg-surface border border-[#2d3748] rounded-xl p-1 overflow-x-auto">
             {PAST_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setPastMonths(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
                   pastMonths === opt.value
                     ? 'bg-primary text-white'
                     : 'text-text-secondary hover:text-text-primary'
@@ -84,12 +85,12 @@ export default function ForecastPage() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-2 bg-surface border border-[#2d3748] rounded-xl p-1">
+          <div className="flex items-center gap-1 bg-surface border border-[#2d3748] rounded-xl p-1 overflow-x-auto">
             {MONTH_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setMonths(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
                   months === opt.value
                     ? 'bg-primary text-white'
                     : 'text-text-secondary hover:text-text-primary'
@@ -99,7 +100,7 @@ export default function ForecastPage() {
               </button>
             ))}
           </div>
-          <label className="flex items-center gap-2 cursor-pointer ml-auto">
+          <label className="flex items-center gap-2 cursor-pointer sm:ml-auto">
             <input
               type="checkbox"
               checked={showEvents}
@@ -117,7 +118,7 @@ export default function ForecastPage() {
         ) : data ? (
           <>
             {/* Summary cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <Card className="p-3">
                 <p className="text-xs text-text-secondary">Total Income</p>
                 <p className="text-lg font-bold text-primary">{formatCurrency(data.total_income)}</p>
@@ -143,6 +144,9 @@ export default function ForecastPage() {
 
             {/* Monthly Cash Flow */}
             <ForecastChart points={data.points} />
+
+            {/* Account Balance Projections with compound interest */}
+            <AccountForecastChart points={data.points} accountForecasts={data.account_forecasts ?? []} />
 
             {/* Category table */}
             <CategoryForecastTable points={data.points} />
