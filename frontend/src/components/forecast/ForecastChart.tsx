@@ -114,8 +114,8 @@ export default function ForecastChart({ points }: ForecastChartProps) {
         </p>
         <div
           ref={scrollRef}
-          className="overflow-x-auto"
-          style={{ WebkitOverflowScrolling: 'touch' }}
+          className="overflow-x-auto -mx-4 md:-mx-5 px-4 md:px-5"
+          style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin' }}
         >
           <div style={{ width: totalWidth, height: chartHeight }}>
             <ComposedChart

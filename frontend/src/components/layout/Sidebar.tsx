@@ -39,7 +39,6 @@ const primaryItems = [
   { label: 'Accounts', icon: Wallet, href: '/accounts' },
   { label: 'Forecast', icon: TrendingUp, href: '/forecast' },
   { label: 'Life Events', icon: Calendar, href: '/events' },
-  { label: 'Recurring', icon: RefreshCw, href: '/recurring' },
   { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
   { label: 'Home Buying', icon: Home, href: '/home-buying' },
   { label: 'Paystubs', icon: FileText, href: '/paystubs' },
@@ -47,6 +46,7 @@ const primaryItems = [
 ]
 
 const extrasItems = [
+  { label: 'Recurring', icon: RefreshCw, href: '/recurring' },
   { label: 'AI Report', icon: Sparkles, href: '/ai-report' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },
