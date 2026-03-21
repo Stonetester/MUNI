@@ -3,12 +3,19 @@
 @tailwind utilities;
 
 /* ─── Base ─────────────────────────────────────────── */
+html {
+  /* iOS viewport height fix */
+  height: -webkit-fill-available;
+}
+
 body {
-  background-color: #0f1117;
-  color: #f1f5f9;
+  background-color: #0A0D14;
+  color: #F0F3FB;
   font-family: var(--font-dm-sans), system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
 }
 
 * {
@@ -20,83 +27,80 @@ body {
   width: 4px;
   height: 4px;
 }
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #374151;
+  background: rgba(255,255,255,0.12);
   border-radius: 4px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+  background: rgba(255,255,255,0.2);
 }
 
-/* ─── Overflow ──────────────────────────────────────── */
+/* ─── No horizontal overflow ────────────────────────── */
 html, body {
   overflow-x: hidden;
   max-width: 100%;
 }
 
-/* ─── Safe area utilities ───────────────────────────── */
-.pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-.pb-nav-safe {
-  /* nav height + safe area for page content */
-  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px) + 16px);
-}
-
-/* ─── Typography ────────────────────────────────────── */
-.font-display {
-  font-family: var(--font-dm-serif), Georgia, serif;
-}
-
-.font-numbers {
-  font-family: var(--font-jetbrains), ui-monospace, monospace;
-}
-
-/* ─── iOS touch behavior ────────────────────────────── */
+/* ─── Touch behavior ────────────────────────────────── */
 button, a, [role="button"] {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
 
-/* Prevent iOS input zoom — always 16px+ on mobile inputs */
+/* Prevent iOS input auto-zoom (must be ≥ 16px) */
 @media (max-width: 768px) {
   input, textarea, select {
     font-size: 16px !important;
   }
 }
 
-/* ─── Active press state (iOS feel) ─────────────────── */
-.ios-pressable {
-  transition: opacity 0.1s ease, transform 0.1s ease;
-}
-.ios-pressable:active {
-  opacity: 0.7;
-  transform: scale(0.97);
+/* ─── Typography helpers ────────────────────────────── */
+
+/* DM Serif Display — for hero KPI numbers */
+.font-display {
+  font-family: var(--font-dm-serif), Georgia, serif;
+  font-weight: 400;
 }
 
-/* ─── Frosted glass nav ─────────────────────────────── */
+/* JetBrains Mono — for all financial amounts */
+.font-numbers {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Apply JetBrains Mono to all currency-like content */
+.mono {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Safe area ─────────────────────────────────────── */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Full clearance for pages with bottom tab bar */
+.pb-nav-safe {
+  padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px) + 8px);
+}
+
+/* ─── Frosted glass — iOS navigation bars ───────────── */
 .glass-nav {
-  background: rgba(26, 31, 46, 0.85);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(20, 24, 36, 0.88);
+  backdrop-filter: saturate(200%) blur(24px);
+  -webkit-backdrop-filter: saturate(200%) blur(24px);
 }
 
 .glass-topbar {
-  background: rgba(15, 17, 23, 0.82);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(10, 13, 20, 0.85);
+  backdrop-filter: saturate(200%) blur(24px);
+  -webkit-backdrop-filter: saturate(200%) blur(24px);
 }
 
-/* ─── Bottom sheet ──────────────────────────────────── */
+/* ─── Bottom sheet animations ───────────────────────── */
 .bottom-sheet-backdrop {
-  animation: fadeInBackdrop 0.22s ease forwards;
+  animation: fadeInSheet 0.22s ease forwards;
 }
 
 .bottom-sheet-panel {
@@ -104,11 +108,11 @@ button, a, [role="button"] {
 }
 
 @keyframes slideUpSheet {
-  from { transform: translateY(100%); }
+  from { transform: translateY(110%); }
   to   { transform: translateY(0); }
 }
 
-@keyframes fadeInBackdrop {
+@keyframes fadeInSheet {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
@@ -118,50 +122,30 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 button:focus-visible {
-  outline: 2px solid #10B981;
+  outline: 2px solid #14D49E;
   outline-offset: 2px;
+  border-radius: 6px;
 }
 
-/* ─── Charts ────────────────────────────────────────── */
+/* ─── Chart tooltip ─────────────────────────────────── */
 .recharts-tooltip-wrapper .recharts-default-tooltip {
-  background-color: #1a1f2e !important;
-  border: 1px solid #2d3748 !important;
-  border-radius: 12px !important;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4) !important;
-}
-
-.recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label {
-  color: #f1f5f9 !important;
+  background-color: #1C2236 !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
   font-family: var(--font-dm-sans), system-ui, sans-serif !important;
 }
 
-/* ─── iOS grouped list sections ─────────────────────── */
-.ios-list-section {
-  background: #1a1f2e;
-  border-radius: 13px;
-  overflow: hidden;
+.recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label {
+  color: #F0F3FB !important;
+  font-family: var(--font-dm-sans), system-ui, sans-serif !important;
 }
 
-.ios-list-row {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 10px 16px;
-  gap: 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+/* ─── iOS-style active press states ─────────────────── */
+.ios-press {
+  transition: opacity 0.1s ease, transform 0.1s ease;
 }
-
-.ios-list-row:last-child {
-  border-bottom: none;
-}
-
-/* ─── Number / financial display ─────────────────────── */
-.stat-number {
-  font-family: var(--font-dm-serif), Georgia, serif;
-  font-variant-numeric: tabular-nums;
-}
-
-.mono-number {
-  font-family: var(--font-jetbrains), ui-monospace, monospace;
-  font-variant-numeric: tabular-nums;
+.ios-press:active {
+  opacity: 0.65;
+  transform: scale(0.97);
 }

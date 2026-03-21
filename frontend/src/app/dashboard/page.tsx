@@ -52,7 +52,7 @@ function QuickStat({
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs text-text-secondary">{label}</p>
-        <p className="text-lg font-bold text-text-primary">{formatCurrency(value)}</p>
+        <p className="text-lg font-bold font-mono text-text-primary">{formatCurrency(value)}</p>
       </div>
       {onClick && <span className="text-xs text-muted pr-1">↗</span>}
     </Card>
@@ -258,7 +258,7 @@ export default function DashboardPage() {
           label: a.name,
           sublabel: accountTypeLabel(b.account_type),
           value: a.balance,
-          color: '#10b981',
+          color: '#14D49E',
         }))
       )
       .sort((a, b) => b.value - a.value)
@@ -303,7 +303,7 @@ export default function DashboardPage() {
       label: t.description,
       sublabel: t.account_name ? `${t.account_name} · ${t.date}` : t.date,
       value: t.amount,
-      color: '#10b981',
+      color: '#14D49E',
     }))
     setStatModal({
       title: 'This Month Income',

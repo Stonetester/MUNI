@@ -36,19 +36,19 @@ const mainItems = [
 ]
 
 const moreItems = [
-  { label: 'AI Report', icon: Sparkles, href: '/ai-report' },
-  { label: 'Get Started', icon: PlusCircle, href: '/getting-started' },
-  { label: 'Calendar', icon: CalendarDays, href: '/calendar' },
-  { label: 'Life Events', icon: Calendar, href: '/events' },
-  { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
-  { label: 'Home Buying', icon: Home, href: '/home-buying' },
-  { label: 'Paystubs', icon: FileText, href: '/paystubs' },
-  { label: 'Insights', icon: Lightbulb, href: '/insights' },
-  { label: 'Budget', icon: Target, href: '/budget' },
-  { label: 'What-If', icon: FlaskConical, href: '/scenarios' },
-  { label: 'Alerts', icon: BellRing, href: '/alerts' },
-  { label: 'Notify', icon: Mail, href: '/notifications' },
-  { label: 'Settings', icon: Settings, href: '/settings' },
+  { label: 'AI Report', icon: Sparkles, href: '/ai-report', iconBg: 'bg-violet-600' },
+  { label: 'Get Started', icon: PlusCircle, href: '/getting-started', iconBg: 'bg-blue-500' },
+  { label: 'Calendar', icon: CalendarDays, href: '/calendar', iconBg: 'bg-red-500' },
+  { label: 'Life Events', icon: Calendar, href: '/events', iconBg: 'bg-pink-500' },
+  { label: 'My Profile', icon: UserCircle, href: '/financial-profile', iconBg: 'bg-slate-500' },
+  { label: 'Home Buying', icon: Home, href: '/home-buying', iconBg: 'bg-blue-600' },
+  { label: 'Paystubs', icon: FileText, href: '/paystubs', iconBg: 'bg-orange-500' },
+  { label: 'Insights', icon: Lightbulb, href: '/insights', iconBg: 'bg-yellow-500' },
+  { label: 'Budget', icon: Target, href: '/budget', iconBg: 'bg-emerald-600' },
+  { label: 'What-If', icon: FlaskConical, href: '/scenarios', iconBg: 'bg-fuchsia-600' },
+  { label: 'Alerts', icon: BellRing, href: '/alerts', iconBg: 'bg-red-500' },
+  { label: 'Notify', icon: Mail, href: '/notifications', iconBg: 'bg-sky-500' },
+  { label: 'Settings', icon: Settings, href: '/settings', iconBg: 'bg-gray-500' },
 ]
 
 export default function MobileNavBar() {
@@ -110,18 +110,19 @@ export default function MobileNavBar() {
                     onClick={() => setShowMore(false)}
                     className={cn(
                       'flex flex-col items-center gap-2 py-3 px-2 rounded-2xl transition-all active:scale-95 active:opacity-70',
-                      isActive
-                        ? 'bg-primary/20 text-primary'
-                        : 'bg-surface-2/60 text-text-secondary'
+                      isActive ? 'bg-white/6' : 'bg-surface-2/60'
                     )}
                   >
                     <div className={cn(
-                      'w-10 h-10 rounded-xl flex items-center justify-center',
-                      isActive ? 'bg-primary/20' : 'bg-surface-2'
+                      'w-11 h-11 rounded-[14px] flex items-center justify-center shadow-icon',
+                      item.iconBg
                     )}>
-                      <Icon size={20} />
+                      <Icon size={20} className="text-white" strokeWidth={2} />
                     </div>
-                    <span className="text-[11px] font-medium leading-tight text-center">{item.label}</span>
+                    <span className={cn(
+                      'text-[11px] font-medium leading-tight text-center',
+                      isActive ? 'text-text-primary font-semibold' : 'text-text-secondary'
+                    )}>{item.label}</span>
                   </Link>
                 )
               })}
@@ -133,9 +134,9 @@ export default function MobileNavBar() {
       {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
 
       {/* iOS Tab Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 glass-nav border-t border-white/8">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 glass-nav border-t border-white/[0.06]">
         <div
-          className="flex items-end justify-around px-2 pt-2"
+          className="flex items-end justify-around px-1 pt-2"
           style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 8px)' }}
         >
           {mainItems.map((item) => {
@@ -146,20 +147,14 @@ export default function MobileNavBar() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'flex flex-col items-center gap-1 min-w-[56px] pb-1 transition-all active:scale-90 active:opacity-70',
-                  isActive ? 'text-primary' : 'text-text-secondary'
+                  'flex flex-col items-center gap-0.5 min-w-[60px] pb-1 transition-all active:scale-90 active:opacity-60',
+                  isActive ? 'text-primary' : 'text-muted'
                 )}
               >
-                <div className={cn(
-                  'w-11 h-7 flex items-center justify-center rounded-xl transition-all',
-                  isActive ? 'bg-primary/15' : ''
-                )}>
-                  <Icon size={22} strokeWidth={isActive ? 2.5 : 1.8} />
+                <div className="w-6 h-6 flex items-center justify-center">
+                  <Icon size={24} strokeWidth={isActive ? 2.5 : 1.7} />
                 </div>
-                <span className={cn(
-                  'text-[10px] font-medium leading-none',
-                  isActive ? 'font-semibold' : ''
-                )}>
+                <span className="text-[10px] leading-none font-medium mt-1">
                   {item.label}
                 </span>
               </Link>
@@ -170,20 +165,14 @@ export default function MobileNavBar() {
           <button
             onClick={() => setShowMore(!showMore)}
             className={cn(
-              'flex flex-col items-center gap-1 min-w-[56px] pb-1 transition-all active:scale-90 active:opacity-70',
-              isMoreActive ? 'text-primary' : 'text-text-secondary'
+              'flex flex-col items-center gap-0.5 min-w-[60px] pb-1 transition-all active:scale-90 active:opacity-60',
+              isMoreActive ? 'text-primary' : 'text-muted'
             )}
           >
-            <div className={cn(
-              'w-11 h-7 flex items-center justify-center rounded-xl transition-all',
-              isMoreActive ? 'bg-primary/15' : ''
-            )}>
-              <MoreHorizontal size={22} strokeWidth={isMoreActive ? 2.5 : 1.8} />
+            <div className="w-6 h-6 flex items-center justify-center">
+              <MoreHorizontal size={24} strokeWidth={isMoreActive ? 2.5 : 1.7} />
             </div>
-            <span className={cn(
-              'text-[10px] font-medium leading-none',
-              isMoreActive ? 'font-semibold' : ''
-            )}>
+            <span className="text-[10px] leading-none font-medium mt-1">
               More
             </span>
           </button>

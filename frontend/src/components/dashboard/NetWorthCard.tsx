@@ -49,7 +49,7 @@ export default function NetWorthCard({ data }: NetWorthCardProps) {
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">
         <div className="flex-1">
           <p className="text-sm text-text-secondary font-medium mb-1">Our Net Worth</p>
-          <p className="text-4xl md:text-5xl font-bold text-text-primary">
+          <p className="text-4xl md:text-5xl font-display text-text-primary tracking-tight">
             {formatCurrency(net_worth)}
           </p>
           <div className={`flex items-center gap-1.5 mt-2 ${isPositive ? 'text-primary' : 'text-danger'}`}>
@@ -66,7 +66,7 @@ export default function NetWorthCard({ data }: NetWorthCardProps) {
                 <Line
                   type="monotone"
                   dataKey="net_worth"
-                  stroke="#10B981"
+                  stroke="#14D49E"
                   strokeWidth={2}
                   dot={false}
                 />
