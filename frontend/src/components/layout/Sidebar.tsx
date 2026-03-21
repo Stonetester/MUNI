@@ -60,14 +60,19 @@ function NavItem({ label, icon: Icon, href, active }: { label: string; icon: Rea
     <Link
       href={href}
       className={cn(
-        'flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150',
+        'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
         active
-          ? 'bg-primary text-white'
+          ? 'bg-primary/15 text-primary'
           : 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
       )}
     >
-      <Icon size={17} />
-      {label}
+      <div className={cn(
+        'w-7 h-7 flex items-center justify-center rounded-lg flex-shrink-0',
+        active ? 'bg-primary/20' : 'bg-transparent'
+      )}>
+        <Icon size={16} strokeWidth={active ? 2.5 : 2} />
+      </div>
+      <span className="truncate">{label}</span>
     </Link>
   )
 }
@@ -82,44 +87,46 @@ export default function Sidebar() {
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + '/')
 
   return (
-    <aside className="hidden md:flex flex-col w-[220px] min-h-screen bg-surface border-r border-[#2d3748] fixed left-0 top-0 z-40">
+    <aside className="hidden md:flex flex-col w-[220px] min-h-screen bg-surface border-r border-white/6 fixed left-0 top-0 z-40">
       {/* Logo */}
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-[#2d3748]">
-        <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+      <div className="flex items-center gap-3 px-5 py-5 border-b border-white/6">
+        <div className="w-8 h-8 bg-primary rounded-ios flex items-center justify-center shadow-lg shadow-primary/20">
           <Layers size={15} className="text-white" />
         </div>
         <div className="flex flex-col">
-          <span className="font-bold text-text-primary text-base tracking-wide">{APP_NAME}</span>
-          <span className="text-[10px] text-text-secondary italic leading-none mt-0.5">track dat shit</span>
+          <span className="font-bold text-text-primary text-[15px] tracking-tight">{APP_NAME}</span>
+          <span className="text-[10px] text-muted italic leading-none mt-0.5">track dat shit</span>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 py-4 px-2 flex flex-col gap-0.5 overflow-y-auto">
+      <nav className="flex-1 py-3 px-2 flex flex-col gap-0.5 overflow-y-auto">
         {primaryItems.map((item) => (
           <NavItem key={item.href} {...item} active={isActive(item.href)} />
         ))}
 
-        {/* Extras collapsible */}
-        <div className="mt-1">
+        {/* Tools collapsible section */}
+        <div className="mt-2">
           <button
             onClick={() => setExtrasOpen(o => !o)}
             className={cn(
-              'w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150',
+              'w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
               extrasItems.some(i => isActive(i.href))
                 ? 'text-primary'
                 : 'text-text-secondary hover:text-text-primary hover:bg-surface-2'
             )}
           >
             <span className="flex items-center gap-3">
-              <Layers size={17} />
+              <div className="w-7 h-7 flex items-center justify-center rounded-lg">
+                <Layers size={16} strokeWidth={2} />
+              </div>
               Tools
             </span>
-            {extrasOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {extrasOpen ? <ChevronUp size={13} className="text-muted" /> : <ChevronDown size={13} className="text-muted" />}
           </button>
 
           {extrasOpen && (
-            <div className="ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-[#2d3748] pl-3">
+            <div className="ml-3 mt-0.5 flex flex-col gap-0.5 border-l-2 border-white/6 pl-3">
               {extrasItems.map((item) => (
                 <NavItem key={item.href} {...item} active={isActive(item.href)} />
               ))}
@@ -129,14 +136,14 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-[#2d3748] flex items-center justify-between">
+      <div className="p-4 border-t border-white/6 flex items-center justify-between">
         <p className="text-xs text-muted">{APP_NAME} v{APP_VERSION}</p>
         <button
           onClick={() => setShowTutorial(true)}
           title="How to use Muni"
-          className="w-7 h-7 flex items-center justify-center rounded-lg text-text-secondary hover:text-primary hover:bg-surface-2 transition-colors"
+          className="w-8 h-8 flex items-center justify-center rounded-xl text-text-secondary hover:text-primary hover:bg-surface-2 transition-colors"
         >
-          <HelpCircle size={16} />
+          <HelpCircle size={15} />
         </button>
       </div>
 

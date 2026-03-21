@@ -13,7 +13,8 @@ export default function Card({ children, className, title, action, onClick }: Ca
   return (
     <div
       className={cn(
-        'bg-surface rounded-xl border border-[#2d3748] p-4 md:p-6',
+        'bg-surface rounded-2xl border border-white/8 p-4 md:p-5',
+        onClick && 'cursor-pointer active:opacity-80 transition-opacity',
         className
       )}
       onClick={onClick}
@@ -21,7 +22,7 @@ export default function Card({ children, className, title, action, onClick }: Ca
       {(title || action) && (
         <div className="flex items-center justify-between mb-4">
           {title && (
-            <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wider">
+            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-widest">
               {title}
             </h3>
           )}

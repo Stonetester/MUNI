@@ -2,59 +2,166 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Base ─────────────────────────────────────────── */
 body {
   background-color: #0f1117;
   color: #f1f5f9;
+  font-family: var(--font-dm-sans), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
   box-sizing: border-box;
 }
 
+/* ─── Scrollbar ─────────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1a1f2e;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4a5568;
-  border-radius: 3px;
+  background: #374151;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #6b7280;
+  background: #4b5563;
 }
 
-/* Prevent horizontal scroll on mobile */
+/* ─── Overflow ──────────────────────────────────────── */
 html, body {
   overflow-x: hidden;
   max-width: 100%;
 }
 
-/* Safe area for mobile bottom nav */
+/* ─── Safe area utilities ───────────────────────────── */
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Chart tooltip dark styles */
-.recharts-tooltip-wrapper .recharts-default-tooltip {
-  background-color: #1a1f2e !important;
-  border: 1px solid #2d3748 !important;
-  border-radius: 8px !important;
+.pb-nav-safe {
+  /* nav height + safe area for page content */
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px) + 16px);
 }
 
-.recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label {
-  color: #f1f5f9 !important;
+/* ─── Typography ────────────────────────────────────── */
+.font-display {
+  font-family: var(--font-dm-serif), Georgia, serif;
 }
 
-/* Remove outline on focused elements that have custom styles */
+.font-numbers {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+/* ─── iOS touch behavior ────────────────────────────── */
+button, a, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Prevent iOS input zoom — always 16px+ on mobile inputs */
+@media (max-width: 768px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
+/* ─── Active press state (iOS feel) ─────────────────── */
+.ios-pressable {
+  transition: opacity 0.1s ease, transform 0.1s ease;
+}
+.ios-pressable:active {
+  opacity: 0.7;
+  transform: scale(0.97);
+}
+
+/* ─── Frosted glass nav ─────────────────────────────── */
+.glass-nav {
+  background: rgba(26, 31, 46, 0.85);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+.glass-topbar {
+  background: rgba(15, 17, 23, 0.82);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+/* ─── Bottom sheet ──────────────────────────────────── */
+.bottom-sheet-backdrop {
+  animation: fadeInBackdrop 0.22s ease forwards;
+}
+
+.bottom-sheet-panel {
+  animation: slideUpSheet 0.32s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+@keyframes slideUpSheet {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ─── Focus ring ────────────────────────────────────── */
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 button:focus-visible {
   outline: 2px solid #10B981;
   outline-offset: 2px;
+}
+
+/* ─── Charts ────────────────────────────────────────── */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: #1a1f2e !important;
+  border: 1px solid #2d3748 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4) !important;
+}
+
+.recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label {
+  color: #f1f5f9 !important;
+  font-family: var(--font-dm-sans), system-ui, sans-serif !important;
+}
+
+/* ─── iOS grouped list sections ─────────────────────── */
+.ios-list-section {
+  background: #1a1f2e;
+  border-radius: 13px;
+  overflow: hidden;
+}
+
+.ios-list-row {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.ios-list-row:last-child {
+  border-bottom: none;
+}
+
+/* ─── Number / financial display ─────────────────────── */
+.stat-number {
+  font-family: var(--font-dm-serif), Georgia, serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.mono-number {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
 }

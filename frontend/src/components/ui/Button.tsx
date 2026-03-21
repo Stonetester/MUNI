@@ -19,22 +19,24 @@ export default function Button({
   ...props
 }: ButtonProps) {
   const variants = {
-    primary: 'bg-primary hover:bg-primary-hover text-white border-transparent',
-    secondary: 'bg-transparent hover:bg-surface-2 text-text-primary border-[#2d3748]',
-    danger: 'bg-danger hover:bg-red-600 text-white border-transparent',
-    ghost: 'bg-transparent hover:bg-surface-2 text-text-secondary border-transparent',
+    primary: 'bg-primary hover:bg-primary-hover active:bg-primary-hover text-white border-transparent',
+    secondary: 'bg-transparent hover:bg-surface-2 active:bg-surface-2 text-text-primary border-white/10',
+    danger: 'bg-danger hover:bg-red-600 active:bg-red-700 text-white border-transparent',
+    ghost: 'bg-transparent hover:bg-surface-2 active:bg-surface-2 text-text-secondary border-transparent',
   }
 
   const sizes = {
-    sm: 'h-8 px-3 text-xs rounded-lg',
-    md: 'h-10 px-4 text-sm rounded-xl',
-    lg: 'h-12 px-6 text-base rounded-xl',
+    sm: 'h-9 min-w-[44px] px-3.5 text-xs rounded-xl',
+    md: 'h-11 min-w-[44px] px-4 text-sm rounded-xl',
+    lg: 'h-12 min-w-[44px] px-6 text-base rounded-2xl',
   }
 
   return (
     <button
       className={cn(
-        'inline-flex items-center justify-center gap-2 font-medium border transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed',
+        'inline-flex items-center justify-center gap-2 font-medium border transition-all duration-150',
+        'disabled:opacity-40 disabled:cursor-not-allowed',
+        'active:scale-[0.97]',
         variants[variant],
         sizes[size],
         className
