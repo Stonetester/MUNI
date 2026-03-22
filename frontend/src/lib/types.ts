@@ -336,6 +336,8 @@ export interface Paystub {
   raw_pdf_path?: string
   notes?: string
   created_at: string
+  salary_rule_action?: string | null   // "created" | "updated_raise" | "updated_change" | "unchanged"
+  salary_rule_amount?: number | null
 }
 
 export interface ParsedPaystub {

@@ -22,6 +22,7 @@ from app.database import get_db
 from app.models.account import Account, AccountType
 from app.models.category import Category
 from app.models.paystub import Paystub
+from app.models.recurring_rule import RecurringRule
 from app.models.transaction import Transaction
 from app.models.user import User
 
@@ -89,6 +90,9 @@ class PaystubOut(PaystubIn):
     user_id: int
     raw_pdf_path: Optional[str] = None
     created_at: datetime
+    # Populated on save — tells the frontend what happened with the salary rule
+    salary_rule_action: Optional[str] = None   # "created" | "updated_raise" | "updated_change" | "unchanged" | None
+    salary_rule_amount: Optional[float] = None  # the monthly amount in the rule after save
     model_config = {"from_attributes": True}
 
 
@@ -194,6 +198,68 @@ def _create_income_transactions(stub: Paystub, db: Session) -> None:
         db.add(txn_401k)
 
 
+def _upsert_salary_rule(stub: Paystub, db: Session) -> dict:
+    """
+    After saving a regular (non-bonus) paystub, auto-create or update a
+    Salary recurring rule so the forecast always has an income signal.
+
+    - Monthly amount = net_pay * 2  (semi-monthly pay → monthly equivalent)
+    - If no salary rule exists → creates one, returns action="created"
+    - If one exists and amount differs by >3% → updates it, returns action="updated_raise"
+      or "updated_change" depending on direction
+    - If within 3% → no change, returns action="unchanged"
+    - Bonus paystubs are skipped entirely → returns action=None
+    """
+    if stub.pay_type == "bonus" or not stub.net_pay or stub.net_pay <= 0:
+        return {"action": None, "amount": None}
+
+    monthly_amount = round(stub.net_pay * 2, 2)
+
+    salary_cat = (
+        db.query(Category)
+        .filter(Category.name.ilike("salary"), Category.kind == "income")
+        .first()
+    )
+
+    existing_rule = (
+        db.query(RecurringRule)
+        .filter(
+            RecurringRule.user_id == stub.user_id,
+            RecurringRule.scenario_id.is_(None),
+            RecurringRule.name.ilike("salary"),
+            RecurringRule.amount > 0,
+        )
+        .first()
+    )
+
+    if existing_rule is None:
+        rule = RecurringRule(
+            user_id=stub.user_id,
+            category_id=salary_cat.id if salary_cat else None,
+            name="Salary",
+            amount=monthly_amount,
+            frequency="monthly",
+            start_date=stub.pay_date,
+            is_active=True,
+            description=f"Auto-created from paystub on {stub.pay_date}",
+        )
+        db.add(rule)
+        return {"action": "created", "amount": monthly_amount}
+
+    # Compare new monthly amount to existing rule
+    pct_diff = (monthly_amount - existing_rule.amount) / abs(existing_rule.amount)
+    if abs(pct_diff) < 0.03:
+        return {"action": "unchanged", "amount": existing_rule.amount}
+
+    action = "updated_raise" if pct_diff > 0 else "updated_change"
+    existing_rule.amount = monthly_amount
+    existing_rule.description = (
+        f"Updated from paystub on {stub.pay_date} "
+        f"({'raise' if pct_diff > 0 else 'change'}: {pct_diff:+.1%})"
+    )
+    return {"action": action, "amount": monthly_amount}
+
+
 def _delete_paystub_transactions(stub_id: int, user_id: int, db: Session) -> None:
     """Remove income transactions previously created from this paystub."""
     db.query(Transaction).filter(
@@ -280,10 +346,16 @@ def save_paystub(
     db.flush()  # get stub.id before creating transactions
 
     _create_income_transactions(stub, db)
+    rule_result = _upsert_salary_rule(stub, db)
 
     db.commit()
     db.refresh(stub)
-    return stub
+
+    # Attach rule info to the response (not a DB column — set as instance attrs)
+    out = PaystubOut.model_validate(stub)
+    out.salary_rule_action = rule_result["action"]
+    out.salary_rule_amount = rule_result["amount"]
+    return out
 
 
 @router.get("", response_model=List[PaystubOut])

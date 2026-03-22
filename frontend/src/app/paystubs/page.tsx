@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import AppLayout from '@/components/layout/AppLayout'
+import AppLayout, { showToast } from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
@@ -205,12 +205,25 @@ function BatchQueueView({
   const update = (id: string, changes: Partial<BatchItem>) =>
     onQueueChange(queueRef.current.map(item => item.id === id ? { ...item, ...changes } : item))
 
+  const showRuleToast = (saved: Paystub) => {
+    const { salary_rule_action, salary_rule_amount } = saved
+    const amt = salary_rule_amount ? `$${salary_rule_amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''
+    if (salary_rule_action === 'created') {
+      showToast(`Salary recurring rule created (${amt}/mo) — forecast updated`, 'success')
+    } else if (salary_rule_action === 'updated_raise') {
+      showToast(`Raise detected! Salary rule updated to ${amt}/mo`, 'success')
+    } else if (salary_rule_action === 'updated_change') {
+      showToast(`Salary rule updated to ${amt}/mo`, 'info')
+    }
+  }
+
   const saveItem = async (item: BatchItem) => {
     if (!item.result) return
     update(item.id, { status: 'saving' })
     const data: Partial<Paystub> = { pay_date: todayISO(), ...item.result.parsed, ...item.edited }
     try {
-      await savePaystub(data)
+      const saved = await savePaystub(data)
+      showRuleToast(saved)
       update(item.id, { status: 'saved' })
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
@@ -430,7 +443,15 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
     setSaving(true)
     setError('')
     try {
-      await savePaystub(form)
+      const result = await savePaystub(form)
+      const amt = result.salary_rule_amount ? `$${result.salary_rule_amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''
+      if (result.salary_rule_action === 'created') {
+        showToast(`Salary recurring rule created (${amt}/mo) — forecast updated`, 'success')
+      } else if (result.salary_rule_action === 'updated_raise') {
+        showToast(`Raise detected! Salary rule updated to ${amt}/mo`, 'success')
+      } else if (result.salary_rule_action === 'updated_change') {
+        showToast(`Salary rule updated to ${amt}/mo`, 'info')
+      }
       setSaved(true)
       setTimeout(() => { setSaved(false); onSaved() }, 1000)
     } catch (err: unknown) {

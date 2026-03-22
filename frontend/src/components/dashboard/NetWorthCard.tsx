@@ -42,9 +42,10 @@ export default function NetWorthCard({ data }: NetWorthCardProps) {
       net_worth: p.net_worth,
     }))
 
-  const prevNetWorth = sparklineData.length > 1 ? sparklineData[sparklineData.length - 2]?.net_worth ?? net_worth : net_worth
-  const change = net_worth - prevNetWorth
-  const changePercent = prevNetWorth !== 0 ? (change / Math.abs(prevNetWorth)) * 100 : 0
+  // Compare current net worth against the next forecasted month to show expected change
+  const nextForecast = sparklineData.length > 0 ? sparklineData[0]?.net_worth ?? net_worth : net_worth
+  const change = nextForecast - net_worth
+  const changePercent = net_worth !== 0 ? (change / Math.abs(net_worth)) * 100 : 0
   const isPositive = change >= 0
 
   const title = mode === 'joint' ? 'Our Net Worth' : 'My Net Worth'
@@ -70,7 +71,7 @@ export default function NetWorthCard({ data }: NetWorthCardProps) {
             <div className={`flex items-center gap-1.5 mt-2 ${isPositive ? 'text-primary' : 'text-danger'}`}>
               {isPositive ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
               <span className="text-sm font-medium">
-                {isPositive ? '+' : ''}{formatCurrency(change)} ({changePercent.toFixed(1)}%) from last month
+                {isPositive ? '+' : ''}{formatCurrency(change)} ({changePercent.toFixed(1)}%) projected next month
               </span>
             </div>
           </div>
@@ -116,7 +117,7 @@ export default function NetWorthCard({ data }: NetWorthCardProps) {
             <p className={`text-lg font-bold ${isPositive ? 'text-primary' : 'text-danger'}`}>
               {isPositive ? '+' : ''}{formatCurrency(change)}
             </p>
-            <p className="text-xs text-muted mt-1">vs. previous forecast month ({changePercent.toFixed(1)}%)</p>
+            <p className="text-xs text-muted mt-1">projected next month ({changePercent.toFixed(1)}%)</p>
           </div>
         </div>
       )}
