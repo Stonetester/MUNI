@@ -155,11 +155,37 @@ COLUMN_ALIASES = {
     "pay method": "payment_method",
 }
 
-# Sheets tab name patterns that look like months
+# Sheets tab name patterns that look like months (APR24, APR2024, APRIL 2024, April24, etc.)
 MONTH_TAB_RE = re.compile(
-    r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\s\-]*\d{2,4}$",
+    r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\s\-_]*\d{2,4}$",
     re.IGNORECASE,
 )
+
+_MONTH_ABBR = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _tab_to_month_key(tab_name: str) -> Optional[str]:
+    """
+    Normalize a tab name to a canonical 'YYYY-MM' key so that APR24 and
+    APR2024 (or APRIL 2024) are treated as the same month.
+    Returns None if the tab doesn't parse as a month.
+    """
+    m = re.match(
+        r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*[\s\-_]*(\d{2,4})$",
+        tab_name.strip(),
+        re.IGNORECASE,
+    )
+    if not m:
+        return None
+    month_num = _MONTH_ABBR.get(m.group(1).lower()[:3])
+    if not month_num:
+        return None
+    year_str = m.group(2)
+    year = (2000 + int(year_str)) if len(year_str) == 2 else int(year_str)
+    return f"{year:04d}-{month_num:02d}"
 
 # Looks like a date value (for header-row auto-detection)
 DATE_PATTERN = re.compile(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{4}[/\-]\d{2}[/\-]\d{2}")
@@ -260,14 +286,32 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
     except (RuntimeError, FileNotFoundError) as e:
         return {"imported": 0, "skipped": 0, "errors": [str(e)]}
 
-    # Get all tab names
+    # Get all tab names — includes hidden sheets intentionally
     try:
         meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
     except Exception as e:
         return {"imported": 0, "skipped": 0, "errors": [f"Cannot access sheet: {e}"]}
 
-    tabs = [s["properties"]["title"] for s in meta.get("sheets", [])]
+    all_sheet_props = meta.get("sheets", [])
+    tabs = [s["properties"]["title"] for s in all_sheet_props]
     month_tabs = [t for t in tabs if MONTH_TAB_RE.match(t.strip())]
+
+    # Deduplicate tabs that represent the same calendar month (e.g. APR24 vs APR2024).
+    # First tab encountered for a given month wins; subsequent ones are skipped entirely.
+    seen_month_keys: dict[str, str] = {}   # month_key → winning tab name
+    deduped_tabs = []
+    for tab in month_tabs:
+        key = _tab_to_month_key(tab)
+        if key is None:
+            continue
+        if key in seen_month_keys:
+            logger.info(
+                f"Skipping tab '{tab}' — same month ({key}) already covered by '{seen_month_keys[key]}'"
+            )
+            continue
+        seen_month_keys[key] = tab
+        deduped_tabs.append(tab)
+    month_tabs = deduped_tabs
 
     if not month_tabs:
         all_tabs = ", ".join(tabs[:10])
