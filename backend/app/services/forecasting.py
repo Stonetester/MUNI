@@ -2,17 +2,15 @@
 Forecasting service.
 
 For each future month:
-1. Base income: sum all active RecurringRules with positive amounts for that period
-2. Base expenses: sum all active RecurringRules with negative amounts for that period
-3. Historical average: for each category, compute 3/6/12-month trailing averages
-4. Category forecast: if category has recurring rule, use that; else use historical average
-5. Life events: spread total_cost across monthly_breakdown entries
-6. Scenario overrides: apply difference vs baseline recurring rules
-7. Roll forward cash: prev_cash + income + expenses + event_impacts
-8. Net worth: cash pool + compound-grown investment accounts - liabilities
-9. Compound interest: investment accounts (401k, IRA, brokerage, HYSA) grow monthly
+1. Historical average: for each category, compute 3/6/12-month weighted trailing average
+   from actual transactions (Google Sheets, paystubs, CSV imports).
+   Income categories (positive avg) and expense categories (negative avg) both included.
+2. Life events: spread total_cost across monthly_breakdown entries
+3. Roll forward cash: prev_cash + projected_income + projected_expenses + event_impacts
+4. Net worth: cash pool + compound-grown investment accounts - liabilities
+5. Compound interest: investment accounts (401k, IRA, brokerage, HYSA) grow monthly
    using blended return from InvestmentHolding records or FinancialProfile APY
-10. Variance bands: ±historical CV on expenses
+6. Variance bands: ±historical CV on expenses
 """
 
 from __future__ import annotations
@@ -28,7 +26,6 @@ from sqlalchemy.orm import Session
 from app.models.account import Account
 from app.models.category import Category
 from app.models.life_event import LifeEvent
-from app.models.recurring_rule import RecurringRule
 from app.models.transaction import Transaction
 from app.models.user import User
 from app.schemas.forecast import AccountForecast, ForecastPoint, ForecastResponse
@@ -336,31 +333,6 @@ def run_forecast(
     # Per-account balance history for account_forecasts output
     account_balance_history: Dict[int, List[float]] = {a.id: [] for a in accounts}
 
-    # ── Recurring rules ───────────────────────────────────────────────────────
-    base_rules = (
-        db.query(RecurringRule)
-        .filter(
-            RecurringRule.user_id == user.id,
-            RecurringRule.is_active == True,
-            RecurringRule.scenario_id.is_(None),
-        )
-        .all()
-    )
-
-    scenario_rules: List[RecurringRule] = []
-    if scenario_id is not None:
-        scenario_rules = (
-            db.query(RecurringRule)
-            .filter(
-                RecurringRule.user_id == user.id,
-                RecurringRule.is_active == True,
-                RecurringRule.scenario_id == scenario_id,
-            )
-            .all()
-        )
-
-    all_rules = base_rules + scenario_rules
-
     # ── Life events ───────────────────────────────────────────────────────────
     all_events = (
         db.query(LifeEvent)
@@ -379,8 +351,6 @@ def run_forecast(
     hist_avgs = _get_historical_category_averages(user.id, db, today)
     variance_pct = _get_historical_variance(user.id, db, today)
 
-    categories_with_rules = {r.category_id for r in all_rules if r.category_id is not None}
-
     # ── Main forecast loop ────────────────────────────────────────────────────
     points: List[ForecastPoint] = []
     total_income = 0.0
@@ -397,38 +367,18 @@ def run_forecast(
         month_expenses = 0.0
         by_category: Dict[str, float] = {}
 
-        # Recurring rules contribution
-        for rule in all_rules:
-            if _rule_applies_to_month(rule, ms, me):
-                amount = _rule_monthly_amount(rule, ms, me)
-                if amount > 0:
-                    month_income += amount
-                else:
-                    month_expenses += amount
-
-        # Historical category averages (for categories without rules)
+        # All projections are based on weighted historical category averages
+        # (3-month avg weighted 50%, 6-month 30%, 12-month 20%) from real transactions.
+        # Income categories (positive avg) and expense categories (negative avg) both included.
         for cat_id, avgs in hist_avgs.items():
-            if cat_id in categories_with_rules:
-                continue
             hist_amount = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
             if hist_amount < 0:
                 month_expenses += hist_amount
             elif hist_amount > 0:
                 month_income += hist_amount
-            # Also add to by_category so the table shows real category breakdown
             if hist_amount != 0:
                 cat_key = categories_map.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
                 by_category[cat_key] = by_category.get(cat_key, 0.0) + hist_amount
-
-        # by_category: use category names for MonthDetailModal
-        for rule in all_rules:
-            if _rule_applies_to_month(rule, ms, me):
-                amount = _rule_monthly_amount(rule, ms, me)
-                cat_key = (
-                    categories_map.get(rule.category_id, "Uncategorized")
-                    if rule.category_id else "Uncategorized"
-                )
-                by_category[cat_key] = by_category.get(cat_key, 0.0) + amount
 
         # Life event impacts
         event_impact = _event_impact_for_month(all_events, month_str)

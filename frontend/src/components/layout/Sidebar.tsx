@@ -22,7 +22,6 @@ import {
   ChevronDown,
   ChevronUp,
   Layers,
-  RefreshCw,
   Sparkles,
   Mail,
   Home,
@@ -46,7 +45,6 @@ const primaryItems = [
 ]
 
 const extrasItems = [
-  { label: 'Recurring', icon: RefreshCw, href: '/recurring' },
   { label: 'AI Report', icon: Sparkles, href: '/ai-report' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },
