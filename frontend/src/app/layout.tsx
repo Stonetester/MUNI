@@ -1,11 +1,23 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { ViewModeProvider } from '@/lib/viewMode'
 
 export const metadata: Metadata = {
   title: 'Muni',
-  description: 'Personal finance forecasting tool',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1',
+  description: 'Personal finance tracking and forecasting',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'MUNI',
+  },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: '#10B981',
 }
 
 export default function RootLayout({
