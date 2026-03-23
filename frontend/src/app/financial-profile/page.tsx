@@ -248,13 +248,15 @@ function IraSection({ profile, onSaved }: { profile: FinancialProfile | null; on
 // ─── Student Loans section ────────────────────────────────────────────────────
 function LoansSection() {
   const [loans, setLoans] = useState<StudentLoan[]>([])
+  const [loanAccounts, setLoanAccounts] = useState<Account[]>([])
   const [adding, setAdding] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState<Record<string, string>>({ loan_name: '', servicer: '', original_balance: '', current_balance: '', interest_rate: '', minimum_payment: '' })
 
   const load = useCallback(async () => {
-    const data = await getStudentLoans()
+    const [data, accts] = await Promise.all([getStudentLoans(), getAccounts()])
     setLoans(data)
+    setLoanAccounts(accts.filter(a => a.account_type === 'student_loan'))
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -294,10 +296,50 @@ function LoansSection() {
     setAdding(false)
   }
 
+  const importFromAccount = (acct: Account) => {
+    const balance = Math.abs(acct.balance).toString()
+    setForm({
+      loan_name: acct.name,
+      servicer: acct.institution ?? '',
+      original_balance: balance,
+      current_balance: balance,
+      interest_rate: '',
+      minimum_payment: '',
+    })
+    setAdding(true)
+    setEditId(null)
+  }
+
   const totalBalance = loans.filter(l => l.is_active).reduce((s, l) => s + l.current_balance, 0)
+
+  // Accounts not yet tracked as a loan (match by name, case-insensitive)
+  const unlinkedAccounts = loanAccounts.filter(
+    a => !loans.some(l => l.loan_name.toLowerCase() === a.name.toLowerCase())
+  )
 
   return (
     <div className="mt-4 flex flex-col gap-3">
+      {/* Auto-fill banner from student_loan accounts */}
+      {unlinkedAccounts.length > 0 && (
+        <div className="p-3 rounded-xl bg-orange-500/10 border border-orange-500/20 flex flex-col gap-2">
+          <p className="text-xs font-medium text-orange-300">
+            {unlinkedAccounts.length} student loan account{unlinkedAccounts.length !== 1 ? 's' : ''} in Accounts not yet tracked here
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {unlinkedAccounts.map(a => (
+              <button
+                key={a.id}
+                onClick={() => importFromAccount(a)}
+                className="text-xs px-2.5 py-1 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-300 hover:bg-orange-500/20 transition-colors"
+              >
+                + Import &quot;{a.name}&quot;
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted">Balance pre-filled from account — add interest rate &amp; minimum payment to complete.</p>
+        </div>
+      )}
+
       {loans.length > 0 && (
         <div className="p-3 rounded-xl bg-surface-2 text-xs text-text-secondary">
           Total remaining: <strong className="text-text-primary">{fmt(totalBalance)}</strong>

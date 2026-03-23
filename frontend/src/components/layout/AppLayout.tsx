@@ -2,7 +2,7 @@
 
 import { useEffect, useState, ReactNode } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { LogOut, User, ChevronDown } from 'lucide-react'
+import { LogOut, User, ChevronDown, Menu } from 'lucide-react'
 import { isAuthenticated, getUser, logout } from '@/lib/auth'
 import Sidebar from './Sidebar'
 import MobileNavBar from './MobileNavBar'
@@ -49,6 +49,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [mounted, setMounted] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const { mode, toggle } = useViewMode()
 
   useEffect(() => {
@@ -58,6 +59,8 @@ export default function AppLayout({ children }: AppLayoutProps) {
       return
     }
     setUsername(getUser() || 'User')
+    const saved = localStorage.getItem('sidebarOpen')
+    if (saved === 'false') setSidebarOpen(false)
   }, [router])
 
   useEffect(() => {
@@ -73,6 +76,14 @@ export default function AppLayout({ children }: AppLayoutProps) {
     }
   }, [])
 
+  const toggleSidebar = () => {
+    setSidebarOpen(o => {
+      const next = !o
+      localStorage.setItem('sidebarOpen', String(next))
+      return next
+    })
+  }
+
   if (!mounted) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -85,13 +96,22 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <div className="min-h-screen bg-background">
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} />
 
       {/* Main content */}
-      <div className="md:ml-[220px] flex flex-col min-h-screen">
+      <div className={cn('flex flex-col min-h-screen', sidebarOpen ? 'md:ml-[220px]' : 'md:ml-0')}>
         {/* Top bar */}
         <header className="sticky top-0 z-30 h-14 bg-background/80 backdrop-blur border-b border-[#2d3748] flex items-center px-4 md:px-6 justify-between">
-          <h1 className="text-base font-semibold text-text-primary">{title}</h1>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleSidebar}
+              title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+              className="hidden md:flex items-center justify-center w-8 h-8 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors"
+            >
+              <Menu size={18} />
+            </button>
+            <h1 className="text-base font-semibold text-text-primary">{title}</h1>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={toggle}

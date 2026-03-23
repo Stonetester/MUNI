@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   LayoutDashboard,
   ArrowUpDown,
@@ -30,18 +30,18 @@ import { cn } from '@/lib/utils'
 import { APP_VERSION, APP_NAME } from '@/lib/version'
 import TutorialModal from './TutorialModal'
 
-const primaryItems = [
-  { label: 'Get Started', icon: PlusCircle, href: '/getting-started' },
-  { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
-  { label: 'Transactions', icon: ArrowUpDown, href: '/transactions' },
-  { label: 'Calendar', icon: CalendarDays, href: '/calendar' },
-  { label: 'Accounts', icon: Wallet, href: '/accounts' },
-  { label: 'Forecast', icon: TrendingUp, href: '/forecast' },
-  { label: 'Life Events', icon: Calendar, href: '/events' },
-  { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
-  { label: 'Home Buying', icon: Home, href: '/home-buying' },
-  { label: 'Paystubs', icon: FileText, href: '/paystubs' },
-  { label: 'Settings', icon: Settings, href: '/settings' },
+const ALL_PRIMARY_ITEMS = [
+  { id: 'getting-started', label: 'Get Started', icon: PlusCircle, href: '/getting-started' },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
+  { id: 'transactions', label: 'Transactions', icon: ArrowUpDown, href: '/transactions' },
+  { id: 'calendar', label: 'Calendar', icon: CalendarDays, href: '/calendar' },
+  { id: 'accounts', label: 'Accounts', icon: Wallet, href: '/accounts' },
+  { id: 'forecast', label: 'Forecast', icon: TrendingUp, href: '/forecast' },
+  { id: 'events', label: 'Life Events', icon: Calendar, href: '/events' },
+  { id: 'profile', label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
+  { id: 'home-buying', label: 'Home Buying', icon: Home, href: '/home-buying' },
+  { id: 'paystubs', label: 'Paystubs', icon: FileText, href: '/paystubs' },
+  { id: 'settings', label: 'Settings', icon: Settings, href: '/settings' },
 ]
 
 const extrasItems = [
@@ -70,14 +70,34 @@ function NavItem({ label, icon: Icon, href, active }: { label: string; icon: Rea
   )
 }
 
-export default function Sidebar() {
+export default function Sidebar({ isOpen }: { isOpen: boolean }) {
   const pathname = usePathname()
   const [showTutorial, setShowTutorial] = useState(false)
   const [extrasOpen, setExtrasOpen] = useState(
     extrasItems.some(i => pathname === i.href || pathname.startsWith(i.href + '/'))
   )
+  const [showGettingStarted, setShowGettingStarted] = useState(true)
+
+  useEffect(() => {
+    const read = () => {
+      setShowGettingStarted(localStorage.getItem('hideGettingStarted') !== 'true')
+    }
+    read()
+    window.addEventListener('storage', read)
+    window.addEventListener('muni:settingsChanged', read)
+    return () => {
+      window.removeEventListener('storage', read)
+      window.removeEventListener('muni:settingsChanged', read)
+    }
+  }, [])
+
+  const primaryItems = ALL_PRIMARY_ITEMS.filter(item =>
+    item.id === 'getting-started' ? showGettingStarted : true
+  )
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + '/')
+
+  if (!isOpen) return null
 
   return (
     <aside className="hidden md:flex flex-col w-[220px] min-h-screen bg-surface border-r border-[#2d3748] fixed left-0 top-0 z-40">

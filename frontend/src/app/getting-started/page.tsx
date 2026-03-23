@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
   CheckCircle2, Circle, Wallet, ArrowUpDown, RefreshCw, Target,
@@ -25,181 +25,174 @@ export default function GettingStartedPage() {
   const [checks, setChecks] = useState<CheckItem[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    async function load() {
+  const load = useCallback(async () => {
+    try {
+      const [accounts, txData, rules, cats, profile, loans, paystubs, homeBuyingGoals] = await Promise.all([
+        getAccounts().catch(() => []),
+        getTransactions({ limit: 1 }).catch(() => ({ items: [], total: 0, skip: 0, limit: 1 })),
+        getRecurringRules().catch(() => []),
+        getCategories().catch(() => []),
+        getFinancialProfile().catch(() => null),
+        getStudentLoans().catch(() => []),
+        getPaystubs().catch(() => []),
+        getHomeBuyingGoals().catch(() => []),
+      ])
+
+      let syncEnabled = false
       try {
-        const [accounts, txData, rules, cats, profile, loans, paystubs, homeBuyingGoals] = await Promise.all([
-          getAccounts().catch(() => []),
-          getTransactions({ limit: 1 }).catch(() => ({ items: [], total: 0, skip: 0, limit: 1 })),
-          getRecurringRules().catch(() => []),
-          getCategories().catch(() => []),
-          getFinancialProfile().catch(() => null),
-          getStudentLoans().catch(() => []),
-          getPaystubs().catch(() => []),
-          getHomeBuyingGoals().catch(() => []),
-        ])
+        const cfg = await getSyncConfig()
+        syncEnabled = cfg.is_enabled || !!cfg.last_sync_at
+      } catch { /* not configured yet */ }
 
-        let syncEnabled = false
-        try {
-          const cfg = await getSyncConfig()
-          syncEnabled = cfg.is_enabled || !!cfg.last_sync_at
-        } catch { /* not configured yet */ }
+      const hasAccounts = accounts.length > 0
+      const hasTransactions = txData.total > 0
+      const hasPaystubs = paystubs.length > 0
+      const hasRecurring = rules.length > 0
+      const hasBudgets = cats.some(c => (c.budget_amount ?? 0) > 0)
+      const hasSalary = !!profile?.salary
+      const hasLoans = loans.length > 0
+      const hasHomeBuyingGoal = homeBuyingGoals.some(g => g.current_savings > 0 || g.target_price_min !== 380000 || g.monthly_savings_contribution !== 1600)
 
-        const hasAccounts = accounts.length > 0
-        const hasTransactions = txData.total > 0
-        const hasPaystubs = paystubs.length > 0
-        const hasRecurring = rules.length > 0
-        const hasBudgets = cats.some(c => (c.budget_amount ?? 0) > 0)
-        const hasSalary = !!profile?.salary
-        const hasLoans = loans.length > 0
-        const hasHomeBuyingGoal = homeBuyingGoals.some(g => g.current_savings > 0 || g.target_price_min !== 380000 || g.monthly_savings_contribution !== 1600)
+      const savingsAcct = accounts.find(a => ['savings', 'hysa'].includes(a.account_type))
+      const investAcct = accounts.find(a => ['401k', 'ira', 'brokerage'].includes(a.account_type))
 
-        const checkingAcct = accounts.find(a => a.account_type === 'checking')
-        const savingsAcct = accounts.find(a => ['savings', 'hysa'].includes(a.account_type))
-        const investAcct = accounts.find(a => ['401k', 'ira', 'brokerage'].includes(a.account_type))
-
-        setChecks([
-          {
-            id: 'accounts',
-            label: 'Add your accounts',
-            detail: hasAccounts
-              ? `${accounts.length} account${accounts.length !== 1 ? 's' : ''} added (${accounts.map(a => a.name).slice(0, 3).join(', ')}${accounts.length > 3 ? '…' : ''})`
-              : 'Add checking, savings, 401k, student loans, etc.',
-            done: hasAccounts,
-            value: hasAccounts ? `${accounts.length} accounts` : undefined,
-            linkHref: '/accounts',
-            linkLabel: hasAccounts ? 'Manage accounts' : 'Add first account →',
-          },
-          {
-            id: 'checking',
-            label: 'Connect a checking account',
-            detail: checkingAcct
-              ? `${checkingAcct.name} — balance ${formatCurrency(checkingAcct.balance)}`
-              : 'Your main transaction account (needed for import + sync)',
-            done: !!checkingAcct,
-            value: checkingAcct ? checkingAcct.name : undefined,
-            linkHref: '/accounts',
-            linkLabel: checkingAcct ? 'View accounts' : 'Add checking account →',
-          },
-          {
-            id: 'savings',
-            label: 'Add a savings / HYSA account',
-            detail: savingsAcct
-              ? `${savingsAcct.name} — ${formatCurrency(savingsAcct.balance)}`
-              : 'Track your emergency fund and high-yield savings',
-            done: !!savingsAcct,
-            value: savingsAcct ? savingsAcct.name : undefined,
-            linkHref: '/accounts',
-            linkLabel: savingsAcct ? 'View accounts' : 'Add savings account →',
-          },
-          {
-            id: 'investments',
-            label: 'Add investment accounts (401k / IRA)',
-            detail: investAcct
-              ? `${investAcct.name} — ${formatCurrency(investAcct.balance)}`
-              : 'Add 401k, IRA, brokerage accounts for net worth tracking',
-            done: !!investAcct,
-            value: investAcct ? investAcct.name : undefined,
-            linkHref: '/accounts',
-            linkLabel: investAcct ? 'View accounts' : 'Add investment account →',
-          },
-          {
-            id: 'paystubs',
-            label: 'Upload a paystub PDF',
-            detail: hasPaystubs
-              ? `${paystubs.length} paystub${paystubs.length !== 1 ? 's' : ''} saved — income transactions created automatically`
-              : 'Upload a Paylocity PDF — income transactions are created automatically on save',
-            done: hasPaystubs,
-            value: hasPaystubs ? `${paystubs.length} paystub${paystubs.length !== 1 ? 's' : ''}` : undefined,
-            linkHref: '/paystubs',
-            linkLabel: hasPaystubs ? 'View paystubs' : 'Upload first paystub →',
-          },
-          {
-            id: 'transactions',
-            label: 'Sync or import expense transactions',
-            detail: hasTransactions
-              ? `${txData.total.toLocaleString()} transaction${txData.total !== 1 ? 's' : ''} in history`
-              : 'Connect Google Sheets for auto-sync, or import a CSV from your bank',
-            done: hasTransactions,
-            value: hasTransactions ? `${txData.total.toLocaleString()} transactions` : undefined,
-            linkHref: '/transactions',
-            linkLabel: hasTransactions ? 'View transactions' : 'Go to transactions →',
-          },
-          {
-            id: 'sheets',
-            label: 'Connect Google Sheets auto-sync',
-            detail: syncEnabled
-              ? 'Google Sheets sync is active — transactions import automatically'
-              : 'Skip manual exports — connect your spending sheet for auto-import',
-            done: syncEnabled,
-            value: syncEnabled ? 'Connected' : undefined,
-            linkHref: '/settings',
-            linkLabel: syncEnabled ? 'Sync settings' : 'Connect Google Sheets →',
-          },
-          {
-            id: 'recurring',
-            label: 'Set up recurring rules',
-            detail: hasRecurring
-              ? `${rules.length} recurring rule${rules.length !== 1 ? 's' : ''} active (${rules.slice(0, 2).map(r => r.name).join(', ')}${rules.length > 2 ? '…' : ''})`
-              : 'Add your paycheck, rent, loan payments — powers the forecast',
-            done: hasRecurring,
-            value: hasRecurring ? `${rules.length} rules` : undefined,
-            linkHref: '/budget',
-            linkLabel: hasRecurring ? 'Manage rules' : 'Add recurring rules →',
-          },
-          {
-            id: 'budget',
-            label: 'Set monthly budget amounts',
-            detail: hasBudgets
-              ? 'Budget amounts set — alerts will fire when you overspend'
-              : 'Set spending targets per category to enable budget alerts',
-            done: hasBudgets,
-            value: hasBudgets ? 'Configured' : undefined,
-            linkHref: '/budget',
-            linkLabel: hasBudgets ? 'View budget' : 'Set budgets →',
-          },
-          {
-            id: 'salary',
-            label: 'Enter your salary in Financial Profile',
-            detail: hasSalary && profile?.salary
-              ? `Annual salary: ${formatCurrency(profile.salary)} — pay frequency: ${profile.pay_frequency ?? 'not set'}`
-              : 'Add your salary, 401k details, HYSA contributions',
-            done: hasSalary,
-            value: hasSalary && profile?.salary ? formatCurrency(profile.salary) + '/yr' : undefined,
-            linkHref: '/financial-profile',
-            linkLabel: hasSalary ? 'View profile' : 'Fill out profile →',
-          },
-          {
-            id: 'loans',
-            label: 'Track student loans',
-            detail: hasLoans
-              ? `${loans.length} loan${loans.length !== 1 ? 's' : ''}: total ${formatCurrency(loans.reduce((s, l) => s + l.current_balance, 0))} remaining`
-              : 'Add each loan with balance and rate for payoff tracking',
-            done: hasLoans,
-            value: hasLoans ? `${loans.length} loans` : undefined,
-            linkHref: '/financial-profile',
-            linkLabel: hasLoans ? 'View loans' : 'Add student loans →',
-          },
-          {
-            id: 'home-buying',
-            label: 'Set up a home buying goal',
-            detail: hasHomeBuyingGoal
-              ? `Home buying goal configured — savings target, price range, and DPA eligibility tracked`
-              : 'Enter your target price range, savings, and mortgage structure to unlock MD down payment assistance analysis',
-            done: hasHomeBuyingGoal,
-            value: hasHomeBuyingGoal ? 'Configured' : undefined,
-            linkHref: '/home-buying',
-            linkLabel: hasHomeBuyingGoal ? 'View home buying plan' : 'Set up home buying goal →',
-          },
-        ])
-      } catch {
-        setChecks([])
-      } finally {
-        setLoading(false)
-      }
+      setChecks([
+        {
+          id: 'accounts',
+          label: 'Add your accounts',
+          detail: hasAccounts
+            ? `${accounts.length} account${accounts.length !== 1 ? 's' : ''} added (${accounts.map(a => a.name).slice(0, 3).join(', ')}${accounts.length > 3 ? '…' : ''})`
+            : 'Add checking, savings, 401k, student loans, etc.',
+          done: hasAccounts,
+          value: hasAccounts ? `${accounts.length} accounts` : undefined,
+          linkHref: '/accounts',
+          linkLabel: hasAccounts ? 'Manage accounts' : 'Add first account →',
+        },
+        {
+          id: 'savings',
+          label: 'Add a savings / HYSA account',
+          detail: savingsAcct
+            ? `${savingsAcct.name} — ${formatCurrency(savingsAcct.balance)}`
+            : 'Track your emergency fund and high-yield savings',
+          done: !!savingsAcct,
+          value: savingsAcct ? savingsAcct.name : undefined,
+          linkHref: '/accounts',
+          linkLabel: savingsAcct ? 'View accounts' : 'Add savings account →',
+        },
+        {
+          id: 'investments',
+          label: 'Add investment accounts (401k / IRA)',
+          detail: investAcct
+            ? `${investAcct.name} — ${formatCurrency(investAcct.balance)}`
+            : 'Add 401k, IRA, brokerage accounts for net worth tracking',
+          done: !!investAcct,
+          value: investAcct ? investAcct.name : undefined,
+          linkHref: '/accounts',
+          linkLabel: investAcct ? 'View accounts' : 'Add investment account →',
+        },
+        {
+          id: 'paystubs',
+          label: 'Upload a paystub PDF',
+          detail: hasPaystubs
+            ? `${paystubs.length} paystub${paystubs.length !== 1 ? 's' : ''} saved — income transactions created automatically`
+            : 'Upload a Paylocity PDF — income transactions are created automatically on save',
+          done: hasPaystubs,
+          value: hasPaystubs ? `${paystubs.length} paystub${paystubs.length !== 1 ? 's' : ''}` : undefined,
+          linkHref: '/paystubs',
+          linkLabel: hasPaystubs ? 'View paystubs' : 'Upload first paystub →',
+        },
+        {
+          id: 'transactions',
+          label: 'Sync or import expense transactions',
+          detail: hasTransactions
+            ? `${txData.total.toLocaleString()} transaction${txData.total !== 1 ? 's' : ''} in history`
+            : 'Connect Google Sheets for auto-sync, or import a CSV from your bank',
+          done: hasTransactions,
+          value: hasTransactions ? `${txData.total.toLocaleString()} transactions` : undefined,
+          linkHref: '/transactions',
+          linkLabel: hasTransactions ? 'View transactions' : 'Go to transactions →',
+        },
+        {
+          id: 'sheets',
+          label: 'Connect Google Sheets auto-sync',
+          detail: syncEnabled
+            ? 'Google Sheets sync is active — transactions import automatically'
+            : 'Skip manual exports — connect your spending sheet for auto-import',
+          done: syncEnabled,
+          value: syncEnabled ? 'Connected' : undefined,
+          linkHref: '/settings',
+          linkLabel: syncEnabled ? 'Sync settings' : 'Connect Google Sheets →',
+        },
+        {
+          id: 'recurring',
+          label: 'Set up recurring rules',
+          detail: hasRecurring
+            ? `${rules.length} recurring rule${rules.length !== 1 ? 's' : ''} active (${rules.slice(0, 2).map(r => r.name).join(', ')}${rules.length > 2 ? '…' : ''})`
+            : 'Add your paycheck, rent, loan payments — powers the forecast',
+          done: hasRecurring,
+          value: hasRecurring ? `${rules.length} rules` : undefined,
+          linkHref: '/budget',
+          linkLabel: hasRecurring ? 'Manage rules' : 'Add recurring rules →',
+        },
+        {
+          id: 'budget',
+          label: 'Set monthly budget amounts',
+          detail: hasBudgets
+            ? 'Budget amounts set — alerts will fire when you overspend'
+            : 'Set spending targets per category to enable budget alerts',
+          done: hasBudgets,
+          value: hasBudgets ? 'Configured' : undefined,
+          linkHref: '/budget',
+          linkLabel: hasBudgets ? 'View budget' : 'Set budgets →',
+        },
+        {
+          id: 'salary',
+          label: 'Enter your salary in Financial Profile',
+          detail: hasSalary && profile?.salary
+            ? `Annual salary: ${formatCurrency(profile.salary)} — pay frequency: ${profile.pay_frequency ?? 'not set'}`
+            : 'Add your salary, 401k details, HYSA contributions',
+          done: hasSalary,
+          value: hasSalary && profile?.salary ? formatCurrency(profile.salary) + '/yr' : undefined,
+          linkHref: '/financial-profile',
+          linkLabel: hasSalary ? 'View profile' : 'Fill out profile →',
+        },
+        {
+          id: 'loans',
+          label: 'Track student loans',
+          detail: hasLoans
+            ? `${loans.length} loan${loans.length !== 1 ? 's' : ''}: total ${formatCurrency(loans.reduce((s, l) => s + l.current_balance, 0))} remaining`
+            : 'Add each loan with balance and rate for payoff tracking',
+          done: hasLoans,
+          value: hasLoans ? `${loans.length} loans` : undefined,
+          linkHref: '/financial-profile',
+          linkLabel: hasLoans ? 'View loans' : 'Add student loans →',
+        },
+        {
+          id: 'home-buying',
+          label: 'Set up a home buying goal',
+          detail: hasHomeBuyingGoal
+            ? `Home buying goal configured — savings target, price range, and DPA eligibility tracked`
+            : 'Enter your target price range, savings, and mortgage structure to unlock MD down payment assistance analysis',
+          done: hasHomeBuyingGoal,
+          value: hasHomeBuyingGoal ? 'Configured' : undefined,
+          linkHref: '/home-buying',
+          linkLabel: hasHomeBuyingGoal ? 'View home buying plan' : 'Set up home buying goal →',
+        },
+      ])
+    } catch {
+      setChecks([])
+    } finally {
+      setLoading(false)
     }
-    load()
   }, [])
+
+  useEffect(() => {
+    load()
+    // Re-check when user returns to this tab
+    const onVisible = () => { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [load])
 
   const done = checks.filter(c => c.done).length
   const pct = checks.length > 0 ? Math.round((done / checks.length) * 100) : 0

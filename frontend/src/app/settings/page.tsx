@@ -8,7 +8,7 @@ import Input from '@/components/ui/Input'
 import { getSyncConfig, updateSyncConfig, runSync } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 import type { SyncConfig, SyncResult } from '@/lib/types'
-import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home } from 'lucide-react'
+import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home, Monitor } from 'lucide-react'
 import { switchProfiles, getAltUser } from '@/lib/auth'
 
 function fmtDate(s?: string | null) {
@@ -29,6 +29,7 @@ export default function SettingsPage() {
   const [syncError, setSyncError] = useState('')
   const [syncSaved, setSyncSaved] = useState(false)
   const [resourcesOpen, setResourcesOpen] = useState(false)
+  const [showGettingStarted, setShowGettingStarted] = useState(true)
 
   useEffect(() => {
     const token = getToken()
@@ -40,6 +41,8 @@ export default function SettingsPage() {
         // ignore
       }
     }
+
+    setShowGettingStarted(localStorage.getItem('hideGettingStarted') !== 'true')
 
     getSyncConfig().then(cfg => {
       setSyncConfig(cfg)
@@ -63,6 +66,13 @@ export default function SettingsPage() {
     } finally {
       setSyncSaving(false)
     }
+  }
+
+  const toggleGettingStarted = () => {
+    const next = !showGettingStarted
+    setShowGettingStarted(next)
+    localStorage.setItem('hideGettingStarted', String(!next))
+    window.dispatchEvent(new Event('muni:settingsChanged'))
   }
 
   const handleRunSync = async () => {
@@ -210,6 +220,30 @@ export default function SettingsPage() {
                 <ExternalLink size={11} /> Open Google Sheets
               </a>
             </div>
+          </div>
+        </Card>
+
+        {/* Display Preferences */}
+        <Card title="Display Preferences">
+          <div className="flex flex-col gap-4 mt-1">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-text-primary flex items-center gap-2">
+                  <Monitor size={14} className="text-text-secondary" />
+                  Show Getting Started
+                </p>
+                <p className="text-xs text-text-secondary mt-0.5">Display "Get Started" in the sidebar navigation</p>
+              </div>
+              <div
+                className={`w-10 h-5 rounded-full transition-colors cursor-pointer flex-shrink-0 ${showGettingStarted ? 'bg-primary' : 'bg-[#2d3748]'}`}
+                onClick={toggleGettingStarted}
+              >
+                <div className={`w-4 h-4 rounded-full bg-white m-0.5 transition-transform ${showGettingStarted ? 'translate-x-5' : 'translate-x-0'}`} />
+              </div>
+            </div>
+            <p className="text-xs text-muted -mt-2">
+              Your checklist progress is always saved — this only controls whether it appears in the sidebar.
+            </p>
           </div>
         </Card>
 
