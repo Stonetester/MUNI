@@ -40,6 +40,12 @@ _DEPOSIT_ACCOUNT_TYPES = [
     AccountType.other,
 ]
 
+# Account types that can receive 401k employer contributions (in priority order)
+_401K_ACCOUNT_TYPES = [
+    AccountType.retirement_401k,
+    AccountType.brokerage,
+]
+
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -122,6 +128,23 @@ def _find_deposit_account(user_id: int, db: Session) -> Optional[Account]:
     return None
 
 
+def _find_401k_account(user_id: int, db: Session) -> Optional[Account]:
+    """Return the user's 401k account (or brokerage as fallback) for employer contributions."""
+    for acct_type in _401K_ACCOUNT_TYPES:
+        acct = (
+            db.query(Account)
+            .filter(
+                Account.user_id == user_id,
+                Account.account_type == acct_type.value,
+                Account.is_active == True,
+            )
+            .first()
+        )
+        if acct:
+            return acct
+    return None
+
+
 def _find_category(db: Session, name: str, kind: str) -> Optional[Category]:
     """Find a category by name (case-insensitive) and kind."""
     return (
@@ -178,15 +201,16 @@ def _create_income_transactions(stub: Paystub, db: Session) -> None:
         )
         db.add(txn)
 
-    # Employer 401k contribution (it's real compensation even if you never see it in checking)
+    # Employer 401k contribution — goes directly into the 401k account, not checking
     if stub.employer_401k and stub.employer_401k > 0:
         employer_401k_cat = (
             _find_category(db, "Salary", "income")
             or income_cat
         )
+        k401_account = _find_401k_account(stub.user_id, db)
         txn_401k = Transaction(
             user_id=stub.user_id,
-            account_id=account.id if account else None,
+            account_id=k401_account.id if k401_account else (account.id if account else None),
             category_id=employer_401k_cat.id if employer_401k_cat else None,
             date=stub.pay_date,
             amount=stub.employer_401k,

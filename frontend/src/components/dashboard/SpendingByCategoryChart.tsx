@@ -48,7 +48,7 @@ function renderCustomLabel({
 }) {
   if (mode === 'hover') return null
   const RADIAN = Math.PI / 180
-  const radius = outerRadius + 24
+  const radius = outerRadius + 18
   const x = cx + radius * Math.cos(-midAngle * RADIAN)
   const y = cy + radius * Math.sin(-midAngle * RADIAN)
   const pct = ((value / total) * 100).toFixed(0)
@@ -108,7 +108,7 @@ export default function SpendingByCategoryChart({ byCategory }: SpendingByCatego
         </div>
       }
     >
-      <div className="h-64">
+      <div className="h-64 overflow-hidden">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie

@@ -43,7 +43,11 @@ def get_forecast(
                 Transaction.scenario_id.is_(None),
             ).all()
 
-            income = sum(t.amount for t in txns if t.amount > 0)
+            income = sum(
+                t.amount for t in txns
+                if t.amount > 0
+                and not (t.import_source and t.import_source.startswith("paystub:") and t.description and "Employer 401k" in t.description)
+            )
             expenses = sum(abs(t.amount) for t in txns if t.amount < 0)
             net = income - expenses
 

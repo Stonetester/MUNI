@@ -40,7 +40,15 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
   return null
 }
 
-const BAR_WIDTH = 56  // px per month group
+const BAR_WIDTH = 52  // px per month group
+
+function shortMonth(yyyyMM: string): string {
+  const [year, month] = yyyyMM.split('-')
+  const d = new Date(parseInt(year), parseInt(month) - 1, 1)
+  const abbr = d.toLocaleDateString('en-US', { month: 'short' })
+  // Show "Jan" on year boundaries, otherwise just abbreviation
+  return parseInt(month) === 1 ? `${abbr} '${year.slice(2)}` : abbr
+}
 
 export default function MonthlyFlowCard({ flowMonths }: MonthlyFlowCardProps) {
   const [selectedPoint, setSelectedPoint] = useState<ForecastPoint | null>(null)
@@ -49,7 +57,7 @@ export default function MonthlyFlowCard({ flowMonths }: MonthlyFlowCardProps) {
   const currentMonth = new Date().toISOString().slice(0, 7) // "YYYY-MM"
 
   const chartData = flowMonths.map((p) => ({
-    month: formatMonth(p.month),
+    month: shortMonth(p.month),
     rawMonth: p.month,
     Income: p.income,
     Spending: Math.abs(p.expenses),

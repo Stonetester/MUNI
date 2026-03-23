@@ -3,7 +3,7 @@ import './globals.css'
 import { ViewModeProvider } from '@/lib/viewMode'
 
 export const metadata: Metadata = {
-  title: 'Muni',
+  title: 'MUNI',
   description: 'Personal finance tracking and forecasting',
   manifest: '/manifest.webmanifest',
   appleWebApp: {

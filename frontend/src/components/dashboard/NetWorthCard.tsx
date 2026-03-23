@@ -33,7 +33,11 @@ function CustomTooltip({ active, payload, label }: TooltipProps<number, string>)
 export default function NetWorthCard({ data }: NetWorthCardProps) {
   const { mode } = useViewMode()
   const [expanded, setExpanded] = useState(false)
-  const { net_worth, forecast_preview, total_assets, total_liabilities } = data
+  const { net_worth, forecast_preview, total_assets, total_liabilities, balances_by_type } = data
+
+  // Net worth excluding HYSA (liquid-only view)
+  const hysaTotal = balances_by_type.find(b => b.account_type === 'hysa')?.total ?? 0
+  const net_worth_excl_hysa = net_worth - hysaTotal
 
   const sparklineData = forecast_preview
     .slice(0, 6)
@@ -101,7 +105,7 @@ export default function NetWorthCard({ data }: NetWorthCardProps) {
 
       {/* Expanded breakdown */}
       {expanded && (
-        <div className="mt-4 pt-4 border-t border-white/[0.06] grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="mt-4 pt-4 border-t border-white/[0.06] grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-surface-2 rounded-xl p-3">
             <p className="text-xs text-text-secondary mb-1">Total Assets</p>
             <p className="text-lg font-bold text-primary">{formatCurrency(total_assets)}</p>
@@ -111,6 +115,13 @@ export default function NetWorthCard({ data }: NetWorthCardProps) {
             <p className="text-xs text-text-secondary mb-1">Total Liabilities</p>
             <p className="text-lg font-bold text-danger">{formatCurrency(total_liabilities)}</p>
             <p className="text-xs text-muted mt-1">Loans, credit cards</p>
+          </div>
+          <div className="bg-surface-2 rounded-xl p-3">
+            <p className="text-xs text-text-secondary mb-1">Excl. HYSA</p>
+            <p className={`text-lg font-bold ${net_worth_excl_hysa >= 0 ? 'text-primary' : 'text-danger'}`}>
+              {formatCurrency(net_worth_excl_hysa)}
+            </p>
+            <p className="text-xs text-muted mt-1">Net worth without HYSA savings</p>
           </div>
           <div className="bg-surface-2 rounded-xl p-3">
             <p className="text-xs text-text-secondary mb-1">Net Worth Trend</p>

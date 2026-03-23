@@ -34,12 +34,14 @@ function QuickStat({
   value,
   icon: Icon,
   color,
+  note,
   onClick,
 }: {
   label: string
   value: number
   icon: typeof DollarSign
   color: string
+  note?: string
   onClick?: () => void
 }) {
   return (
@@ -52,7 +54,8 @@ function QuickStat({
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs text-text-secondary">{label}</p>
-        <p className="text-lg font-bold text-text-primary">{formatCurrency(value)}</p>
+        <p className="text-base sm:text-lg font-bold text-text-primary truncate">{formatCurrency(value)}</p>
+        {note && <p className="text-[10px] text-muted truncate">{note}</p>}
       </div>
       {onClick && <span className="text-xs text-muted pr-1">↗</span>}
     </Card>
@@ -307,7 +310,7 @@ export default function DashboardPage() {
     }))
     setStatModal({
       title: 'This Month Income',
-      description: 'Total money coming in this calendar month — paystubs, employer 401k contributions, and any other income transactions.',
+      description: 'Net take-home pay and other income received this calendar month. Employer 401k contributions are excluded (they go directly to your 401k, not your checking).',
       value: data!.this_month.income,
       valueColor: 'text-primary',
       breakdown,
@@ -344,12 +347,24 @@ export default function DashboardPage() {
         <NetWorthCard data={data} />
 
         {/* Quick Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-          <QuickStat label="Total Assets" value={data.total_assets} icon={TrendingUp} color="bg-primary" onClick={openAssets} />
-          <QuickStat label="Total Liabilities" value={data.total_liabilities} icon={TrendingDown} color="bg-danger" onClick={openLiabilities} />
-          <QuickStat label="This Month Income" value={data.this_month.income} icon={DollarSign} color="bg-info" onClick={openIncome} />
-          <QuickStat label="This Month Spending" value={data.this_month.spending} icon={CreditCard} color="bg-warning" onClick={openSpending} />
-        </div>
+        {(() => {
+          // Trailing 3-month spending average from the last 3 past months in flow_months
+          // flow_months = 24 past months (oldest first) + current + 5 future
+          const past = data.flow_months.slice(0, 24).filter(p => p.expenses > 0)
+          const trail3 = past.slice(-3)
+          const avgSpending = trail3.length > 0
+            ? trail3.reduce((s, p) => s + p.expenses, 0) / trail3.length
+            : null
+          const spendingNote = avgSpending ? `3-mo avg: ${formatCurrency(avgSpending)}` : undefined
+          return (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+              <QuickStat label="Total Assets" value={data.total_assets} icon={TrendingUp} color="bg-primary" onClick={openAssets} />
+              <QuickStat label="Total Liabilities" value={data.total_liabilities} icon={TrendingDown} color="bg-danger" onClick={openLiabilities} />
+              <QuickStat label="This Month Income" value={data.this_month.income} icon={DollarSign} color="bg-info" onClick={openIncome} />
+              <QuickStat label="This Month Spending" value={data.this_month.spending} icon={CreditCard} color="bg-warning" note={spendingNote} onClick={openSpending} />
+            </div>
+          )
+        })()}
 
         {/* Accounts Grid */}
         <AccountsGrid data={data} />

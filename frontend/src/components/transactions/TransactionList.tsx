@@ -141,7 +141,7 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
                 {tx.is_verified && <CheckCircle2 size={12} className="text-primary flex-shrink-0" />}
                 <p className="text-sm font-medium text-text-primary truncate">{tx.merchant || tx.description}</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span className="text-xs text-text-secondary">{formatDate(tx.date)}</span>
                 {tx.category_name && (
                   <>
@@ -149,14 +149,23 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
                     <span className="text-xs text-text-secondary">{tx.category_name}</span>
                   </>
                 )}
+                {tx.account_name && (
+                  <>
+                    <span className="text-muted text-xs">·</span>
+                    <span className="text-xs text-muted truncate">{tx.account_name}</span>
+                  </>
+                )}
               </div>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <span className={cn('text-sm font-semibold', tx.amount >= 0 ? 'text-primary' : 'text-danger')}>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <span className={cn('text-sm font-semibold mr-1', tx.amount >= 0 ? 'text-primary' : 'text-danger')}>
                 {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
               </span>
               <button onClick={() => onEdit(tx)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary">
                 <Edit2 size={14} />
+              </button>
+              <button onClick={() => handleDelete(tx.id)} className="p-1.5 rounded-lg text-text-secondary hover:text-danger">
+                <Trash2 size={14} />
               </button>
             </div>
           </div>

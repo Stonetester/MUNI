@@ -86,7 +86,7 @@ def run_sync_now(
     cfg.last_sync_status = "error" if result["errors"] else "success"
     cfg.last_sync_message = (
         "; ".join(result["errors"]) if result["errors"]
-        else f"Imported {result['imported']}, skipped {result['skipped']}"
+        else f"Imported {result['imported']}, updated {result.get('updated', 0)}, skipped {result['skipped']}"
     )
     db.commit()
 

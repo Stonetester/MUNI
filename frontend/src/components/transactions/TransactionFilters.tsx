@@ -72,16 +72,16 @@ export default function TransactionFiltersComponent({
 
         <Input
           type="date"
+          label="From date"
           value={filters.from_date || ''}
           onChange={(e) => onChange({ ...filters, from_date: e.target.value || undefined })}
-          placeholder="Start date"
         />
 
         <Input
           type="date"
+          label="To date"
           value={filters.to_date || ''}
           onChange={(e) => onChange({ ...filters, to_date: e.target.value || undefined })}
-          placeholder="End date"
         />
 
         {hasFilters && (
