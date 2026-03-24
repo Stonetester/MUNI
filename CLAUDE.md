@@ -1,5 +1,5 @@
 # Muni — Claude Project Context
-_Last updated: 2026-03-20 (session 5). Active branch: `feature/paystub-income-sync`._
+_Last updated: 2026-03-23 (session 7). Active branch: `main`._
 
 ---
 
@@ -52,15 +52,15 @@ systemctl restart muni-backend
 
 ---
 
-## Git State (as of 2026-03-20)
-- **Active branch**: `feature/paystub-income-sync` — paystub income auto-creation, docs cleanup, bonus detection
-- **Main branch**: all previously completed features merged here
-- **Workflow**: develop on feature branch → merge to `main` → `muni-deploy` on server
+## Git State (as of 2026-03-23)
+- **Active branch**: `main` — all features merged, working directly on main
+- **Latest commits**: session 7 sheets/dupe-review fixes, session 6 PWA icons (947639e8), UX features (0eb98660)
+- **Workflow**: develop on main → `muni-deploy` on server
 - **Branch history (all merged into main)**:
   - `dev` — Docker, cleanup, bug fixes
   - `feature/insights` — calendar, insights, profile switcher, tutorial, getting started
   - `feature/mobile-ai-reports` — AI report page, email notifications
-  - `feature/paystub-income-sync` — (current) paystub → income transaction auto-creation
+  - `feature/paystub-income-sync` — paystub → income transaction auto-creation, bulk upload
 
 ---
 
@@ -117,7 +117,7 @@ systemctl restart muni-backend
 18. ✅ **Spending Insights** (`/insights`) — health scorecard, trend analysis, z-score anomaly detection, debt payoff scenarios
 19. ✅ **AI Financial Report** (`/ai-report`) — Claude-powered monthly analysis via Anthropic API
 20. ✅ **Notifications** (`/notifications`) — weekly email digest, SMTP config, preview + send now
-21. ✅ **Google Sheets Sync** — Settings page: paste Sheet ID, auto-polls every 30 min via APScheduler, manual Sync Now, shows last sync time/result/row counts
+21. ✅ **Google Sheets Sync** — Settings page: paste Sheet ID, auto-polls every 30 min via APScheduler, manual Sync Now, shows last sync time/result/row counts; duplicate review (expandable list of skipped rows post-sync); upsert (amount updates when sheet row edited); HYSA auto-categorize; Katherine's column format (Item ID/Type/Price/Status) fully supported
 22. ✅ **Tutorial modal** — `?` button in sidebar footer → 10-step app walkthrough
 23. ✅ **Getting Started** (`/getting-started`) — interactive setup checklist (auto-completes as data is added), progress bar, quick links
 24. ✅ **Paystubs** (`/paystubs`) — upload Paylocity PDF → pdfplumber parses all fields → review form → save → **auto-creates income transactions** (Salary/Bonus + Employer 401k); bonus detection (`pay_type`, `bonus_pay`); YTD stats; avg net excludes bonus stubs
@@ -149,8 +149,8 @@ systemctl restart muni-backend
   - `ai_report.py` — Claude API monthly report
 - Services: `backend/app/services/`
   - `forecasting.py` — 60-month projection engine (historical avgs + recurring rules + life events + debt amortization + investment growth)
-  - `paystub_parser.py` — pdfplumber + regex extraction for Paylocity format; bonus detection
-  - `google_sheets_sync.py` — sheets API client, tab parsing, deduplication, transaction creation
+  - `paystub_parser.py` — pdfplumber + regex extraction for Paylocity AND G&P (Grimm & Parker) formats; bonus detection (requires period+YTD pair, lone YTD carry-forwards ignored); `pay_type` = "bonus" only when `bonus_pay > 0` and `regular_pay == 0`
+  - `google_sheets_sync.py` — sheets API client, tab parsing, deduplication (SHA-256 hash), upsert (amount updates), HYSA auto-categorize, Katherine's "Item ID/Type/Price/Status" column format, duplicate review list in sync result
 - Models: `backend/app/models/`
   - `user.py`, `account.py`, `transaction.py`, `category.py`, `recurring_rule.py`
   - `balance_snapshot.py`, `life_event.py`, `scenario.py`
@@ -260,6 +260,29 @@ _Used when building projections, profile defaults, loan trackers._
 
 ## Planned Features (Not Yet Built)
 
+### ✅ Sidebar Collapse + Display Preferences Toggle (DONE — session 6)
+- Hamburger button in AppLayout header toggles sidebar open/closed, persisted to localStorage (`sidebarOpen`)
+- Main content margin adjusts when sidebar is hidden (`md:ml-0` vs `md:ml-[220px]`)
+- Settings page → "Display Preferences" card with toggle to show/hide "Get Started" in sidebar
+- Uses custom `muni:settingsChanged` DOM event for same-tab sync + `storage` event for cross-tab
+
+### ✅ Getting Started Auto-Update + Cleanup (DONE — session 6)
+- `visibilitychange` listener re-fetches completion status when user returns to tab
+- Removed "Connect a checking account" step
+- `load` converted to `useCallback` for proper dependency tracking
+
+### ✅ Student Loan Auto-Import in Financial Profile (DONE — session 6)
+- `student_loan` account types show as importable in Financial Profile → Loans section
+- Orange banner with per-account import buttons pre-fills name, balance, institution
+- Unlinked accounts detected by lowercased name comparison
+
+### ✅ PWA Home Screen Icon (DONE — session 6)
+- `icon.tsx` — 192×192 green (#10B981) MUNI favicon via `ImageResponse`
+- `apple-icon.tsx` — 180×180 Apple touch icon for iOS home screen
+- `icon-512/route.tsx` — 512×512 edge route for Android PWA install (must be `.tsx` not `.ts`)
+- `manifest.ts` — PWA manifest with standalone display, green theme
+- `layout.tsx` — `Viewport` export, `appleWebApp` metadata, manifest link
+
 ### ✅ Bulk Paystub Upload (DONE — `feature/paystub-income-sync`)
 - Multi-file drop, multi-file picker (`multiple` on `<input>`), **folder drop** (FileSystem API `webkitGetAsEntry()` traversal), and **folder picker** (`webkitdirectory` input)
 - Single file → goes to existing single ReviewForm (review all fields before saving)
@@ -267,6 +290,24 @@ _Used when building projections, profile defaults, loan trackers._
 - Per-stub actions: inline Edit (4-field quick form), Skip, Save; global "Save All" saves all parsed non-skipped stubs
 - File references stored in `window.__paystubFiles__` Map to avoid serialization issues
 - Progress summary strip: X parsing / X ready / X saved / X skipped / X errors
+
+### ✅ Session 7 Fixes (DONE — 2026-03-23)
+- **Employer 401k routing**: employer 401k contribution now posts to 401k account (not checking); excluded from income totals in dashboard, forecast, and all income calculations
+- **G&P paystub bonus fix**: `paystub_parser.py` regex rewritten — G&P 3-col format (hours+amount+YTD or lone-YTD) handled correctly; bonus requires two numbers (period+YTD), lone YTD carry-forwards ignored; `regular_pay == 0` required to classify as bonus
+- **Forecast blank categories**: recurring rules now supplement historical averages — categories with no transaction history but active recurring rules now appear in predictions
+- **Life Events Clear All**: bulk DELETE `/events` endpoint added; "Clear All" button with confirm dialog on events page
+- **Mobile delete button**: Trash2 delete button added to mobile transaction cards
+- **Date filter labels**: iOS date inputs now have visible labels (placeholder doesn't show on iOS)
+- **Net Worth excl. HYSA**: dashboard net worth card shows a second figure excluding HYSA balance
+- **Dashboard income label**: clarified as net (after taxes/deductions)
+- **3-month spending average**: trailing 3-month avg shown as note under current month spending stat
+- **Monthly flow bar labels**: short month abbreviations; Jan gets year suffix (e.g. "Jan '26")
+- **Spending pie chart overflow**: reduced label radius; container gets `overflow-hidden`
+- **Google Sheets HYSA auto-categorize**: descriptions containing "hysa"/"everbank"/"high yield" auto-categorize as Savings Transfer
+- **Google Sheets upsert**: if a sheets transaction's amount changed in the sheet, it updates in app
+- **Google Sheets Katherine format**: `"item id"` column alias added; `"roth"`/`"roth ira"` → Savings Transfer category; her MAR2026/FEB2026 tab format already supported by existing regex
+- **Google Sheets dupe review**: sync result shows expandable list of skipped duplicates (date, description, amount, source tab)
+- **App name**: version string updated to MUNI v0.3
 
 ### Balance Snapshots — Edit/Delete
 - The retroactive balance snapshots added to accounts need to be editable and removable

@@ -219,13 +219,20 @@ export interface SyncConfig {
   created_at: string
 }
 
+export interface SyncDuplicate {
+  date: string
+  description: string
+  amount: number
+  tab: string
+}
+
 export interface SyncResult {
   imported: number
   skipped: number
-  errors: number
+  errors: string[]
   last_sync_at: string
   status: string
-  message?: string
+  duplicates?: SyncDuplicate[]
 }
 
 // Financial Profile

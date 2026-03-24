@@ -66,6 +66,9 @@ CATEGORY_NORMALIZE = {
     "savings": "Savings Transfer",
     "saving": "Savings Transfer",
     "transfer": "Savings Transfer",
+    "roth": "Savings Transfer",
+    "roth ira": "Savings Transfer",
+    "ira": "Savings Transfer",
     "tax": "Tax",
     "taxes": "Tax",
     "uncategorized": "Discretionary",
@@ -124,6 +127,8 @@ COLUMN_ALIASES = {
     "notes": "description",
     "vendor": "description",
     "store": "description",
+    # description / merchant (continued)
+    "item id": "description",
     # amount
     "amount": "amount",
     "price": "amount",
@@ -378,6 +383,7 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
     updated = 0
     skipped = 0
     errors = []
+    duplicates: list[dict] = []
 
     for tab in month_tabs:
         try:
@@ -477,12 +483,24 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                             existing_hashes.add(_dedup_hash(txn_date, raw_desc, amount))
                             updated += 1
                         else:
+                            duplicates.append({
+                                "date": str(txn_date),
+                                "description": raw_desc,
+                                "amount": amount,
+                                "tab": tab,
+                            })
                             skipped += 1
                         continue
 
                     # Dedup check — same hash used for CSV imports so no cross-source dupes
                     h = _dedup_hash(txn_date, raw_desc, amount)
                     if h in existing_hashes:
+                        duplicates.append({
+                            "date": str(txn_date),
+                            "description": raw_desc,
+                            "amount": amount,
+                            "tab": tab,
+                        })
                         skipped += 1
                         continue
 
@@ -512,7 +530,7 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
             errors.append(f"Tab '{tab}': {tab_err}")
             db.rollback()
 
-    return {"imported": imported, "updated": updated, "skipped": skipped, "errors": errors}
+    return {"imported": imported, "updated": updated, "skipped": skipped, "errors": errors, "duplicates": duplicates}
 
 
 def sync_all_users() -> None:
