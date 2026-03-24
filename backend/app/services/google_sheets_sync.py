@@ -32,6 +32,89 @@ logger = logging.getLogger(__name__)
 
 CREDS_PATH = Path(__file__).parent.parent.parent / "credentials" / "google-sheets-key.json"
 
+# Standard categories created for every user on first sync if missing
+_DEFAULT_CATEGORIES = [
+    # Income
+    ("Salary", "income", "#10B981", None),
+    ("Side Income", "income", "#34D399", None),
+    ("Bonus", "income", "#6EE7B7", None),
+    # Expense parents
+    ("Housing", "expense", "#f87171", None),
+    ("Food", "expense", "#fb923c", None),
+    ("Transportation", "expense", "#facc15", None),
+    ("Health", "expense", "#a78bfa", None),
+    ("Entertainment", "expense", "#38bdf8", None),
+    ("Shopping", "expense", "#f472b6", None),
+    ("Personal", "expense", "#94a3b8", None),
+    ("Subscriptions", "expense", "#818cf8", None),
+    ("Debt", "expense", "#ef4444", None),
+    ("Family", "expense", "#fb923c", None),
+    ("Gifts", "expense", "#c084fc", None),
+    ("Wedding", "expense", "#f9a8d4", None),
+    ("Work", "expense", "#67e8f9", None),
+    # Savings parents
+    ("Emergency Fund", "savings", "#14b8a6", None),
+    ("Retirement", "savings", "#818cf8", None),
+    ("Vacation", "savings", "#34d399", None),
+    # Sub-categories (parent name as 4th element)
+    ("Rent/Utilities", "expense", "#f87171", "Housing"),
+    ("Electricity", "expense", "#fca5a5", "Housing"),
+    ("Internet", "expense", "#fca5a5", "Housing"),
+    ("Eating Out", "expense", "#fb923c", "Food"),
+    ("Groceries", "expense", "#fdba74", "Food"),
+    ("Gas", "expense", "#facc15", "Transportation"),
+    ("Car Expense", "expense", "#fde68a", "Transportation"),
+    ("Car Repair", "expense", "#fef08a", "Transportation"),
+    ("Medical", "expense", "#a78bfa", "Health"),
+    ("Going Out", "expense", "#38bdf8", "Entertainment"),
+    ("Discretionary", "expense", "#7dd3fc", "Entertainment"),
+    ("Student Loans", "expense", "#ef4444", "Debt"),
+    ("Required", "expense", "#94a3b8", "Personal"),
+    ("Tax", "expense", "#6b7280", "Personal"),
+    ("Savings Transfer", "savings", "#14b8a6", "Emergency Fund"),
+]
+
+
+def _ensure_user_categories(user_id: int, db: Session) -> dict:
+    """
+    Load user's categories. If none exist, create the standard set first.
+    Returns {name: Category} dict.
+    """
+    cats = {c.name: c for c in db.query(Category).filter(Category.user_id == user_id).all()}
+    if cats:
+        return cats
+
+    logger.info(f"User {user_id} has no categories — creating standard set")
+    cat_map: dict = {}
+    for name, kind, color, parent_name in _DEFAULT_CATEGORIES:
+        parent = cat_map.get(parent_name) if parent_name else None
+        cat = Category(
+            user_id=user_id,
+            name=name,
+            kind=kind,
+            color=color,
+            parent_id=parent.id if parent else None,
+        )
+        db.add(cat)
+        db.flush()
+        cat_map[name] = cat
+
+    db.commit()
+    logger.info(f"Created {len(cat_map)} default categories for user {user_id}")
+    return cat_map
+
+
+def _get_or_create_category(name: str, user_id: int, categories: dict, db: Session) -> Optional[Category]:
+    """Return existing category by name, or create a plain expense category on the fly."""
+    if name in categories:
+        return categories[name]
+    cat = Category(user_id=user_id, name=name, kind="expense", color="#94a3b8")
+    db.add(cat)
+    db.flush()
+    categories[name] = cat
+    logger.info(f"Auto-created category '{name}' for user {user_id}")
+    return cat
+
 # Maps category names from the sheet to canonical app category names
 CATEGORY_NORMALIZE = {
     "car expense": "Car Expense",
@@ -365,7 +448,7 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
     if not user:
         return {"imported": 0, "skipped": 0, "errors": ["User not found"]}
 
-    categories = {c.name: c for c in db.query(Category).filter(Category.user_id == user_id).all()}
+    categories = _ensure_user_categories(user_id, db)
     default_cat = categories.get("Discretionary")
 
     checking = (
@@ -465,7 +548,7 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                         cat_name = CATEGORY_NORMALIZE.get(raw_cat.strip().lower(), "Discretionary")
                     else:
                         cat_name = "Discretionary"
-                    category = categories.get(cat_name) or default_cat
+                    category = _get_or_create_category(cat_name, user_id, categories, db)
 
                     payment = PAYMENT_NORMALIZE.get(raw_pay.strip().lower()) or "debit_card"
 

@@ -80,14 +80,6 @@ def seed():
             dict(name="Retirement",    kind="savings", color="#818cf8"),
             dict(name="Vacation",      kind="savings", color="#34d399"),
         ]
-        cat_map: dict[str, Category] = {}
-        for c in category_defs:
-            cat = Category(user_id=keaton.id, **c)
-            db.add(cat)
-            db.flush()
-            cat_map[c["name"]] = cat
-
-        # Sub-categories
         sub_cats = [
             dict(name="Rent/Utilities",  kind="expense", color="#f87171",  parent="Housing"),
             dict(name="Electricity",     kind="expense", color="#fca5a5",  parent="Housing"),
@@ -105,15 +97,24 @@ def seed():
             dict(name="Tax",             kind="expense", color="#6b7280",  parent="Personal"),
             dict(name="Savings Transfer",kind="savings", color="#14b8a6",  parent="Emergency Fund"),
         ]
-        for c in sub_cats:
-            parent_name = c.pop("parent")
-            parent_obj = cat_map.get(parent_name)
-            cat = Category(user_id=keaton.id, parent_id=parent_obj.id if parent_obj else None, **c)
-            db.add(cat)
-            db.flush()
-            cat_map[c["name"]] = cat
 
-        print("  Created default categories")
+        for user_obj in [keaton, katherine]:
+            cat_map: dict[str, Category] = {}
+            for c in category_defs:
+                cat = Category(user_id=user_obj.id, **c)
+                db.add(cat)
+                db.flush()
+                cat_map[c["name"]] = cat
+            for c in sub_cats:
+                c2 = dict(c)
+                parent_name = c2.pop("parent")
+                parent_obj = cat_map.get(parent_name)
+                cat = Category(user_id=user_obj.id, parent_id=parent_obj.id if parent_obj else None, **c2)
+                db.add(cat)
+                db.flush()
+                cat_map[c2["name"]] = cat
+
+        print("  Created default categories for keaton and katherine")
 
         db.commit()
         print("\nSeed complete!")
