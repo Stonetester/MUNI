@@ -1,5 +1,5 @@
 # Muni — Claude Project Context
-_Last updated: 2026-03-23 (session 7). Active branch: `main`._
+_Last updated: 2026-03-24 (session 8). Active branch: `main`._
 
 ---
 
@@ -256,6 +256,35 @@ _Used when building projections, profile defaults, loan trackers._
 - **Wedding**: October 2026, ~$62,702 total cost
 - **Katherine**: same account types — different values; she enters in her own Financial Profile
 
+## Keaton's Money Flow & Account Structure
+_Established 2026-03-24. Use when advising on account setup, forecasting, or sync behavior._
+
+**Flow**: Paycheck → BofA Savings (direct deposit) → BofA Checking (pass-through) → Chase CC + Discover CC (purchases) → paid back to BofA
+
+**Accounts to track in app:**
+| Account | Type | Snapshot needed? |
+|---|---|---|
+| BofA Savings | `savings` | Yes — monthly, cash hub |
+| BofA Checking | `checking` | No — Google Sheet captures all spending through it |
+| Chase Credit Card | `credit_card` | No — paid in full monthly, pass-through |
+| Discover Credit Card | `credit_card` | No — paid in full monthly, pass-through |
+| 401k (Fidelity) | `retirement_401k` | Yes — market drift, update quarterly |
+| IRA (Schwab) | `ira` | Yes — market drift, update quarterly |
+| HYSA (EverBank) | `hysa` | Yes — interest compounds monthly |
+| Student Loans | `student_loan` | Yes — confirm when they hit $0 |
+
+**Key decisions:**
+- Credit card accounts are NOT tracked — paid in full monthly, no meaningful standing balance, manual updates would be high-maintenance noise
+- BofA Checking does NOT need balance snapshots — all spending flows through Google Sheet sync already
+- Neither Keaton nor Katherine record credit card payments in their Google Sheets — no double-counting risk
+- Google Sheets track actual purchases only (not CC payments or internal transfers)
+
+**Planned feature: Monthly snapshot reminder email**
+- Scheduled email listing stale accounts (401k, IRA, HYSA, BofA Savings, student loans)
+- Shows last-updated date per account and why it matters for forecast accuracy
+- Toggle in Settings alongside existing weekly digest
+- Not yet built
+
 ---
 
 ## Planned Features (Not Yet Built)
@@ -308,6 +337,13 @@ _Used when building projections, profile defaults, loan trackers._
 - **Google Sheets Katherine format**: `"item id"` column alias added; `"roth"`/`"roth ira"` → Savings Transfer category; her MAR2026/FEB2026 tab format already supported by existing regex
 - **Google Sheets dupe review**: sync result shows expandable list of skipped duplicates (date, description, amount, source tab)
 - **App name**: version string updated to MUNI v0.3
+
+### Monthly Snapshot Reminder Email
+- Scheduled email listing accounts with stale balances: 401k, IRA, HYSA, BofA Savings, student loans
+- Shows last-updated date per account and why each matters for forecast accuracy
+- BofA Checking and credit cards intentionally excluded (see money flow notes above)
+- Settings toggle alongside existing weekly digest
+- Draft email content designed; implementation not yet started
 
 ### Balance Snapshots — Edit/Delete
 - The retroactive balance snapshots added to accounts need to be editable and removable
