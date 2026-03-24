@@ -103,6 +103,39 @@ def update_transaction(
     return txn
 
 
+@router.delete("/bulk/sheets", status_code=status.HTTP_200_OK)
+def delete_all_sheets_transactions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete all transactions imported from Google Sheets for the current user."""
+    result = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.import_source.like("sheets:%"),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": result}
+
+
+@router.delete("/bulk/all", status_code=status.HTTP_200_OK)
+def delete_all_transactions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete ALL transactions for the current user (sheets + manual + CSV)."""
+    result = (
+        db.query(Transaction)
+        .filter(Transaction.user_id == current_user.id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": result}
+
+
 @router.delete("/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_transaction(
     txn_id: int,

@@ -144,6 +144,16 @@ export async function deleteTransaction(id: number): Promise<void> {
   await api.delete(`/transactions/${id}`)
 }
 
+export async function deleteSheetsTransactions(): Promise<{ deleted: number }> {
+  const res = await api.delete('/transactions/bulk/sheets')
+  return res.data
+}
+
+export async function deleteAllTransactions(): Promise<{ deleted: number }> {
+  const res = await api.delete('/transactions/bulk/all')
+  return res.data
+}
+
 export async function importTransactions(file: File): Promise<{ imported: number; errors: string[] }> {
   const formData = new FormData()
   formData.append('file', file)

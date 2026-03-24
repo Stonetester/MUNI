@@ -5,11 +5,11 @@ import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
-import { getSyncConfig, updateSyncConfig, runSync } from '@/lib/api'
+import { getSyncConfig, updateSyncConfig, runSync, deleteSheetsTransactions, deleteAllTransactions } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 import type { SyncConfig, SyncResult } from '@/lib/types'
 import { formatCurrency } from '@/lib/utils'
-import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home, Monitor } from 'lucide-react'
+import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home, Monitor, Trash2 } from 'lucide-react'
 import { switchProfiles, getAltUser } from '@/lib/auth'
 
 function fmtDate(s?: string | null) {
@@ -31,6 +31,9 @@ export default function SettingsPage() {
   const [syncSaved, setSyncSaved] = useState(false)
   const [resourcesOpen, setResourcesOpen] = useState(false)
   const [dupesOpen, setDupesOpen] = useState(false)
+  const [clearingSheets, setClearingSheets] = useState(false)
+  const [clearingAll, setClearingAll] = useState(false)
+  const [clearResult, setClearResult] = useState<string | null>(null)
   const [showGettingStarted, setShowGettingStarted] = useState(true)
 
   useEffect(() => {
@@ -252,6 +255,76 @@ export default function SettingsPage() {
                 <ExternalLink size={11} /> Open Google Sheets
               </a>
             </div>
+          </div>
+        </Card>
+
+        {/* Data Management */}
+        <Card title="Data Management">
+          <div className="flex flex-col gap-3 mt-1">
+            <p className="text-xs text-text-secondary">Permanently delete transactions. This cannot be undone.</p>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-2 border border-[#2d3748]">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-text-primary">Clear Google Sheets transactions</p>
+                  <p className="text-xs text-text-secondary mt-0.5">Removes only transactions imported from your Google Sheet</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  loading={clearingSheets}
+                  onClick={async () => {
+                    if (!window.confirm('Delete all Google Sheets transactions? This cannot be undone.')) return
+                    setClearingSheets(true)
+                    setClearResult(null)
+                    try {
+                      const r = await deleteSheetsTransactions()
+                      setClearResult(`Deleted ${r.deleted} Google Sheets transaction${r.deleted !== 1 ? 's' : ''}`)
+                    } finally {
+                      setClearingSheets(false)
+                    }
+                  }}
+                  className="flex-shrink-0 text-danger hover:text-danger border-danger/30 hover:bg-danger/10"
+                >
+                  <Trash2 size={13} />
+                  Clear
+                </Button>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-2 border border-danger/20">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-danger">Clear all transactions</p>
+                  <p className="text-xs text-text-secondary mt-0.5">Removes every transaction — sheets, CSV imports, and manual entries</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  loading={clearingAll}
+                  onClick={async () => {
+                    if (!window.confirm('Delete ALL transactions for your account? This cannot be undone.')) return
+                    if (!window.confirm('Are you sure? This will delete every transaction including manually added ones.')) return
+                    setClearingAll(true)
+                    setClearResult(null)
+                    try {
+                      const r = await deleteAllTransactions()
+                      setClearResult(`Deleted ${r.deleted} transaction${r.deleted !== 1 ? 's' : ''}`)
+                    } finally {
+                      setClearingAll(false)
+                    }
+                  }}
+                  className="flex-shrink-0 text-danger hover:text-danger border-danger/30 hover:bg-danger/10"
+                >
+                  <Trash2 size={13} />
+                  Clear All
+                </Button>
+              </div>
+            </div>
+
+            {clearResult && (
+              <div className="flex items-center gap-2 text-xs text-green-400">
+                <CheckCircle size={12} /> {clearResult}
+              </div>
+            )}
           </div>
         </Card>
 
