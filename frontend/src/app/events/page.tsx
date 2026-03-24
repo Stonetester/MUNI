@@ -7,10 +7,10 @@ import Modal from '@/components/ui/Modal'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EventCard from '@/components/events/EventCard'
 import EventForm from '@/components/events/EventForm'
-import { getLifeEvents } from '@/lib/api'
+import { getLifeEvents, deleteAllLifeEvents } from '@/lib/api'
 import { LifeEvent } from '@/lib/types'
 import { formatCurrency } from '@/lib/utils'
-import { Plus, Calendar } from 'lucide-react'
+import { Plus, Trash2, Calendar } from 'lucide-react'
 
 export default function EventsPage() {
   const [events, setEvents] = useState<LifeEvent[]>([])
@@ -54,10 +54,26 @@ export default function EventsPage() {
               </p>
             )}
           </div>
-          <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}>
-            <Plus size={14} />
-            Add Event
-          </Button>
+          <div className="flex items-center gap-2">
+            {events.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  if (!window.confirm('Delete all life events? This cannot be undone.')) return
+                  await deleteAllLifeEvents()
+                  load()
+                }}
+              >
+                <Trash2 size={14} />
+                Clear All
+              </Button>
+            )}
+            <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}>
+              <Plus size={14} />
+              Add Event
+            </Button>
+          </div>
         </div>
 
         {loading ? (

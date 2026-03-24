@@ -79,6 +79,16 @@ def update_life_event(
     return event
 
 
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+def delete_all_life_events(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete all life events for the current user."""
+    db.query(LifeEvent).filter(LifeEvent.user_id == current_user.id).delete()
+    db.commit()
+
+
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_life_event(
     event_id: int,

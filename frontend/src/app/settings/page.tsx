@@ -8,6 +8,7 @@ import Input from '@/components/ui/Input'
 import { getSyncConfig, updateSyncConfig, runSync } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 import type { SyncConfig, SyncResult } from '@/lib/types'
+import { formatCurrency } from '@/lib/utils'
 import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home, Monitor } from 'lucide-react'
 import { switchProfiles, getAltUser } from '@/lib/auth'
 
@@ -29,6 +30,7 @@ export default function SettingsPage() {
   const [syncError, setSyncError] = useState('')
   const [syncSaved, setSyncSaved] = useState(false)
   const [resourcesOpen, setResourcesOpen] = useState(false)
+  const [dupesOpen, setDupesOpen] = useState(false)
   const [showGettingStarted, setShowGettingStarted] = useState(true)
 
   useEffect(() => {
@@ -79,6 +81,7 @@ export default function SettingsPage() {
     setSyncRunning(true)
     setSyncError('')
     setSyncResult(null)
+    setDupesOpen(false)
     try {
       const result = await runSync()
       setSyncResult(result)
@@ -189,15 +192,44 @@ export default function SettingsPage() {
             </div>
 
             {syncResult && (
-              <div className="p-3 rounded-xl bg-primary/10 border border-primary/20 text-sm flex flex-col gap-1">
-                <div className="flex items-center gap-2 text-primary font-medium">
+              <div className="rounded-xl bg-primary/10 border border-primary/20 text-sm flex flex-col gap-1 overflow-hidden">
+                <div className="flex items-center gap-2 text-primary font-medium p-3 pb-2">
                   <CheckCircle size={14} /> Sync complete
                 </div>
-                <div className="text-xs text-text-secondary flex gap-4">
+                <div className="text-xs text-text-secondary flex gap-4 px-3 pb-3">
                   <span>Imported: <strong className="text-text-primary">{syncResult.imported}</strong></span>
-                  <span>Skipped (dupes): <strong className="text-text-primary">{syncResult.skipped}</strong></span>
-                  {syncResult.errors > 0 && <span>Errors: <strong className="text-danger">{syncResult.errors}</strong></span>}
+                  <span>Skipped: <strong className="text-text-primary">{syncResult.skipped}</strong></span>
+                  {syncResult.errors.length > 0 && <span>Errors: <strong className="text-danger">{syncResult.errors.length}</strong></span>}
                 </div>
+                {syncResult.duplicates && syncResult.duplicates.length > 0 && (
+                  <div className="border-t border-primary/20">
+                    <button
+                      className="w-full flex items-center justify-between px-3 py-2 text-xs text-text-secondary hover:text-text-primary transition-colors"
+                      onClick={() => setDupesOpen(o => !o)}
+                    >
+                      <span>{syncResult.duplicates!.length} skipped as duplicates — tap to review</span>
+                      {dupesOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    </button>
+                    {dupesOpen && (
+                      <div className="max-h-48 overflow-y-auto border-t border-primary/20">
+                        {syncResult.duplicates!.map((d, i) => (
+                          <div key={i} className="flex items-center justify-between px-3 py-1.5 border-b border-primary/10 last:border-0">
+                            <div className="min-w-0">
+                              <p className="text-xs text-text-primary truncate">{d.description}</p>
+                              <p className="text-[10px] text-muted">{d.date} · {d.tab}</p>
+                            </div>
+                            <span className="text-xs text-danger ml-2 flex-shrink-0">{formatCurrency(Math.abs(d.amount))}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {syncResult.errors.length > 0 && (
+                  <div className="border-t border-danger/20 px-3 py-2 text-xs text-danger">
+                    {syncResult.errors.map((e, i) => <p key={i}>{e}</p>)}
+                  </div>
+                )}
               </div>
             )}
 

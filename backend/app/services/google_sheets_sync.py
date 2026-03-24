@@ -66,6 +66,9 @@ CATEGORY_NORMALIZE = {
     "savings": "Savings Transfer",
     "saving": "Savings Transfer",
     "transfer": "Savings Transfer",
+    "roth": "Savings Transfer",
+    "roth ira": "Savings Transfer",
+    "ira": "Savings Transfer",
     "tax": "Tax",
     "taxes": "Tax",
     "uncategorized": "Discretionary",
@@ -124,6 +127,8 @@ COLUMN_ALIASES = {
     "notes": "description",
     "vendor": "description",
     "store": "description",
+    # description / merchant (continued)
+    "item id": "description",
     # amount
     "amount": "amount",
     "price": "amount",
@@ -266,12 +271,43 @@ def _find_header_row(rows: list[list]) -> tuple[int, dict]:
     return 0, {}
 
 
+_HYSA_KEYWORDS = {"hysa", "everbank", "ever bank", "high yield"}
+
+
+def _is_hysa_transfer(description: str) -> bool:
+    """Return True if the description looks like an HYSA contribution."""
+    desc_lower = description.strip().lower()
+    return any(kw in desc_lower for kw in _HYSA_KEYWORDS)
+
+
+def _dedup_desc_key(txn_date: date, description: str) -> str:
+    """Match key used for upsert: date + description (without amount)."""
+    return f"{txn_date}|{description.strip().lower()}"
+
+
 def _load_existing_hashes(user_id: int, db: Session) -> set:
     """Load dedup hashes for ALL existing transactions for this user."""
     txns = db.query(Transaction.description, Transaction.date, Transaction.amount).filter(
         Transaction.user_id == user_id
     ).all()
     return {_dedup_hash(t.date, t.description, t.amount) for t in txns}
+
+
+def _load_sheets_transactions(user_id: int, db: Session) -> dict:
+    """Load existing sheets-sourced transactions keyed by (date, desc_lower) for upsert."""
+    txns = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == user_id,
+            Transaction.import_source.like("sheets:%"),
+        )
+        .all()
+    )
+    result = {}
+    for t in txns:
+        key = _dedup_desc_key(t.date, t.description)
+        result[key] = t
+    return result
 
 
 def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
@@ -340,10 +376,14 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
 
     # Load ALL existing transaction hashes upfront (includes CSV-imported rows)
     existing_hashes = _load_existing_hashes(user_id, db)
+    # Load existing sheets transactions for upsert (date+desc key → Transaction obj)
+    sheets_by_key = _load_sheets_transactions(user_id, db)
 
     imported = 0
+    updated = 0
     skipped = 0
     errors = []
+    duplicates: list[dict] = []
 
     for tab in month_tabs:
         try:
@@ -418,16 +458,51 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                     if amount > 0:
                         amount = -amount
 
-                    # Dedup check — same hash used for CSV imports so no cross-source dupes
-                    h = _dedup_hash(txn_date, raw_desc, amount)
-                    if h in existing_hashes:
-                        skipped += 1
-                        continue
-
-                    cat_name = CATEGORY_NORMALIZE.get(raw_cat.strip().lower(), "Discretionary")
+                    # Auto-detect HYSA contributions by description keywords
+                    if _is_hysa_transfer(raw_desc):
+                        cat_name = "Savings Transfer"
+                    elif raw_cat.strip():
+                        cat_name = CATEGORY_NORMALIZE.get(raw_cat.strip().lower(), "Discretionary")
+                    else:
+                        cat_name = "Discretionary"
                     category = categories.get(cat_name) or default_cat
 
                     payment = PAYMENT_NORMALIZE.get(raw_pay.strip().lower()) or "debit_card"
+
+                    # Upsert: if a sheets transaction with same date+desc already exists,
+                    # update the amount (handles edits in the Google Sheet).
+                    desc_key = _dedup_desc_key(txn_date, raw_desc)
+                    if desc_key in sheets_by_key:
+                        existing_txn = sheets_by_key[desc_key]
+                        if existing_txn.amount != amount:
+                            # Remove old hash, update amount, add new hash
+                            old_hash = _dedup_hash(existing_txn.date, existing_txn.description, existing_txn.amount)
+                            existing_hashes.discard(old_hash)
+                            existing_txn.amount = amount
+                            existing_txn.category_id = category.id if category else existing_txn.category_id
+                            existing_hashes.add(_dedup_hash(txn_date, raw_desc, amount))
+                            updated += 1
+                        else:
+                            duplicates.append({
+                                "date": str(txn_date),
+                                "description": raw_desc,
+                                "amount": amount,
+                                "tab": tab,
+                            })
+                            skipped += 1
+                        continue
+
+                    # Dedup check — same hash used for CSV imports so no cross-source dupes
+                    h = _dedup_hash(txn_date, raw_desc, amount)
+                    if h in existing_hashes:
+                        duplicates.append({
+                            "date": str(txn_date),
+                            "description": raw_desc,
+                            "amount": amount,
+                            "tab": tab,
+                        })
+                        skipped += 1
+                        continue
 
                     txn = Transaction(
                         user_id=user_id,
@@ -442,6 +517,7 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                     )
                     db.add(txn)
                     existing_hashes.add(h)
+                    sheets_by_key[desc_key] = txn
                     imported += 1
 
                 except Exception as row_err:
@@ -454,7 +530,7 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
             errors.append(f"Tab '{tab}': {tab_err}")
             db.rollback()
 
-    return {"imported": imported, "skipped": skipped, "errors": errors}
+    return {"imported": imported, "updated": updated, "skipped": skipped, "errors": errors, "duplicates": duplicates}
 
 
 def sync_all_users() -> None:
@@ -475,7 +551,10 @@ def sync_all_users() -> None:
                     cfg.last_sync_message = "; ".join(result["errors"])
                 else:
                     cfg.last_sync_status = "ok"
-                    cfg.last_sync_message = f"Imported {result['imported']}, skipped {result['skipped']}"
+                    upd = result.get('updated', 0)
+                    cfg.last_sync_message = (
+                        f"Imported {result['imported']}, updated {upd}, skipped {result['skipped']}"
+                    )
                 db.commit()
                 logger.info(f"Sync user {cfg.user_id}: {cfg.last_sync_message}")
             except Exception as e:

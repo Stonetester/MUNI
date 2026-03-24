@@ -96,30 +96,46 @@ def parse_paylocity(text: str) -> dict:
     d["gross_pay"] = _parse_money(_re_val(r"Gross Earnings\s+[\d.]+\s+([\d,]+\.\d{2})", text))
     d["ytd_gross"] = _parse_money(_re_val(r"Gross Earnings\s+[\d.]+\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text))
 
-    d["regular_pay"] = _parse_money(_re_val(r"Regular\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))
-    d["holiday_pay"] = _parse_money(_re_val(r"Holiday\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))
-    d["overtime_pay"] = _parse_money(_re_val(r"Overtime\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))
+    # Regular/holiday/overtime: use flexible pattern that handles both
+    # Paylocity format (HOURS RATE AMOUNT YTD) and G&P format (HOURS AMOUNT YTD).
+    # The (?:[\d,.]+\s+)? optional group absorbs the rate column when present.
+    # Using [\d,.]+ (includes commas) so comma-formatted amounts don't break matching.
+    _earn_pat = r"\s+[\d,.]+\s+(?:[\d,.]+\s+)?([\d,]+\.\d{2})\s+[\d,]+\.\d{2}"
+    d["regular_pay"] = _parse_money(_re_val(r"Regular" + _earn_pat, text))
+    d["holiday_pay"] = _parse_money(_re_val(r"Holiday" + _earn_pat, text))
+    d["overtime_pay"] = _parse_money(_re_val(r"Overtime" + _earn_pat, text))
 
-    # Bonus / supplemental pay — Paylocity labels these several ways
+    # Bonus / supplemental pay detection.
+    #
+    # G&P (Grimm & Parker) paystubs carry YTD bonus amounts on EVERY subsequent stub
+    # after a bonus is paid, as a lone single number:
+    #   "Bonus 2,200.00 401k ..."   ← YTD only — NOT a current-period bonus
+    #   "Spot Bonus 2,000.00 ..."   ← YTD only — NOT a current-period bonus
+    #
+    # A REAL current-period bonus always has TWO numbers: period amount + YTD:
+    #   "Bonus 0.00 500.00 500.00 ..."  ← hours=0, period=$500, ytd=$500  ← REAL BONUS
+    #
+    # Fix: require at least two numbers after the keyword so lone YTD entries are ignored.
+    # Pattern: KEYWORD FIRST_NUM [SECOND_NUM] CAPTURED_AMOUNT YTD_NUM
+    #   - [\d,.]+ absorbs hours (or the first lone number on a non-bonus line)
+    #   - (?:[\d,.]+\s+)? optionally absorbs a rate column
+    #   - ([\d,]+\.\d{2}) captures the period amount
+    #   - \s+[\d,]+\.\d{2} REQUIRED trailing YTD — this is what rejects lone entries
+    _bonus_keywords = r"(?:Spot Bonus|Bonus|Supp Bonus|Performance Bonus|Annual Bonus|Supplemental)"
     bonus_pay = _parse_money(
-        _re_val(r"(?:Bonus|Supp Bonus|Performance Bonus|Annual Bonus|Supplemental)\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)
-        or _re_val(r"(?:Bonus|Supp Bonus|Performance Bonus|Annual Bonus|Supplemental)\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)
+        _re_val(
+            _bonus_keywords + r"\s+[\d,.]+\s+(?:[\d,.]+\s+)?([\d,]+\.\d{2})\s+[\d,]+\.\d{2}",
+            text, flags=re.IGNORECASE,
+        )
     )
     d["bonus_pay"] = bonus_pay
 
-    # Classify pay type.
-    # Only flag as a bonus paystub if:
-    #   1. There's a bonus earnings line, AND
-    #   2. There's no regular pay (it's a standalone bonus check), OR
-    #      the bonus dominates gross pay (≥50%) — i.e., it was actually paid this period.
-    # This avoids false positives caused by YTD bonus amounts showing up on every
-    # subsequent regular paystub after the original bonus was paid.
+    # Classify pay type: bonus only when there is a real current-period bonus amount.
+    # With the fixed regex above, bonus_pay is 0 whenever only YTD carry-forwards exist,
+    # so we no longer need the gross-percentage heuristic — just check bonus_pay > 0
+    # and that no regular pay was received (standalone bonus check).
     regular_pay = d.get("regular_pay", 0.0)
-    gross = d.get("gross_pay", 0.0) or (bonus_pay + regular_pay)
-    is_bonus_stub = bonus_pay > 0 and (
-        regular_pay == 0 or (gross > 0 and bonus_pay / gross >= 0.5)
-    )
-    d["pay_type"] = "bonus" if is_bonus_stub else "regular"
+    d["pay_type"] = "bonus" if (bonus_pay > 0 and regular_pay == 0) else "regular"
 
     # --- Employer 401k Safe Harbor (the "401 Safe H" line) ---
     d["employer_401k"] = _parse_money(_re_val(r"401 Safe H\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))

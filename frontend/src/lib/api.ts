@@ -195,6 +195,10 @@ export async function deleteLifeEvent(id: number): Promise<void> {
   await api.delete(`/events/${id}`)
 }
 
+export async function deleteAllLifeEvents(): Promise<void> {
+  await api.delete('/events')
+}
+
 // Scenarios
 export async function getScenarios(): Promise<Scenario[]> {
   const res: AxiosResponse<Scenario[]> = await api.get('/scenarios')

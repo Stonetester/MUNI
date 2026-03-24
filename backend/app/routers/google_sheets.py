@@ -29,12 +29,20 @@ class SyncConfigOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SyncDuplicate(BaseModel):
+    date: str
+    description: str
+    amount: float
+    tab: str
+
+
 class SyncResult(BaseModel):
     imported: int
     skipped: int
     errors: list[str]
     last_sync_at: datetime
     status: str
+    duplicates: list[SyncDuplicate] = []
 
 
 def _get_or_create_config(user_id: int, db: Session) -> SyncConfig:
@@ -86,7 +94,7 @@ def run_sync_now(
     cfg.last_sync_status = "error" if result["errors"] else "success"
     cfg.last_sync_message = (
         "; ".join(result["errors"]) if result["errors"]
-        else f"Imported {result['imported']}, skipped {result['skipped']}"
+        else f"Imported {result['imported']}, updated {result.get('updated', 0)}, skipped {result['skipped']}"
     )
     db.commit()
 
@@ -96,4 +104,5 @@ def run_sync_now(
         errors=result["errors"],
         last_sync_at=now,
         status=cfg.last_sync_status,
+        duplicates=[SyncDuplicate(**d) for d in result.get("duplicates", [])],
     )

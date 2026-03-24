@@ -31,12 +31,22 @@ ASSET_TYPES = {
 LIABILITY_TYPES = {"credit_card", "student_loan", "car_loan", "mortgage"}
 
 
+def _is_employer_401k(txn: Transaction) -> bool:
+    """Employer 401k contributions flow into the 401k account — exclude from spendable income."""
+    return bool(
+        txn.import_source and txn.import_source.startswith("paystub:")
+        and txn.description and "Employer 401k" in txn.description
+    )
+
+
 def _month_summary(transactions: List[Transaction], categories_map: dict) -> MonthSummary:
     income = 0.0
     spending = 0.0
     by_category: Dict[str, float] = {}
 
     for txn in transactions:
+        if _is_employer_401k(txn):
+            continue  # posted to 401k account — not spendable income
         if txn.amount > 0:
             income += txn.amount
         else:
@@ -146,7 +156,7 @@ def get_dashboard(
     # income and real expenses appear in the Monthly Cash Flow chart.
     if forecast.points:
         p0 = forecast.points[0]
-        actual_income_amt = sum(t.amount for t in this_month_txns if t.amount > 0)
+        actual_income_amt = sum(t.amount for t in this_month_txns if t.amount > 0 and not _is_employer_401k(t))
         actual_expense_amt = sum(abs(t.amount) for t in this_month_txns if t.amount < 0)
         # Build by_category using names so the detail modal can display them
         actual_by_cat: Dict[str, float] = {}
@@ -162,9 +172,9 @@ def get_dashboard(
 
     forecast_preview = forecast.points[:6]
 
-    # Build flow_months: 6 past months (actual) + current actual + 5 future forecast
+    # Build flow_months: 24 past months (actual) + current actual + 5 future forecast
     past_flow: List[ForecastPoint] = []
-    for i in range(6, 0, -1):
+    for i in range(24, 0, -1):
         pm_start = (this_month_start - relativedelta(months=i))
         import calendar as _cal
         last_day_pm = _cal.monthrange(pm_start.year, pm_start.month)[1]
@@ -181,7 +191,7 @@ def get_dashboard(
             )
             .all()
         )
-        pm_income = sum(t.amount for t in pm_txns if t.amount > 0)
+        pm_income = sum(t.amount for t in pm_txns if t.amount > 0 and not _is_employer_401k(t))
         pm_expenses = sum(abs(t.amount) for t in pm_txns if t.amount < 0)
         pm_by_cat: Dict[str, float] = {}
         for txn in pm_txns:

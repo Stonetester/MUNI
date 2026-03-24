@@ -351,6 +351,26 @@ def run_forecast(
     hist_avgs = _get_historical_category_averages(user.id, db, today)
     variance_pct = _get_historical_variance(user.id, db, today)
 
+    # ── Recurring rules (supplement historical averages for missing categories) ──
+    from app.models.recurring_rule import RecurringRule
+    scenario_filter = (
+        (RecurringRule.scenario_id.is_(None)) |
+        (RecurringRule.scenario_id == scenario_id)
+        if scenario_id is not None
+        else RecurringRule.scenario_id.is_(None)
+    )
+    all_rules = (
+        db.query(RecurringRule)
+        .filter(
+            RecurringRule.user_id == user.id,
+            RecurringRule.is_active == True,
+        )
+        .filter(scenario_filter)
+        .all()
+    )
+    # Category IDs already covered by historical data — avoid double-counting
+    hist_covered_cats: set = {cat_id for cat_id in hist_avgs if hist_avgs[cat_id].get("avg6", 0) != 0}
+
     # ── Main forecast loop ────────────────────────────────────────────────────
     points: List[ForecastPoint] = []
     total_income = 0.0
@@ -379,6 +399,20 @@ def run_forecast(
             if hist_amount != 0:
                 cat_key = categories_map.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
                 by_category[cat_key] = by_category.get(cat_key, 0.0) + hist_amount
+
+        # Recurring rules supplement historical averages for categories with no history
+        for rule in all_rules:
+            if rule.category_id in hist_covered_cats:
+                continue  # already covered by historical data
+            if _rule_applies_to_month(rule, ms, me):
+                rule_amount = _rule_monthly_amount(rule, ms, me)
+                if rule_amount > 0:
+                    month_income += rule_amount
+                elif rule_amount < 0:
+                    month_expenses += rule_amount
+                if rule_amount != 0:
+                    cat_key = categories_map.get(rule.category_id, "Uncategorized") if rule.category_id else "Uncategorized"
+                    by_category[cat_key] = by_category.get(cat_key, 0.0) + rule_amount
 
         # Life event impacts
         event_impact = _event_impact_for_month(all_events, month_str)
