@@ -5,6 +5,7 @@ import { ForecastPoint } from '@/lib/types'
 import { formatCurrency, formatMonth } from '@/lib/utils'
 import Card from '@/components/ui/Card'
 import MonthDetailModal from '@/components/ui/MonthDetailModal'
+import { getForecast } from '@/lib/api'
 import {
   BarChart,
   Bar,
@@ -46,7 +47,6 @@ function shortMonth(yyyyMM: string): string {
   const [year, month] = yyyyMM.split('-')
   const d = new Date(parseInt(year), parseInt(month) - 1, 1)
   const abbr = d.toLocaleDateString('en-US', { month: 'short' })
-  // Show "Jan" on year boundaries, otherwise just abbreviation
   return parseInt(month) === 1 ? `${abbr} '${year.slice(2)}` : abbr
 }
 
@@ -54,7 +54,7 @@ export default function MonthlyFlowCard({ flowMonths }: MonthlyFlowCardProps) {
   const [selectedPoint, setSelectedPoint] = useState<ForecastPoint | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const currentMonth = new Date().toISOString().slice(0, 7) // "YYYY-MM"
+  const currentMonth = new Date().toISOString().slice(0, 7)
 
   const chartData = flowMonths.map((p) => ({
     month: shortMonth(p.month),
@@ -119,7 +119,6 @@ export default function MonthlyFlowCard({ flowMonths }: MonthlyFlowCardProps) {
               />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: '12px', color: '#94a3b8' }} />
-              {/* Highlight current month */}
               {currentIndex >= 0 && (
                 <ReferenceLine
                   x={chartData[currentIndex]?.month}

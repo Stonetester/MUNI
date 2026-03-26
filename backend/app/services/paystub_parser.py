@@ -116,11 +116,6 @@ def parse_paylocity(text: str) -> dict:
     #   "Bonus 0.00 500.00 500.00 ..."  ← hours=0, period=$500, ytd=$500  ← REAL BONUS
     #
     # Fix: require at least two numbers after the keyword so lone YTD entries are ignored.
-    # Pattern: KEYWORD FIRST_NUM [SECOND_NUM] CAPTURED_AMOUNT YTD_NUM
-    #   - [\d,.]+ absorbs hours (or the first lone number on a non-bonus line)
-    #   - (?:[\d,.]+\s+)? optionally absorbs a rate column
-    #   - ([\d,]+\.\d{2}) captures the period amount
-    #   - \s+[\d,]+\.\d{2} REQUIRED trailing YTD — this is what rejects lone entries
     _bonus_keywords = r"(?:Spot Bonus|Bonus|Supp Bonus|Performance Bonus|Annual Bonus|Supplemental)"
     bonus_pay = _parse_money(
         _re_val(
@@ -131,9 +126,6 @@ def parse_paylocity(text: str) -> dict:
     d["bonus_pay"] = bonus_pay
 
     # Classify pay type: bonus only when there is a real current-period bonus amount.
-    # With the fixed regex above, bonus_pay is 0 whenever only YTD carry-forwards exist,
-    # so we no longer need the gross-percentage heuristic — just check bonus_pay > 0
-    # and that no regular pay was received (standalone bonus check).
     regular_pay = d.get("regular_pay", 0.0)
     d["pay_type"] = "bonus" if (bonus_pay > 0 and regular_pay == 0) else "regular"
 

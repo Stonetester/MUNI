@@ -11,7 +11,8 @@
       "Bash(docker --version)",
       "Bash(python -c \"from app.main import app; print\\(''App imports OK''\\)\")",
       "Bash(alembic upgrade:*)",
-      "Bash(python seed/seed_data.py)"
+      "Bash(python seed/seed_data.py)",
+      "Bash(git checkout:*)"
     ]
   }
 }

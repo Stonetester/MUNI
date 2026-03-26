@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Account, AccountType } from '@/lib/types'
-import { createAccount, updateAccount } from '@/lib/api'
+import { createAccount, updateAccount, createStudentLoan } from '@/lib/api'
 import Input from '@/components/ui/Input'
 import Select from '@/components/ui/Select'
 import Button from '@/components/ui/Button'
@@ -37,11 +37,18 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
     balance: account?.balance?.toString() || '0',
     is_active: account?.is_active ?? true,
     forecast_enabled: account?.forecast_enabled ?? true,
-    notes: account?.notes || '',
     is_joint: account?.is_joint ?? false,
+    notes: account?.notes || '',
   })
+  // For new student loan accounts: offer to sync to Financial Profile
+  const [syncLoan, setSyncLoan] = useState(false)
+  const [loanRate, setLoanRate] = useState('')
+  const [loanMinPayment, setLoanMinPayment] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const isStudentLoan = formData.account_type === 'student_loan'
+  const isNew = !account
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -55,13 +62,25 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
         balance: parseFloat(formData.balance),
         is_active: formData.is_active,
         forecast_enabled: formData.forecast_enabled,
-        notes: formData.notes || undefined,
         is_joint: formData.is_joint,
+        notes: formData.notes || undefined,
       }
       if (account) {
         await updateAccount(account.id, payload)
       } else {
         await createAccount(payload)
+        // If user wants to sync this student loan to Financial Profile, create a loan entry
+        if (isStudentLoan && syncLoan) {
+          await createStudentLoan({
+            loan_name: formData.name,
+            servicer: formData.institution || undefined,
+            original_balance: parseFloat(formData.balance),
+            current_balance: parseFloat(formData.balance),
+            interest_rate: loanRate ? parseFloat(loanRate) : 0,
+            minimum_payment: loanMinPayment ? parseFloat(loanMinPayment) : 0,
+            is_active: true,
+          })
+        }
       }
       onSuccess()
     } catch {
@@ -142,6 +161,45 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
           <span className="text-sm text-text-secondary">Joint account (shared with partner)</span>
         </label>
       </div>
+
+      {/* Student loan sync option — only shown when adding a new student_loan account */}
+      {isNew && isStudentLoan && (
+        <div className="rounded-xl border border-[#2d3748] p-3 bg-surface-2 flex flex-col gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={syncLoan}
+              onChange={(e) => setSyncLoan(e.target.checked)}
+              className="w-4 h-4 accent-primary"
+            />
+            <span className="text-sm text-text-secondary font-medium">Also add to Financial Profile loans tracker</span>
+          </label>
+          {syncLoan && (
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <Input
+                  label="Interest Rate (%)"
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 4.8"
+                  value={loanRate}
+                  onChange={(e) => setLoanRate(e.target.value)}
+                />
+              </div>
+              <div className="flex-1">
+                <Input
+                  label="Min. Monthly Payment"
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 150"
+                  value={loanMinPayment}
+                  onChange={(e) => setLoanMinPayment(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-text-secondary">Notes (optional)</label>

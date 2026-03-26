@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { X, ChevronLeft, ChevronRight, LayoutDashboard, ArrowUpDown, Wallet, Target, TrendingUp, Calendar, FlaskConical, BellRing, Settings, HelpCircle, PlusCircle, UserCircle, FileText, RefreshCw, Home } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, LayoutDashboard, ArrowUpDown, Wallet, Target, TrendingUp, Calendar, FlaskConical, BellRing, Settings, HelpCircle, PlusCircle, UserCircle, FileText, RefreshCw, Home, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const steps = [
@@ -45,6 +45,28 @@ const steps = [
           <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[110px]">Recent activity</span>Your latest transactions at the bottom.</li>
         </ul>
         <p className="text-xs text-muted">Tip: Check Dashboard weekly. If an alert or spending spike appears, drill into Budget or Transactions.</p>
+      </div>
+    ),
+  },
+  {
+    icon: Users,
+    title: 'Joint View',
+    color: 'text-blue-400',
+    bg: 'bg-blue-400/10',
+    content: (
+      <div className="flex flex-col gap-3 text-sm text-text-secondary">
+        <p>Joint View lets you see your finances together — both users' accounts, transactions, and net worth combined in one place.</p>
+        <ul className="flex flex-col gap-2">
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[130px]">Toggle</span>Use the Solo / Joint button in the top bar to switch views. Solo shows only your data.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[130px]">Joint Dashboard</span>In joint mode the dashboard combines both users' net worth, accounts, and recent transactions.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[130px]">Color-coded</span>Transactions show who they belong to — each user gets a distinct color in joint transaction lists.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[130px]">Joint accounts</span>Mark an account as Joint when adding it. Both users can see its balance. Great for a shared HYSA or wedding savings account.</li>
+          <li className="flex gap-2"><span className="text-text-primary font-medium min-w-[130px]">Profile Switcher</span>Click your name in the top bar to instantly switch to your partner's view without logging out.</li>
+        </ul>
+        <div className="p-3 rounded-xl bg-surface-2 text-xs flex flex-col gap-1">
+          <span className="text-text-primary font-semibold">How joint transactions work:</span>
+          <span>All transactions from both users appear together, sorted by date, with an owner label. Filter by account to isolate one person's spending.</span>
+        </div>
       </div>
     ),
   },
