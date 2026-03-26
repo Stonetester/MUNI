@@ -55,7 +55,7 @@ def _start_scheduler():
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
         from app.services.google_sheets_sync import sync_all_users
-        from app.services.email_service import send_weekly_digest_all
+        from app.services.email_service import send_weekly_digest_all, send_snapshot_reminders_all
 
         scheduler = BackgroundScheduler()
         scheduler.add_job(sync_all_users, "interval", minutes=30, id="sheets_sync")
@@ -68,8 +68,17 @@ def _start_scheduler():
             minute=0,
             id="weekly_digest",
         )
+        # Snapshot reminder — every Sunday at 10:00 AM
+        scheduler.add_job(
+            send_snapshot_reminders_all,
+            "cron",
+            day_of_week="sun",
+            hour=10,
+            minute=0,
+            id="snapshot_reminder",
+        )
         scheduler.start()
-        logger.info("Scheduler started: Google Sheets sync (30 min) + weekly email digest (Mon 8am)")
+        logger.info("Scheduler started: Sheets sync (30 min) + weekly digest (Mon 8am) + snapshot reminder (Sun 10am)")
         return scheduler
     except ImportError:
         logger.warning("APScheduler not installed — scheduled jobs disabled. Run: pip install apscheduler")

@@ -38,6 +38,7 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
     is_active: account?.is_active ?? true,
     forecast_enabled: account?.forecast_enabled ?? true,
     notes: account?.notes || '',
+    is_joint: account?.is_joint ?? false,
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -55,6 +56,7 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
         is_active: formData.is_active,
         forecast_enabled: formData.forecast_enabled,
         notes: formData.notes || undefined,
+        is_joint: formData.is_joint,
       }
       if (account) {
         await updateAccount(account.id, payload)
@@ -129,6 +131,15 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
             className="w-4 h-4 accent-primary"
           />
           <span className="text-sm text-text-secondary">Include in forecast</span>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={formData.is_joint}
+            onChange={(e) => setFormData({ ...formData, is_joint: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-text-secondary">Joint account (shared with partner)</span>
         </label>
       </div>
 

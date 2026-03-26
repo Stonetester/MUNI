@@ -111,6 +111,8 @@ export default function ForecastPage() {
           </label>
         </div>
 
+        <p className="text-xs text-muted">Income shown is <strong className="text-text-secondary">net</strong> (after taxes &amp; deductions) — from paystub net pay and transaction history.</p>
+
         {loading ? (
           <div className="flex items-center justify-center h-64">
             <LoadingSpinner size="lg" />

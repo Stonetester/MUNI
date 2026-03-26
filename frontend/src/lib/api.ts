@@ -506,3 +506,46 @@ export async function sendWeeklyDigestNow(email?: string): Promise<{ sent: boole
   const res = await api.post('/notifications/send-weekly', email ? { email } : {})
   return res.data
 }
+
+export async function getSnapshotReminderPreview(): Promise<Array<{
+  name: string
+  account_type: string
+  balance: number
+  last_updated: string
+  days_ago: number
+  why: string
+  frequency: string
+}>> {
+  const res = await api.get('/notifications/snapshot-preview')
+  return res.data
+}
+
+export async function sendSnapshotReminderNow(email?: string): Promise<{ sent: boolean; to: string; stale_count?: number; reason?: string }> {
+  const res = await api.post('/notifications/send-snapshot', email ? { email } : {})
+  return res.data
+}
+
+// Budget estimates
+export async function getBudgetEstimates(months = 3): Promise<Array<{
+  category_id: number
+  category_name: string
+  avg_monthly: number
+  months_sampled: number
+}>> {
+  const res = await api.get(`/budget/estimates?months=${months}`)
+  return res.data
+}
+
+// Auto-infer salary from paystubs
+export async function inferSalaryFromPaystubs(): Promise<{
+  found: number
+  avg_net_per_paycheck: number | null
+  avg_gross_per_paycheck: number | null
+  gross_annual_salary: number | null
+  pay_frequency: string | null
+  periods_per_year: number
+  latest_pay_date: string
+}> {
+  const res = await api.get('/financial-profile/infer-salary')
+  return res.data
+}

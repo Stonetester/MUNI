@@ -172,9 +172,21 @@ def get_dashboard(
 
     forecast_preview = forecast.points[:6]
 
-    # Build flow_months: 24 past months (actual) + current actual + 5 future forecast
+    # Build flow_months: all available past months (back to earliest transaction) + current + 5 future
+    from sqlalchemy import func as _func
+    _earliest = (
+        db.query(_func.min(Transaction.date))
+        .filter(Transaction.user_id == current_user.id, Transaction.scenario_id.is_(None))
+        .scalar()
+    )
+    if _earliest:
+        months_back = (today.year - _earliest.year) * 12 + (today.month - _earliest.month)
+        months_back = max(1, min(months_back, 60))
+    else:
+        months_back = 24
+
     past_flow: List[ForecastPoint] = []
-    for i in range(24, 0, -1):
+    for i in range(months_back, 0, -1):
         pm_start = (this_month_start - relativedelta(months=i))
         import calendar as _cal
         last_day_pm = _cal.monthrange(pm_start.year, pm_start.month)[1]

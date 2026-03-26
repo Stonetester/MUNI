@@ -10,8 +10,10 @@ import {
   updateNotificationSettings,
   getWeeklyDigestPreview,
   sendWeeklyDigestNow,
+  getSnapshotReminderPreview,
+  sendSnapshotReminderNow,
 } from '@/lib/api'
-import { Mail, Send, CheckCircle, AlertCircle, TrendingDown, TrendingUp } from 'lucide-react'
+import { Mail, Send, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
 
 function fmt(n: number) {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -27,6 +29,19 @@ export default function NotificationsPage() {
   const [sending, setSending] = useState(false)
   const [sendResult, setSendResult] = useState<{ sent: boolean; to: string } | null>(null)
   const [sendError, setSendError] = useState('')
+
+  const [snapshotAccounts, setSnapshotAccounts] = useState<Array<{
+    name: string
+    account_type: string
+    balance: number
+    last_updated: string
+    days_ago: number
+    why: string
+    frequency: string
+  }>>([])
+  const [sendingSnapshot, setSendingSnapshot] = useState(false)
+  const [snapshotResult, setSnapshotResult] = useState<{ sent: boolean; to: string; stale_count?: number; reason?: string } | null>(null)
+  const [snapshotError, setSnapshotError] = useState('')
 
   const [preview, setPreview] = useState<{
     week_start: string
@@ -47,6 +62,7 @@ export default function NotificationsPage() {
     }).catch(() => {})
 
     getWeeklyDigestPreview().then(setPreview).catch(() => {})
+    getSnapshotReminderPreview().then(setSnapshotAccounts).catch(() => {})
   }, [])
 
   const handleSave = async () => {
@@ -76,6 +92,21 @@ export default function NotificationsPage() {
       setSendError(msg || 'Failed to send. Check SMTP configuration.')
     } finally {
       setSending(false)
+    }
+  }
+
+  const handleSendSnapshot = async () => {
+    setSendingSnapshot(true)
+    setSnapshotError('')
+    setSnapshotResult(null)
+    try {
+      const result = await sendSnapshotReminderNow(sendEmail)
+      setSnapshotResult(result)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setSnapshotError(msg || 'Failed to send. Check SMTP configuration.')
+    } finally {
+      setSendingSnapshot(false)
     }
   }
 
@@ -180,6 +211,65 @@ export default function NotificationsPage() {
             )}
           </Card>
         )}
+
+        {/* Snapshot Reminder */}
+        <Card title="Balance Snapshot Reminder">
+          <div className="flex flex-col gap-4 mt-1">
+            <p className="text-xs text-text-secondary">
+              Reminds you to update stale account balances — 401k, IRA, HYSA, savings, and student loans. Sent automatically every Sunday. You can also trigger it manually.
+            </p>
+
+            {snapshotAccounts.length === 0 ? (
+              <div className="p-3 rounded-xl bg-primary/10 border border-primary/20 text-xs text-primary flex items-center gap-2">
+                <CheckCircle size={12} />
+                All tracked accounts are up to date — no reminder needed.
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p className="text-xs font-medium text-text-secondary">{snapshotAccounts.length} account{snapshotAccounts.length !== 1 ? 's' : ''} with stale balances:</p>
+                <div className="rounded-xl border border-[#2d3748] overflow-hidden">
+                  {snapshotAccounts.map((acc, i) => (
+                    <div key={acc.name} className={`flex items-start justify-between gap-3 px-3 py-2.5 text-xs ${i > 0 ? 'border-t border-[#2d3748]' : ''}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-text-primary">{acc.name}</p>
+                        <p className="text-muted truncate">{acc.why}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-text-secondary">{acc.last_updated}</p>
+                        <p className="text-danger">{acc.days_ago >= 9999 ? 'Never' : `${acc.days_ago}d ago`}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {snapshotAccounts.length > 0 && (
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={sendingSnapshot}
+                  onClick={handleSendSnapshot}
+                  disabled={!sendEmail}
+                  className="gap-2"
+                >
+                  <RefreshCw size={14} />
+                  Send Snapshot Reminder
+                </Button>
+                {snapshotResult?.sent && (
+                  <span className="text-xs text-green-400 flex items-center gap-1">
+                    <CheckCircle size={12} /> Sent to {snapshotResult.to}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {snapshotError && (
+              <p className="text-xs text-danger">{snapshotError}</p>
+            )}
+          </div>
+        </Card>
 
         {/* Send now */}
         <Card title="Send Now">

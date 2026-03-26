@@ -11,6 +11,7 @@ import Select from '@/components/ui/Select'
 import { CategoryKindBadge } from '@/components/ui/Badge'
 import {
   getBudgetSummary,
+  getBudgetEstimates,
   getCategories,
   createCategory,
   updateCategory,
@@ -233,6 +234,7 @@ export default function BudgetPage() {
   const [budget, setBudget] = useState<BudgetSummary[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [rules, setRules] = useState<RecurringRule[]>([])
+  const [estimates, setEstimates] = useState<Record<number, number>>({})
   const [loading, setLoading] = useState(true)
   const [month] = useState(getCurrentMonth())
   const [tab, setTab] = useState<'budget' | 'categories' | 'recurring'>('budget')
@@ -248,14 +250,18 @@ export default function BudgetPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [b, cats, r] = await Promise.all([
+      const [b, cats, r, est] = await Promise.all([
         getBudgetSummary(month),
         getCategories(),
         getRecurringRules(),
+        getBudgetEstimates(3),
       ])
       setBudget(b)
       setCategories(cats)
       setRules(r)
+      const estMap: Record<number, number> = {}
+      est.forEach(e => { estMap[e.category_id] = e.avg_monthly })
+      setEstimates(estMap)
     } catch (e) {
       console.error(e)
     } finally {
@@ -384,10 +390,13 @@ export default function BudgetPage() {
                           <CategoryKindBadge kind={b.kind} />
                         </div>
                         <BudgetProgressBar pct={b.percentage} amount={b.actual_amount} budget={b.budget_amount} />
-                        <div className="mt-2 text-xs">
+                        <div className="mt-2 flex items-center justify-between text-xs">
                           <span className={cn(b.remaining >= 0 ? 'text-primary' : 'text-danger')}>
                             {b.remaining >= 0 ? `${formatCurrency(b.remaining)} remaining` : `${formatCurrency(Math.abs(b.remaining))} over budget`}
                           </span>
+                          {estimates[b.category_id] > 0 && (
+                            <span className="text-muted">3mo avg: {formatCurrency(estimates[b.category_id])}</span>
+                          )}
                         </div>
                       </Card>
                     ))}
@@ -417,6 +426,9 @@ export default function BudgetPage() {
                         <CategoryKindBadge kind={cat.kind} />
                         {cat.budget_amount && (
                           <span className="text-xs text-text-secondary">{formatCurrency(cat.budget_amount)}/mo</span>
+                        )}
+                        {!cat.budget_amount && estimates[cat.id] > 0 && (
+                          <span className="text-xs text-muted">~{formatCurrency(estimates[cat.id])}/mo</span>
                         )}
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button onClick={() => setEditCat(cat)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors">

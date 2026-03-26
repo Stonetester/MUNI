@@ -11,11 +11,12 @@ import {
   getHoldings, createHolding, updateHolding, deleteHolding,
   getCompensationEvents, createCompensationEvent, deleteCompensationEvent,
   getAccounts,
+  inferSalaryFromPaystubs,
 } from '@/lib/api'
 import type { FinancialProfile, StudentLoan, InvestmentHolding, CompensationEvent, Account } from '@/lib/types'
 import {
   UserCircle, DollarSign, BookOpen, TrendingUp, Trophy, ChevronDown, ChevronUp,
-  Plus, Trash2, Save, Edit2, X, CheckCircle, PiggyBank, BarChart3,
+  Plus, Trash2, Save, Edit2, X, CheckCircle, PiggyBank, BarChart3, Wand2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import InfoTooltip from '@/components/ui/InfoTooltip'
@@ -66,27 +67,57 @@ function Section({ title, icon: Icon, color, children, defaultOpen = true, toolt
 
 // ─── Income & Salary section ─────────────────────────────────────────────────
 function IncomeSection({ profile, onSaved }: { profile: FinancialProfile | null; onSaved: () => void }) {
-  const [salary, setSalary] = useState(profile?.salary?.toString() ?? '')
+  const [salary, setSalary] = useState((profile?.gross_annual_salary ?? profile?.salary)?.toString() ?? '')
   const [payFreq, setPayFreq] = useState(profile?.pay_frequency ?? 'biweekly')
   const [netPer, setNetPer] = useState(profile?.net_per_paycheck?.toString() ?? '')
   const [emp401k, setEmp401k] = useState(profile?.employer_401k_percent?.toString() ?? '')
   const [ee401k, setEe401k] = useState(profile?.employee_401k_per_paycheck?.toString() ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [inferring, setInferring] = useState(false)
+  const [inferNote, setInferNote] = useState('')
 
   useEffect(() => {
-    setSalary(profile?.salary?.toString() ?? '')
+    setSalary((profile?.gross_annual_salary ?? profile?.salary)?.toString() ?? '')
     setPayFreq(profile?.pay_frequency ?? 'biweekly')
     setNetPer(profile?.net_per_paycheck?.toString() ?? '')
     setEmp401k(profile?.employer_401k_percent?.toString() ?? '')
     setEe401k(profile?.employee_401k_per_paycheck?.toString() ?? '')
   }, [profile])
 
+  const handleInfer = async () => {
+    setInferring(true)
+    setInferNote('')
+    try {
+      const result = await inferSalaryFromPaystubs()
+      if (!result.found) {
+        setInferNote('No paystubs found. Upload some paystubs first.')
+        return
+      }
+      if (result.gross_annual_salary) setSalary(result.gross_annual_salary.toFixed(0))
+      if (result.avg_net_per_paycheck) setNetPer(result.avg_net_per_paycheck.toFixed(2))
+      if (result.pay_frequency) {
+        const freqMap: Record<string, string> = {
+          semi_monthly: 'semimonthly',
+          bi_weekly: 'biweekly',
+          weekly: 'weekly',
+          monthly: 'monthly',
+        }
+        setPayFreq(freqMap[result.pay_frequency] ?? result.pay_frequency)
+      }
+      setInferNote(`Calculated from ${result.found} recent paystub${result.found !== 1 ? 's' : ''} (latest: ${result.latest_pay_date})`)
+    } catch {
+      setInferNote('Failed to infer salary. Check that paystubs are uploaded.')
+    } finally {
+      setInferring(false)
+    }
+  }
+
   const handleSave = async () => {
     setSaving(true)
     try {
       await updateFinancialProfile({
-        salary: salary ? parseFloat(salary) : undefined,
+        gross_annual_salary: salary ? parseFloat(salary) : undefined,
         pay_frequency: payFreq,
         net_per_paycheck: netPer ? parseFloat(netPer) : undefined,
         employer_401k_percent: emp401k ? parseFloat(emp401k) : undefined,
@@ -105,6 +136,12 @@ function IncomeSection({ profile, onSaved }: { profile: FinancialProfile | null;
 
   return (
     <div className="mt-4 flex flex-col gap-4">
+      <div className="flex items-center gap-3">
+        <Button variant="secondary" size="sm" loading={inferring} onClick={handleInfer} className="gap-1.5">
+          <Wand2 size={13} /> Auto-calculate from paystubs
+        </Button>
+        {inferNote && <span className="text-xs text-text-secondary">{inferNote}</span>}
+      </div>
       <div className="grid grid-cols-2 gap-4">
         <Input label="Annual Salary ($)" type="number" value={salary} onChange={e => setSalary(e.target.value)} placeholder="130935" />
         <div className="flex flex-col gap-1">

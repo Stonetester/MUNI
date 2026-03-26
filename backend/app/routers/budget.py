@@ -2,6 +2,7 @@ from datetime import date
 from typing import List, Optional
 from calendar import monthrange
 
+from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -75,4 +76,53 @@ def get_budget_summary(
 
     # Sort: over-budget first, then by actual amount desc
     result.sort(key=lambda x: (-x["percentage"] if x["budget_amount"] > 0 else 0, -x["actual_amount"]))
+    return result
+
+
+@router.get("/estimates")
+def get_spending_estimates(
+    months: int = Query(default=3, ge=1, le=12, description="How many past months to average"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return N-month average spending per expense/savings category (excluding current month)."""
+    today = date.today()
+    period_start = today.replace(day=1) - relativedelta(months=months)
+    period_end = today.replace(day=1)  # up to but not including this month
+
+    categories = (
+        db.query(Category)
+        .filter(
+            Category.user_id == current_user.id,
+            Category.kind.in_(["expense", "savings"]),
+        )
+        .all()
+    )
+
+    spending_rows = (
+        db.query(Transaction.category_id, func.sum(Transaction.amount).label("total"))
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.date >= period_start,
+            Transaction.date < period_end,
+            Transaction.scenario_id.is_(None),
+        )
+        .group_by(Transaction.category_id)
+        .all()
+    )
+    spend_map = {row.category_id: abs(row.total) for row in spending_rows if row.total}
+
+    result = []
+    for cat in categories:
+        total = spend_map.get(cat.id, 0.0)
+        avg = round(total / months, 2) if total > 0 else 0.0
+        if avg > 0:
+            result.append({
+                "category_id": cat.id,
+                "category_name": cat.name,
+                "avg_monthly": avg,
+                "months_sampled": months,
+            })
+
+    result.sort(key=lambda x: -x["avg_monthly"])
     return result
