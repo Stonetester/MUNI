@@ -264,3 +264,185 @@ def send_weekly_digest_all():
                 send_weekly_digest_for_user(user, email, db)
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Snapshot reminder email
+# ---------------------------------------------------------------------------
+
+# Account types that need periodic manual balance updates
+_SNAPSHOT_ACCOUNT_TYPES = {"401k", "ira", "hysa", "savings", "student_loan", "brokerage", "hsa"}
+
+_SNAPSHOT_WHY = {
+    "401k": "Market drift — update quarterly so forecast reflects actual growth",
+    "ira": "Market drift — update quarterly so forecast reflects actual growth",
+    "brokerage": "Market drift — update quarterly",
+    "hysa": "Interest compounds monthly — update monthly for accurate net worth",
+    "savings": "Primary cash hub — update monthly for accurate cash flow",
+    "student_loan": "Balance shrinks each payment — update when you receive your statement",
+    "hsa": "Contributions + investment growth — update quarterly",
+}
+
+_SNAPSHOT_FREQUENCY = {
+    "401k": "quarterly",
+    "ira": "quarterly",
+    "brokerage": "quarterly",
+    "hysa": "monthly",
+    "savings": "monthly",
+    "student_loan": "monthly",
+    "hsa": "quarterly",
+}
+
+_STALE_DAYS = {
+    "monthly": 35,
+    "quarterly": 95,
+}
+
+
+def _gather_snapshot_data(user: User, db: Session) -> list[dict]:
+    """Find accounts that need balance updates and return their status."""
+    from app.models.balance_snapshot import BalanceSnapshot
+
+    accounts = db.query(Account).filter(
+        Account.user_id == user.id,
+        Account.is_active == True,
+        Account.account_type.in_(_SNAPSHOT_ACCOUNT_TYPES),
+    ).all()
+
+    today = date.today()
+    stale = []
+
+    for acc in accounts:
+        freq = _SNAPSHOT_FREQUENCY.get(acc.account_type, "monthly")
+        threshold = _STALE_DAYS[freq]
+
+        # Find the most recent snapshot for this account
+        latest = (
+            db.query(BalanceSnapshot)
+            .filter(BalanceSnapshot.account_id == acc.id)
+            .order_by(BalanceSnapshot.date.desc())
+            .first()
+        )
+
+        if latest:
+            days_ago = (today - latest.date).days
+            last_updated = latest.date.strftime("%b %d, %Y")
+        else:
+            days_ago = 9999
+            last_updated = "Never updated"
+
+        if days_ago >= threshold:
+            stale.append({
+                "name": acc.name,
+                "account_type": acc.account_type,
+                "balance": acc.balance,
+                "last_updated": last_updated,
+                "days_ago": days_ago,
+                "why": _SNAPSHOT_WHY.get(acc.account_type, "Update to keep forecasts accurate"),
+                "frequency": freq,
+            })
+
+    stale.sort(key=lambda x: -x["days_ago"])
+    return stale
+
+
+def build_snapshot_reminder_html(username: str, stale_accounts: list[dict]) -> str:
+    """Build the HTML email for the snapshot reminder."""
+    display = username.capitalize()
+
+    rows = ""
+    for acc in stale_accounts:
+        days_label = "Never" if acc["days_ago"] >= 9999 else f"{acc['days_ago']}d ago"
+        freq_badge = acc["frequency"].capitalize()
+        rows += f"""
+        <tr style="border-bottom:1px solid #4a5568;">
+          <td style="padding:12px 14px;">
+            <div style="color:#e2e8f0;font-weight:600;">{acc['name']}</div>
+            <div style="color:#718096;font-size:11px;margin-top:2px;">{acc['why']}</div>
+          </td>
+          <td style="padding:12px 14px;text-align:center;color:#a0aec0;font-size:12px;white-space:nowrap;">
+            {acc['last_updated']}<br><span style="color:#fc8181;">{days_label}</span>
+          </td>
+          <td style="padding:12px 14px;text-align:right;color:#68d391;font-weight:600;white-space:nowrap;">
+            ${acc['balance']:,.2f}
+          </td>
+          <td style="padding:12px 14px;text-align:center;">
+            <span style="background:#2d3748;border:1px solid #4a5568;border-radius:9999px;padding:2px 8px;color:#a0aec0;font-size:10px;">{freq_badge}</span>
+          </td>
+        </tr>"""
+
+    if not rows:
+        return ""  # nothing stale — no email
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#1a202c;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:600px;margin:0 auto;padding:24px 16px;">
+
+    <div style="text-align:center;margin-bottom:32px;">
+      <div style="display:inline-block;background:#6366f1;border-radius:12px;padding:10px 18px;">
+        <span style="color:white;font-weight:800;font-size:20px;letter-spacing:1px;">Muni</span>
+      </div>
+      <p style="color:#a0aec0;margin:12px 0 0;font-size:14px;">Balance Snapshot Reminder</p>
+    </div>
+
+    <p style="color:#e2e8f0;font-size:16px;margin:0 0 6px;">Hey {display} 👋</p>
+    <p style="color:#a0aec0;font-size:14px;margin:0 0 24px;">
+      The accounts below have stale balances. Updating them keeps your net worth and forecast accurate.
+    </p>
+
+    <div style="background:#2d3748;border-radius:12px;overflow:hidden;margin-bottom:24px;">
+      <div style="padding:14px 16px;border-bottom:1px solid #4a5568;">
+        <p style="margin:0;color:#e2e8f0;font-weight:700;">Accounts Needing Updates</p>
+        <p style="margin:4px 0 0;color:#718096;font-size:12px;">{len(stale_accounts)} account{'s' if len(stale_accounts) != 1 else ''} with stale balances</p>
+      </div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="border-bottom:1px solid #4a5568;">
+            <th style="padding:8px 14px;text-align:left;color:#718096;font-size:11px;font-weight:600;text-transform:uppercase;">Account</th>
+            <th style="padding:8px 14px;text-align:center;color:#718096;font-size:11px;font-weight:600;text-transform:uppercase;">Last Updated</th>
+            <th style="padding:8px 14px;text-align:right;color:#718096;font-size:11px;font-weight:600;text-transform:uppercase;">Balance</th>
+            <th style="padding:8px 14px;text-align:center;color:#718096;font-size:11px;font-weight:600;text-transform:uppercase;">Freq</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+
+    <div style="background:#1a2744;border:1px solid #3b4f7a;border-radius:12px;padding:16px;margin-bottom:24px;">
+      <p style="margin:0 0 8px;color:#93c5fd;font-weight:600;font-size:13px;">📍 How to update</p>
+      <p style="margin:0;color:#a0aec0;font-size:13px;">Go to <strong style="color:#e2e8f0;">Accounts</strong> → click any account → <strong style="color:#e2e8f0;">View History</strong> → <strong style="color:#e2e8f0;">Add Snapshot</strong>. Enter today's balance from your bank's app or statement.</p>
+    </div>
+
+    <div style="text-align:center;padding-top:24px;border-top:1px solid #2d3748;">
+      <p style="color:#4a5568;font-size:12px;margin:0;">Muni — your personal finance tracker</p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+def send_snapshot_reminder_for_user(user: User, email_address: str, db: Session) -> bool:
+    """Gather stale accounts and send snapshot reminder for a single user."""
+    stale = _gather_snapshot_data(user, db)
+    if not stale:
+        return True  # nothing to remind about — success
+    html = build_snapshot_reminder_html(user.username, stale)
+    if not html:
+        return True
+    subject = f"📊 Muni — {len(stale)} account{'s' if len(stale) != 1 else ''} need balance updates"
+    return send_email(email_address, subject, html)
+
+
+def send_snapshot_reminders_all():
+    """Called by scheduler — sends snapshot reminders to all users with email configured."""
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        for user in users:
+            email = getattr(user, "notification_email", None) or user.email
+            if email:
+                send_snapshot_reminder_for_user(user, email, db)
+    finally:
+        db.close()

@@ -6,13 +6,14 @@ import json
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
 from app.models.financial_profile import FinancialProfile
+from app.models.paystub import Paystub
 from app.models.student_loan import StudentLoan
 from app.models.investment_holding import InvestmentHolding
 from app.models.compensation_event import CompensationEvent
@@ -138,6 +139,58 @@ def _profile_out(p: FinancialProfile) -> dict:
 def get_profile(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     p = _get_or_create_profile(current_user.id, db)
     return _profile_out(p)
+
+
+@router.get("/infer-salary")
+def infer_salary_from_paystubs(
+    limit: int = Query(default=6, ge=1, le=24, description="Max number of recent regular paystubs to average"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Infer salary figures by averaging recent regular (non-bonus) paystubs."""
+    stubs = (
+        db.query(Paystub)
+        .filter(
+            Paystub.user_id == current_user.id,
+            Paystub.pay_type != "bonus",
+        )
+        .order_by(Paystub.pay_date.desc())
+        .limit(limit)
+        .all()
+    )
+
+    if not stubs:
+        return {"found": 0, "avg_net_per_paycheck": None, "avg_gross_per_paycheck": None, "pay_frequency": None}
+
+    avg_net = round(sum(s.net_pay for s in stubs) / len(stubs), 2)
+    avg_gross = round(sum(s.gross_pay for s in stubs if s.gross_pay) / len(stubs), 2) if any(s.gross_pay for s in stubs) else None
+
+    # Detect pay frequency from the most recent stub
+    latest = stubs[0]
+    pay_frequency = "semi_monthly"  # default
+    if latest.period_start and latest.period_end:
+        days = (latest.period_end - latest.period_start).days
+        if days <= 8:
+            pay_frequency = "weekly"
+        elif days <= 16:
+            pay_frequency = "bi_weekly"
+        elif days <= 17:
+            pay_frequency = "semi_monthly"
+        else:
+            pay_frequency = "monthly"
+
+    periods_per_year = {"weekly": 52, "bi_weekly": 26, "semi_monthly": 24, "monthly": 12}.get(pay_frequency, 24)
+    gross_annual = round(avg_gross * periods_per_year, 2) if avg_gross else None
+
+    return {
+        "found": len(stubs),
+        "avg_net_per_paycheck": avg_net,
+        "avg_gross_per_paycheck": avg_gross,
+        "gross_annual_salary": gross_annual,
+        "pay_frequency": pay_frequency,
+        "periods_per_year": periods_per_year,
+        "latest_pay_date": str(latest.pay_date),
+    }
 
 
 @router.put("", response_model=ProfileOut)

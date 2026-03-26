@@ -239,7 +239,8 @@ export interface SyncResult {
 export interface FinancialProfile {
   id: number
   user_id: number
-  salary?: number
+  gross_annual_salary?: number
+  salary?: number  // alias for gross_annual_salary (legacy)
   pay_frequency?: string
   net_per_paycheck?: number
   employer_401k_percent?: number

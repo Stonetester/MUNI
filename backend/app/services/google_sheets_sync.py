@@ -104,11 +104,21 @@ def _ensure_user_categories(user_id: int, db: Session) -> dict:
     return cat_map
 
 
+_INCOME_CAT_NAMES = {"Salary", "Side Income", "Bonus", "Freelance Income"}
+_SAVINGS_CAT_NAMES = {"Savings Transfer", "Emergency Fund", "Vacation", "Retirement"}
+
+
 def _get_or_create_category(name: str, user_id: int, categories: dict, db: Session) -> Optional[Category]:
-    """Return existing category by name, or create a plain expense category on the fly."""
+    """Return existing category by name, or create an appropriate category on the fly."""
     if name in categories:
         return categories[name]
-    cat = Category(user_id=user_id, name=name, kind="expense", color="#94a3b8")
+    if name in _INCOME_CAT_NAMES:
+        kind = "income"
+    elif name in _SAVINGS_CAT_NAMES:
+        kind = "savings"
+    else:
+        kind = "expense"
+    cat = Category(user_id=user_id, name=name, kind=kind, color="#94a3b8")
     db.add(cat)
     db.flush()
     categories[name] = cat
@@ -537,15 +547,27 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                         skipped += 1
                         continue
 
-                    # Spending sheet: positive amounts = expenses; negate them
-                    if amount > 0:
+                    # Detect income rows by category label before deciding sign
+                    raw_cat_lower = raw_cat.strip().lower()
+                    _INCOME_KEYWORDS = {
+                        "income", "salary", "side income", "freelance", "wages",
+                        "commission", "stipend", "revenue", "earning", "earnings",
+                    }
+                    is_income_row = any(kw in raw_cat_lower for kw in _INCOME_KEYWORDS)
+
+                    # Spending sheet: positive = expense (negate), unless it's income
+                    if amount > 0 and not is_income_row:
                         amount = -amount
+                    elif amount < 0 and is_income_row:
+                        amount = abs(amount)  # income should always be positive
 
                     # Auto-detect HYSA contributions by description keywords
                     if _is_hysa_transfer(raw_desc):
                         cat_name = "Savings Transfer"
+                    elif is_income_row:
+                        cat_name = "Salary" if "salary" in raw_cat_lower else "Side Income"
                     elif raw_cat.strip():
-                        cat_name = CATEGORY_NORMALIZE.get(raw_cat.strip().lower(), "Discretionary")
+                        cat_name = CATEGORY_NORMALIZE.get(raw_cat_lower, "Discretionary")
                     else:
                         cat_name = "Discretionary"
                     category = _get_or_create_category(cat_name, user_id, categories, db)

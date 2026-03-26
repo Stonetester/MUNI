@@ -137,9 +137,17 @@ def parse_paylocity(text: str) -> dict:
     regular_pay = d.get("regular_pay", 0.0)
     d["pay_type"] = "bonus" if (bonus_pay > 0 and regular_pay == 0) else "regular"
 
-    # --- Employer 401k Safe Harbor (the "401 Safe H" line) ---
-    d["employer_401k"] = _parse_money(_re_val(r"401 Safe H\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text))
-    d["ytd_401k_employer"] = _parse_money(_re_val(r"401 Safe H\s+[\d.]+\s+[\d.]+\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text))
+    # --- Employer 401k Safe Harbor (the "401 Safe H" line on Paylocity; "401K-ER" or "Employer 401k" on others) ---
+    d["employer_401k"] = (
+        _parse_money(_re_val(r"401 Safe H\s+[\d.]+\s+[\d.]+\s+([\d,]+\.\d{2})", text)) or
+        _parse_money(_re_val(r"401K[-\s]?ER\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
+        _parse_money(_re_val(r"Employer 401[Kk]\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
+        _parse_money(_re_val(r"401\(k\)\s*(?:Match|Employer)\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
+    )
+    d["ytd_401k_employer"] = (
+        _parse_money(_re_val(r"401 Safe H\s+[\d.]+\s+[\d.]+\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text)) or
+        _parse_money(_re_val(r"401K[-\s]?ER\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
+    )
 
     # --- Taxes ---
     d["tax_federal"] = _parse_money(_re_val(r"\bFITW\s+([\d,]+\.\d{2})", text))
@@ -159,8 +167,17 @@ def parse_paylocity(text: str) -> dict:
     d["ytd_taxes_total"] = _parse_money(_re_val(r"^Taxes\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text))
 
     # --- Deductions ---
-    d["deduction_401k"] = _parse_money(_re_val(r"\b401K\s+([\d,]+\.\d{2})", text))
-    d["ytd_401k_employee"] = _parse_money(_re_val(r"\b401K\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text))
+    d["deduction_401k"] = (
+        _parse_money(_re_val(r"\b401K\s+([\d,]+\.\d{2})", text)) or
+        _parse_money(_re_val(r"401\(k\)\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
+        _parse_money(_re_val(r"401K[-\s]?EE\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
+        _parse_money(_re_val(r"Employee 401[Kk]\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
+    )
+    d["ytd_401k_employee"] = (
+        _parse_money(_re_val(r"\b401K\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text)) or
+        _parse_money(_re_val(r"401\(k\)\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
+        _parse_money(_re_val(r"401K[-\s]?EE\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
+    )
 
     d["deduction_dental"] = _parse_money(_re_val(r"\bDental\s+([\d,]+\.\d{2})", text))
     d["deduction_vision"] = _parse_money(_re_val(r"\bVISN\s+([\d,]+\.\d{2})", text))
