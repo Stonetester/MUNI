@@ -857,7 +857,7 @@ export default function FinancialProfilePage() {
             }
           />
         }>
-          <LoansSection />
+          <LoansSection accounts={accounts} />
         </Section>
 
         <Section title="Investment Holdings" icon={TrendingUp} color="bg-blue-600" defaultOpen={false} tooltip={
