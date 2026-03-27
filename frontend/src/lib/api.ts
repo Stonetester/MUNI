@@ -536,6 +536,35 @@ export async function getBudgetEstimates(months = 3): Promise<Array<{
   return res.data
 }
 
+// Statement import
+export interface ParsedStatement {
+  institution: string
+  account_type_hint: string
+  account_label: string
+  statement_date: string | null
+  ending_balance: number | null
+  account_number_hint: string | null
+}
+
+export async function parseStatement(file: File): Promise<ParsedStatement> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await api.post('/statements/parse', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return res.data
+}
+
+export async function createBalanceSnapshot(data: {
+  account_id: number
+  date: string
+  balance: number
+  notes?: string
+}): Promise<BalanceSnapshot> {
+  const res: AxiosResponse<BalanceSnapshot> = await api.post('/balance-snapshots', data)
+  return res.data
+}
+
 // Auto-infer salary from paystubs
 export async function inferSalaryFromPaystubs(): Promise<{
   found: number
