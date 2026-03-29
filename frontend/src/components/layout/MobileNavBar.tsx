@@ -25,6 +25,7 @@ import {
   Mail,
   Home,
   Layers,
+  Receipt,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import TutorialModal from './TutorialModal'
@@ -44,7 +45,7 @@ const moreItems = [
   { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
   { label: 'Home Buying', icon: Home, href: '/home-buying' },
   { label: 'Paystubs', icon: FileText, href: '/paystubs' },
-  { label: 'Statements', icon: Layers, href: '/statements' },
+  { label: 'Statements', icon: Receipt, href: '/statements' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },
   { label: 'What-If', icon: FlaskConical, href: '/scenarios' },

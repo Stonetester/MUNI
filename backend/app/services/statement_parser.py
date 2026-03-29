@@ -1,6 +1,7 @@
 """
 Account statement PDF parser.
-Supports: EverBank (HYSA/savings), John Hancock (401k), Charles Schwab (IRA/brokerage).
+Supports: EverBank (HYSA/savings), John Hancock (401k), Charles Schwab (IRA/brokerage),
+          Fidelity NetBenefits (401k).
 Returns institution, account type hint, statement date, and ending balance.
 """
 from __future__ import annotations
@@ -209,17 +210,22 @@ def _parse_schwab(text: str) -> Optional[ParsedStatement]:
     balance = None
     stmt_date = None
 
-    # 'Ending Account Value as of 01/31  $3,572.95' (spaced) or 'EndingAccountValueasof01/31' (compact)
-    eav_match = re.search(
-        r"Ending\s*Account\s*Value\s*as\s*of\s*\d{1,2}/\d{1,2}\s+Beginning",
-        text, re.IGNORECASE,
-    )
-    # Grab the dollar amount from 'Ending Account Value  $X,XXX.XX  $X,XXX.XX'
+    # 'Ending Account Value  $X,XXX.XX' (spaced) or compact where balance is on the next line:
+    #   'EndingAccountValueasof02/28 BeginningAccountValueasof02/01\n$8,054.47'
+    # Newer format: the balance follows within ~150 non-$ chars of "Ending Account Value"
     eav_bal = re.search(
-        r"Ending\s*Account\s*Value\s+\$([\d,]+\.\d{2})", text, re.IGNORECASE
+        r"Ending\s*Account\s*Value[^\$]{0,150}\$([\d,]+\.\d{2})",
+        text, re.IGNORECASE | re.DOTALL,
     )
     if eav_bal:
         balance = _parse_money(eav_bal.group(1))
+
+    # Older format: "EndingAccountValue BeginningAccountValue ...\nasofMM/DD ...\n$X,XXX.XX"
+    # The literal "($)" in "Change($)" stops the above pattern; fall back to "EndingValue $X"
+    if balance is None:
+        ev_bal = re.search(r"EndingValue\s+\$([\d,]+\.\d{2})", text, re.IGNORECASE)
+        if ev_bal:
+            balance = _parse_money(ev_bal.group(1))
 
     # Statement period: 'January1-31,2026' (compact) or 'January 1-31, 2026' (spaced)
     period_match = re.search(
@@ -235,9 +241,14 @@ def _parse_schwab(text: str) -> Optional[ParsedStatement]:
         except ValueError:
             pass
 
-    # Account number last 4
-    acct_match = re.search(r"Account Number\s+[\dX]+-(\d{4})", text)
-    acct_hint = acct_match.group(1) if acct_match else None
+    # Account number last 4 — compact "AccountNumber\n1764-4800" or spaced "Account Number  XXXX-4800"
+    acct_match = re.search(r"Account\s*Number\s+[\dX]+-(\d{4})", text)
+    if not acct_match:
+        # Fallback: first ####-#### pattern in the document
+        acct_match2 = re.search(r"\b\d{4}-(\d{4})\b", text)
+        acct_hint = acct_match2.group(1) if acct_match2 else None
+    else:
+        acct_hint = acct_match.group(1)
 
     return ParsedStatement(
         institution="Schwab",
@@ -249,13 +260,53 @@ def _parse_schwab(text: str) -> Optional[ParsedStatement]:
     )
 
 
+# ── Fidelity NetBenefits (401k) ───────────────────────────────────────────────
+
+def _parse_fidelity(text: str) -> Optional[ParsedStatement]:
+    """
+    Fidelity NetBenefits 401(k) quarterly statement (HTML→PDF export).
+    Key lines:
+      Statement Period: 07/01/2025 to 09/30/2025
+      Ending Balance $5,017.96
+    """
+    if "Fidelity" not in text and "fidelity" not in text.lower():
+        return None
+
+    # Statement date — end of period: "Statement Period: MM/DD/YYYY to MM/DD/YYYY"
+    stmt_date = None
+    period_match = re.search(
+        r"Statement Period:\s+\S+\s+to\s+(\d{1,2}/\d{1,2}/\d{4})",
+        text,
+    )
+    if period_match:
+        try:
+            stmt_date = datetime.strptime(period_match.group(1), "%m/%d/%Y").date()
+        except ValueError:
+            pass
+
+    # Ending balance: "Ending Balance $5,017.96"
+    balance = None
+    eb_match = re.search(r"Ending Balance\s+\$?([\d,]+\.\d{2})", text)
+    if eb_match:
+        balance = _parse_money(eb_match.group(1))
+
+    return ParsedStatement(
+        institution="Fidelity",
+        account_type_hint="retirement_401k",
+        account_label="Fidelity 401(k)",
+        statement_date=stmt_date,
+        ending_balance=balance,
+        account_number_hint=None,
+    )
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 def parse_statement(pdf_path: str) -> ParsedStatement:
     """Parse an account statement PDF and return extracted data."""
     text = _extract_text(pdf_path)
 
-    for parser in (_parse_everbank, _parse_john_hancock, _parse_schwab):
+    for parser in (_parse_everbank, _parse_john_hancock, _parse_fidelity, _parse_schwab):
         result = parser(text)
         if result is not None:
             return result

@@ -9,7 +9,7 @@ import { parseStatement, createBalanceSnapshot, getAccounts } from '@/lib/api'
 import type { ParsedStatement } from '@/lib/api'
 import type { Account } from '@/lib/types'
 import {
-  Upload, CheckCircle, AlertCircle, Loader2, FileText, X, Layers,
+  Upload, CheckCircle, AlertCircle, Loader2, FileText, X, Receipt,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -271,7 +271,7 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
       <Upload size={28} className="mx-auto mb-3 text-text-secondary" />
       <p className="text-sm font-medium text-text-primary">Drop PDFs here or click to browse</p>
       <p className="text-xs text-text-secondary mt-1">
-        EverBank · John Hancock · Charles Schwab
+        EverBank · John Hancock · Charles Schwab · Fidelity NetBenefits
       </p>
     </div>
   )
@@ -364,7 +364,7 @@ export default function StatementsPage() {
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
-          <Layers size={22} className="text-primary" />
+          <Receipt size={22} className="text-primary" />
           <div>
             <h1 className="text-xl font-semibold text-text-primary">Statement Import</h1>
             <p className="text-sm text-text-secondary">
@@ -388,6 +388,10 @@ export default function StatementsPage() {
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
               Schwab (IRA / Brokerage)
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-yellow-400 shrink-0" />
+              Fidelity NetBenefits (401k)
             </span>
           </div>
         </Card>

@@ -55,6 +55,18 @@ def create_balance_snapshot(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
+    # Dedup: if a snapshot already exists for this account + date, return it unchanged
+    existing = (
+        db.query(BalanceSnapshot)
+        .filter(
+            BalanceSnapshot.account_id == snapshot_in.account_id,
+            BalanceSnapshot.date == snapshot_in.date,
+        )
+        .first()
+    )
+    if existing:
+        return existing
+
     snapshot = BalanceSnapshot(**snapshot_in.model_dump())
     db.add(snapshot)
     db.commit()

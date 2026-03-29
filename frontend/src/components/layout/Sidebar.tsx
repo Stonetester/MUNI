@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   Layers,
+  Receipt,
   Sparkles,
   Mail,
   Home,
@@ -41,7 +42,7 @@ const ALL_PRIMARY_ITEMS = [
   { id: 'profile', label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
   { id: 'home-buying', label: 'Home Buying', icon: Home, href: '/home-buying' },
   { id: 'paystubs', label: 'Paystubs', icon: FileText, href: '/paystubs' },
-  { id: 'statements', label: 'Statements', icon: Layers, href: '/statements' },
+  { id: 'statements', label: 'Statements', icon: Receipt, href: '/statements' },
   { id: 'settings', label: 'Settings', icon: Settings, href: '/settings' },
 ]
 
