@@ -1,5 +1,5 @@
 # Muni — Claude Project Context
-_Last updated: 2026-03-24 (session 8). Active branch: `main`._
+_Last updated: 2026-03-29 (session 10). Active branch: `main`._
 
 ---
 
@@ -52,15 +52,22 @@ systemctl restart muni-backend
 
 ---
 
-## Git State (as of 2026-03-23)
-- **Active branch**: `main` — all features merged, working directly on main
-- **Latest commits**: session 7 sheets/dupe-review fixes, session 6 PWA icons (947639e8), UX features (0eb98660)
-- **Workflow**: develop on main → `muni-deploy` on server
+## Git State (as of 2026-03-29)
+- **Active branch**: `main` — all session 10 features merged
+- **Branches**:
+  - `main` — production-ready, working branch
+  - `feature/ios-redesign` — full visual redesign experiment (jade green, DM Serif, iOS nav); NOT merged — needs local review before deciding
+- **Workflow**: develop on `feature/*` branch → merge to `main` → `muni-deploy` on server
 - **Branch history (all merged into main)**:
   - `dev` — Docker, cleanup, bug fixes
   - `feature/insights` — calendar, insights, profile switcher, tutorial, getting started
   - `feature/mobile-ai-reports` — AI report page, email notifications
   - `feature/paystub-income-sync` — paystub → income transaction auto-creation, bulk upload
+  - `feature/todo-fixes` — session 7 sheets + dupe-review fixes
+  - `feature/ux-fixes` — session 6 UX improvements
+  - `feature/data-import-and-paystubs` — import scripts, test suite, joint labels, MonthlyFlowCard scroll
+  - `feature/session-9-todo` — session 9 features
+  - `feature/statement-import` — statement PDF import for balance snapshots (session 10)
 
 ---
 
@@ -72,22 +79,37 @@ systemctl restart muni-backend
 3. User reviews the pre-filled form, corrects any fields, hits **Save**
 4. On save, backend automatically creates:
    - A **Salary** (or **Bonus**) income transaction for `net_pay` posted to the user's checking account on the pay date
-   - An **Employer 401k** income transaction for `employer_401k` (the "401 Safe H" line from Paylocity)
+   - An **Employer 401k** income transaction for `employer_401k` posted to 401k account (not checking)
    - Both transactions tagged `import_source = "paystub:{id}"` for traceability
 5. Deleting a paystub removes its transactions too
+6. Updating a paystub (`PUT /paystubs/{id}`) deletes old transactions then recreates from new values
 
 ### Expenses → Google Sheets Sync
 1. User enters their Google Sheet ID in **Settings → Google Sheets Sync**
 2. APScheduler polls the sheet every 30 minutes (or manual "Sync Now")
 3. Each monthly tab is read (format: `Jan 2025`, `Feb 2025`, etc.)
-4. Rows are mapped: `Date` → date, `Description`/`Expense` → description, `Amount` → amount (negated to negative)
-5. Deduplication by hash of (date + description + amount) — safe to sync repeatedly
-6. Service account credentials: `backend/credentials/google-sheets-key.json` (gitignored)
-7. Keaton's sheet ID: `1zq-UuBUmZIx70lM_EYajSv3suXwUaMDjhxuW4m-Eqac`
+4. Rows are mapped: `Date` → date, `Description`/`Expense` → description, `Amount` → amount
+5. **Income detection**: if category label contains income/salary/freelance/wages/commission/stipend → amount kept positive, mapped to "Salary" or "Side Income" category (NOT negated as expense)
+6. **HYSA auto-detect**: descriptions containing "hysa"/"everbank"/"high yield" → "Savings Transfer" category
+7. Deduplication by hash of (date + description + amount) — safe to sync repeatedly
+8. Upsert: if a sheet row's amount changes, the app transaction updates on next sync
+9. Service account credentials: `backend/credentials/google-sheets-key.json` (gitignored)
+10. Keaton's sheet ID: `1zq-UuBUmZIx70lM_EYajSv3suXwUaMDjhxuW4m-Eqac`
+11. Katherine's format: Item ID/Type/Price/Status columns; roth/roth ira → Savings Transfer
 
-### Backfill → CSV Import
+### Account Snapshots → Statement PDFs
+1. User goes to `/statements` and uploads one or more PDF statements
+2. Backend (`statement_parser.py`) uses **pdfplumber** to extract institution, date, and ending balance
+3. Supported institutions: **EverBank** (HYSA), **John Hancock** (401k), **Charles Schwab** (IRA/brokerage)
+4. Account is auto-matched by type (HYSA → EverBank, 401k → JH, IRA/brokerage → Schwab)
+5. User reviews pre-filled form, adjusts account/date/balance if needed, hits **Save Snapshot**
+6. Calls existing `POST /balance-snapshots` — no new DB model needed
+7. Parser handles whitespace-stripped PDFs; picks the *last* "Total Value on" line for JH (ending, not beginning)
+
+### Backfill → CSV/Excel Import
 - `Transactions → Import` accepts CSV with Date, Description, Amount columns
 - Columns are auto-mapped; import source tagged `"csv"`
+- Full Excel import utility in `backend/import/` — auto-discovers account/category IDs, README included
 - Use for historical bank data backfill
 
 ---
@@ -103,77 +125,94 @@ systemctl restart muni-backend
 6. ✅ **Production deploy** — `muni-deploy` script, systemd auto-start, nginx reverse proxy on CT 102
 7. ✅ **Tailscale subnet routing** — Roman (10.0.0.11) advertises 10.0.0.0/24; muni at 10.0.0.48
 8. ✅ **`backend/venv/` removed from git** — Windows venv broke Linux server; gitignored properly
+9. ✅ **Test suite** — `backend/tests/` covers all endpoints (934 lines, 100% pass rate)
 
 ### App Features
-9. ✅ **Dashboard** — net worth card, quick stats, accounts grid, monthly flow chart (clickable), spending by category, forecast preview, upcoming events, alerts card, recent transactions
-10. ✅ **Transactions** — paginated list, CSV/XLSX import, add/edit/delete, filter by date/account/category/search, export CSV
-11. ✅ **Accounts** — CRUD, balance history chart (via `/balance-snapshots?account_id=`), account types: checking/savings/hysa/brokerage/ira/401k/hsa/credit_card/student_loan/car_loan/mortgage/other
-12. ✅ **Budget** — categories with `budget_amount`, recurring rules, spending vs budget comparison, over-budget alerts
-13. ✅ **Forecast** — 60-month net worth + cash flow charts (both clickable months → `MonthDetailModal`), category contribution table, scenario selector
-14. ✅ **Life Events** — CRUD (name, type, start/end dates, total cost, monthly breakdown, active toggle)
-15. ✅ **What-If Scenarios** — clone baseline, compare two scenarios side-by-side
-16. ✅ **Alerts** — over-budget categories + upcoming event payments with severity levels
-17. ✅ **Spending Calendar** (`/calendar`) — monthly grid with day-level pie charts, click day for transaction detail
-18. ✅ **Spending Insights** (`/insights`) — health scorecard, trend analysis, z-score anomaly detection, debt payoff scenarios
-19. ✅ **AI Financial Report** (`/ai-report`) — Claude-powered monthly analysis via Anthropic API
-20. ✅ **Notifications** (`/notifications`) — weekly email digest, SMTP config, preview + send now
-21. ✅ **Google Sheets Sync** — Settings page: paste Sheet ID, auto-polls every 30 min via APScheduler, manual Sync Now, shows last sync time/result/row counts; duplicate review (expandable list of skipped rows post-sync); upsert (amount updates when sheet row edited); HYSA auto-categorize; Katherine's column format (Item ID/Type/Price/Status) fully supported
-22. ✅ **Tutorial modal** — `?` button in sidebar footer → 10-step app walkthrough
-23. ✅ **Getting Started** (`/getting-started`) — interactive setup checklist (auto-completes as data is added), progress bar, quick links
-24. ✅ **Paystubs** (`/paystubs`) — upload Paylocity PDF → pdfplumber parses all fields → review form → save → **auto-creates income transactions** (Salary/Bonus + Employer 401k); bonus detection (`pay_type`, `bonus_pay`); YTD stats; avg net excludes bonus stubs
-25. ✅ **Financial Profile** (`/financial-profile`) — salary/pay frequency/net per paycheck, HYSA APY + contributions, IRA contributions, student loans (per-loan balance/rate/payment), investment holdings (ticker/fund/value/contribution/return), compensation history (raises/bonuses/awards)
+10. ✅ **Dashboard** — net worth card (expandable with HYSA-excluded figure + asset/liability breakdown), quick stats, accounts grid, monthly flow chart (clickable, scrollable to earliest transaction), spending by category, forecast preview, upcoming events, alerts card, recent transactions
+11. ✅ **Transactions** — paginated list, CSV/XLSX import, add/edit/delete, filter by date/account/category/search, export CSV; mobile delete button always visible
+12. ✅ **Accounts** — CRUD, balance history chart, backdated snapshot entry, joint badge; account types: checking/savings/hysa/brokerage/ira/401k/hsa/credit_card/student_loan/car_loan/mortgage/other
+13. ✅ **Budget** — categories with `budget_amount`, recurring rules, spending vs budget comparison, over-budget alerts, 3-month avg spending estimate hint per category
+14. ✅ **Forecast** — 60-month net worth + cash flow charts (both clickable months → `MonthDetailModal`), category contribution table, scenario selector; income labeled as "net (after taxes & deductions)"
+15. ✅ **Life Events** — CRUD (name, type, start/end dates, total cost, monthly breakdown, active toggle); bulk "Clear All" with confirm dialog
+16. ✅ **What-If Scenarios** — clone baseline, compare two scenarios side-by-side
+17. ✅ **Alerts** — over-budget categories + upcoming event payments with severity levels
+18. ✅ **Spending Calendar** (`/calendar`) — monthly grid with day-level pie charts, click day for transaction detail
+19. ✅ **Spending Insights** (`/insights`) — health scorecard, trend analysis, z-score anomaly detection, debt payoff scenarios
+20. ✅ **AI Financial Report** (`/ai-report`) — Claude-powered monthly analysis via Anthropic API
+21. ✅ **Notifications** (`/notifications`) — weekly email digest + balance snapshot reminder; SMTP config, preview + send now; snapshot reminder lists stale accounts with days-since-update and why it matters; auto-sends Sundays 10am
+22. ✅ **Google Sheets Sync** — Settings page: paste Sheet ID, auto-polls every 30 min, manual Sync Now; duplicate review (expandable skipped rows); upsert; HYSA auto-categorize; income row detection; Katherine's column format; dupe review with reason
+23. ✅ **Tutorial modal** — `?` button in sidebar footer → 10-step app walkthrough including Joint View step
+24. ✅ **Getting Started** (`/getting-started`) — interactive setup checklist (auto-completes as data is added), progress bar, quick links
+25. ✅ **Paystubs** (`/paystubs`) — upload Paylocity or G&P PDF → pdfplumber parses all fields → review form (single) or BatchQueueView (multi/folder) → save → auto-creates income transactions; bonus detection; YTD stats; avg net excludes bonus stubs
+26. ✅ **Financial Profile** (`/financial-profile`) — salary/pay frequency/net per paycheck (with "Auto-calculate from paystubs" button), HYSA APY + contributions, IRA contributions, student loans (per-loan balance/rate/payment), investment holdings (ticker/fund/value/contribution/return), compensation history
+27. ✅ **Joint accounts** — `is_joint` flag on accounts; "Joint" badge on AccountCard; checkbox in AccountForm; both users can see joint accounts; `is_joint`/`joint_user_id` columns added inline on startup
+28. ✅ **Balance snapshot reminder email** — `build_snapshot_reminder_html()` in email_service; lists stale accounts by type with last-updated date, days-ago, why it matters; scheduler job every Sunday 10am; preview + manual send on Notifications page
+29. ✅ **Statement import** (`/statements`) — upload EverBank/John Hancock/Schwab PDFs → pdfplumber parser extracts institution, date, ending balance → review form with auto-matched account selector → saves via POST /balance-snapshots; supports batch upload
 
 ---
 
 ## Key File Locations
 
 ### Backend
-- Entry point: `backend/app/main.py` — FastAPI app, CORS, router registration, lifespan (APScheduler)
+- Entry point: `backend/app/main.py` — FastAPI app, CORS, router registration, lifespan (APScheduler: sheets sync 30min, weekly digest Mon 8am, snapshot reminder Sun 10am)
 - Routers: `backend/app/routers/`
   - `auth.py` — `/auth/switch/{username}` (no-password JWT login)
-  - `dashboard.py` — `/dashboard` aggregated response
+  - `dashboard.py` — `/dashboard` aggregated response; `flow_months` goes back to earliest transaction date (up to 60mo)
   - `transactions.py` — CRUD, CSV/XLSX import, filters, pagination (skip/limit)
-  - `accounts.py` — account CRUD
+  - `accounts.py` — account CRUD; queries own + joint accounts
   - `balance_snapshots.py` — `/balance-snapshots?account_id=` (chart data)
   - `categories.py` — category CRUD + budget amounts
-  - `budget.py` — `/budget/summary` (spending vs budget by category)
+  - `budget.py` — `/budget/summary` (spending vs budget); `/budget/estimates` (3-month avg per category)
   - `forecast.py` — 60-month projection engine endpoint
-  - `events.py` — life events CRUD
+  - `events.py` — life events CRUD + bulk DELETE `/events`
   - `scenarios.py` — scenario CRUD + clone
   - `alerts.py` — budget + event alerts
   - `import_data.py` — CSV/XLSX import
   - `sync.py` — `/sync/google-sheets/config` (GET/PUT) + `/sync/google-sheets/run` (POST)
-  - `financial_profile.py` — GET/PUT profile; sub-routes for `/loans`, `/holdings`, `/compensation`
-  - `paystubs.py` — POST `/paystubs/parse` (upload+extract), POST `/paystubs` (save+create transactions), GET `/paystubs`, DELETE `/paystubs/{id}`
-  - `notifications.py` — email digest config + send
+  - `financial_profile.py` — GET/PUT profile; `/financial-profile/infer-salary` (auto-calc from paystubs); sub-routes for `/loans`, `/holdings`, `/compensation`
+  - `paystubs.py` — POST `/paystubs/parse`, POST `/paystubs` (save+create transactions), GET `/paystubs`, DELETE `/paystubs/{id}`, PUT `/paystubs/{id}` (recreates transactions)
+  - `notifications.py` — email digest config + send; `/notifications/snapshot-preview` GET; `/notifications/send-snapshot` POST
   - `ai_report.py` — Claude API monthly report
+  - `joint.py` — joint view transaction list with `owner` field for color-coded display
+  - `statements.py` — `POST /statements/parse` — upload PDF, returns parsed institution/date/balance
 - Services: `backend/app/services/`
   - `forecasting.py` — 60-month projection engine (historical avgs + recurring rules + life events + debt amortization + investment growth)
-  - `paystub_parser.py` — pdfplumber + regex extraction for Paylocity AND G&P (Grimm & Parker) formats; bonus detection (requires period+YTD pair, lone YTD carry-forwards ignored); `pay_type` = "bonus" only when `bonus_pay > 0` and `regular_pay == 0`
-  - `google_sheets_sync.py` — sheets API client, tab parsing, deduplication (SHA-256 hash), upsert (amount updates), HYSA auto-categorize, Katherine's "Item ID/Type/Price/Status" column format, duplicate review list in sync result
+  - `statement_parser.py` — pdfplumber + regex for EverBank, John Hancock, Schwab statements; `parse_statement(pdf_path)` returns `ParsedStatement` dataclass; handles whitespace-stripped PDFs; JH uses `findall` + last match to get ending (not beginning) balance
+  - `paystub_parser.py` — pdfplumber + regex for Paylocity AND G&P (Grimm & Parker); bonus detection (requires period+YTD pair, lone YTD carry-forwards ignored); `pay_type = "bonus"` only when `bonus_pay > 0` and `regular_pay == 0`; employee 401k: tries `401K`, `401(k)`, `401K-EE`, `Employee 401k`; employer 401k: tries `401 Safe H`, `401K-ER`, `Employer 401k`, `401(k) Match/Employer`
+  - `google_sheets_sync.py` — sheets API, tab parsing, SHA-256 dedup, upsert, HYSA auto-categorize, income row detection (salary/freelance → keeps positive, maps to Salary/Side Income), Katherine's format, duplicate review list
+  - `email_service.py` — weekly digest + snapshot reminder (`build_snapshot_reminder_html`, `send_snapshot_reminder_for_user`, `send_snapshot_reminders_all`); stale threshold: 35 days for monthly accounts, 95 days for quarterly
 - Models: `backend/app/models/`
-  - `user.py`, `account.py`, `transaction.py`, `category.py`, `recurring_rule.py`
+  - `user.py`, `account.py` (has `is_joint`, `joint_user_id`), `transaction.py`, `category.py`, `recurring_rule.py`
   - `balance_snapshot.py`, `life_event.py`, `scenario.py`
   - `sync_config.py` — `UserSyncConfig` (sheet_id, is_enabled, last_sync_at, last_sync_status)
-  - `financial_profile.py` — `FinancialProfile`, `StudentLoan`, `InvestmentHolding`, `CompensationEvent`
+  - `financial_profile.py` — `FinancialProfile` (field: `gross_annual_salary` — NOT `salary`), `StudentLoan`, `InvestmentHolding`, `CompensationEvent`
   - `paystub.py` — `Paystub` model with all parsed fields including `pay_type`, `bonus_pay`
 - Seed: `backend/seed/seed_data.py` — users (keaton, katherine) + categories only
+- Import utility: `backend/import/` — Excel/CSV historical import scripts with auto-discovery of account/category IDs; includes README and testing guide
+- Tests: `backend/tests/` — full endpoint test suite (934 lines)
 - Migrations: `backend/alembic/versions/`
   - `001_initial_schema.py` — all base tables
-  - `002_paystub_bonus_fields.py` — adds `pay_type` (String) and `bonus_pay` (Float) to paystubs via `batch_alter_table`
+  - `002_paystub_bonus_fields.py` — adds `pay_type` (String) and `bonus_pay` (Float) to paystubs
+  - `003_home_buying_profiles.py` — home buying profile fields; `down_revision = "002"`
 - Credentials (gitignored): `backend/credentials/google-sheets-key.json`
 - PDF uploads (gitignored): `backend/uploads/paystubs/`
 
 ### Frontend
-- API calls: `frontend/src/lib/api.ts` — all `fetch()` wrappers
-- Types: `frontend/src/lib/types.ts` — all TypeScript interfaces matching backend schemas exactly
+- API calls: `frontend/src/lib/api.ts` — all fetch wrappers including: `getBudgetEstimates`, `inferSalaryFromPaystubs`, `getSnapshotReminderPreview`, `sendSnapshotReminderNow`, `parseStatement`, `createBalanceSnapshot`
+- Types: `frontend/src/lib/types.ts` — all TypeScript interfaces; `FinancialProfile` uses `gross_annual_salary` (not `salary`)
 - Auth utils: `frontend/src/lib/auth.ts` — `login()`, `switchProfiles()`, `getAltUser()`, `storeAltProfile()`
 - Layout + nav: `frontend/src/components/layout/`
   - `AppLayout.tsx` — top bar, toast notifications, ProfileSwitcher
   - `Sidebar.tsx` — desktop nav with `?` tutorial button in footer and "Get Started" link
   - `MobileNavBar.tsx` — mobile bottom nav + More drawer
   - `ProfileSwitcher.tsx` — dual-user JWT switcher (stores both tokens)
-  - `TutorialModal.tsx` — 10-step app walkthrough
+  - `TutorialModal.tsx` — 10-step app walkthrough (includes Joint View step)
+- Dashboard components: `frontend/src/components/dashboard/`
+  - `MonthlyFlowCard.tsx` — horizontally scrollable bar chart; auto-scrolls to current month; current month highlighted with ReferenceLine; forecast months have reduced opacity; fed `flowMonths` prop from dashboard (dynamic months_back)
+  - `NetWorthCard.tsx` — expandable; shows HYSA-excluded figure; total assets/liabilities breakdown; uses `mode` from `useViewMode()`
+- Accounts: `frontend/src/components/accounts/`
+  - `AccountCard.tsx` — shows blue "Joint" badge when `is_joint=true`
+  - `AccountForm.tsx` — Joint account checkbox; student loan sync option (create Financial Profile loan entry when adding new student_loan account)
 - UI components: `frontend/src/components/ui/`
   - `MonthDetailModal.tsx` — clickable month detail (forecast data + category breakdown)
 - All pages: `frontend/src/app/`
@@ -183,8 +222,10 @@ systemctl restart muni-backend
   - `/insights` — statistical spending analysis
   - `/ai-report` — Claude-powered monthly financial report
   - `/getting-started` — interactive setup checklist
-  - `/paystubs` — PDF upload, parse review form, paystub history, income transaction indicator
-  - `/financial-profile` — salary, loans, holdings, compensation history
+  - `/paystubs` — single ReviewForm (1 file) or BatchQueueView (multi/folder upload)
+  - `/financial-profile` — salary (with auto-calculate button), loans, holdings, compensation history
+  - `/notifications` — weekly digest + snapshot reminder (stale account list + manual send)
+  - `/statements` — upload EverBank/JH/Schwab PDFs, review parsed results, save balance snapshots
 
 ---
 
@@ -206,17 +247,16 @@ def save_paystub(data: PaystubIn, db: Session, current_user: User):
 `_create_income_transactions()` logic:
 1. Finds the user's deposit account (priority: checking → savings → hysa → paycheck → other)
 2. Finds income category: bonus stubs use "Bonus" category; regular use "Salary"
-3. Creates a Salary/Bonus income transaction for `net_pay` on the pay date
-4. Creates an Employer 401k income transaction for `employer_401k` (if > 0)
+3. Creates a Salary/Bonus income transaction for `net_pay` on the pay date → checking/savings account
+4. Creates an Employer 401k income transaction for `employer_401k` (if > 0) → 401k account
 5. Both tagged `import_source = f"paystub:{stub.id}"`
 
-Deleting a paystub (`DELETE /paystubs/{id}`) calls `_delete_paystub_transactions()` first — removes all transactions with `import_source = f"paystub:{id}"`.
-
+Deleting a paystub (`DELETE /paystubs/{id}`) calls `_delete_paystub_transactions()` first.
 Updating a paystub (`PUT /paystubs/{id}`) deletes old transactions then recreates from new values.
 
 **Bonus detection** in `paystub_parser.py`:
-- Regex searches for "Bonus", "Supp Bonus", "Performance Bonus", "Annual Bonus", "Supplemental" in PDF text
-- If `bonus_pay > 0` → `pay_type = "bonus"` else `"regular"`
+- G&P carries YTD bonus on EVERY subsequent stub — fix requires TWO numbers (period + YTD) after keyword
+- `pay_type = "bonus"` only when `bonus_pay > 0` AND `regular_pay == 0`
 - Bonus stubs get yellow badge in UI; excluded from avg-net calculation
 
 ---
@@ -231,6 +271,8 @@ Updating a paystub (`PUT /paystubs/{id}`) deletes old transactions then recreate
 | Balance snapshots | `/balance-snapshots?account_id=` | `getAccountSnapshots(id)` | query param, not path param |
 | Import source | `import_source` on Transaction | `import_source?: string` | format: "paystub:42", "sheets:JAN2025", "csv" |
 | Paystub bonus | `pay_type` + `bonus_pay` | `pay_type?: string` + `bonus_pay?: number` | added in migration 002 |
+| Financial profile salary | `gross_annual_salary` | `gross_annual_salary` | frontend type also has `salary?` as legacy alias — always write to `gross_annual_salary` |
+| Joint accounts | `is_joint` + `joint_user_id` | `is_joint?: boolean` | columns added inline on startup; no separate migration file needed |
 
 ---
 
@@ -274,94 +316,92 @@ _Established 2026-03-24. Use when advising on account setup, forecasting, or syn
 | Student Loans | `student_loan` | Yes — confirm when they hit $0 |
 
 **Key decisions:**
-- Credit card accounts are NOT tracked — paid in full monthly, no meaningful standing balance, manual updates would be high-maintenance noise
+- Credit card accounts are NOT tracked — paid in full monthly, no meaningful standing balance
 - BofA Checking does NOT need balance snapshots — all spending flows through Google Sheet sync already
 - Neither Keaton nor Katherine record credit card payments in their Google Sheets — no double-counting risk
 - Google Sheets track actual purchases only (not CC payments or internal transfers)
 
-**Planned feature: Monthly snapshot reminder email**
-- Scheduled email listing stale accounts (401k, IRA, HYSA, BofA Savings, student loans)
-- Shows last-updated date per account and why it matters for forecast accuracy
-- Toggle in Settings alongside existing weekly digest
-- Not yet built
+## Katherine's Setup
+- **Employer**: G&P (Grimm & Parker) — paystub format differs from Paylocity; parser has fallback patterns
+- **Side income**: Freelance graphic design — entered in her Google Sheet under an income category (e.g. "Income", "Freelance"); sync detects this and creates positive income transactions instead of negating
+- **Taxes**: Records income taxes paid as expense under "Taxes" category in her sheet
+- **Rent**: Keaton pays $2,075 total rent; Katherine pays him back $1,075; Keaton's net cost ~$1,000 + electricity + internet. Neither records CC payments or internal transfers in their sheets.
+- **HYSA**: Both Keaton and Katherine contribute to the same EverBank HYSA. Currently Keaton owns the HYSA account in the app. Joint HYSA model (so her contributions apply to the same account without double-counting) is not yet fully implemented — see Planned Features.
+
+---
+
+## Session 10 Changes (2026-03-29)
+
+### New Features
+- **Statement import** (`/statements`) — upload EverBank, John Hancock, and Schwab PDF statements to auto-create balance snapshots; drag-and-drop batch upload, pre-matched accounts, editable review form
+
+### New Backend
+- `POST /statements/parse` — accepts PDF upload, returns `{ institution, account_type_hint, account_label, statement_date, ending_balance, account_number_hint }`
+- `backend/app/services/statement_parser.py` — parser with 3 institution handlers; tested against all 18 actual statement PDFs
+
+### Bug Fixes
+- **`ANTHROPIC_API_KEY` not loading** — pydantic Settings had `extra=forbid`; adding key to `.env` crashed the backend with a validation error. Fixed by declaring `ANTHROPIC_API_KEY: str = ""` in `config.py`
+- **Financial profile build error** — `LoansSection` was missing required `accounts` prop at call site in `financial-profile/page.tsx`
+
+### Production Config — Anthropic API Key
+Set in `/opt/muni/app/backend/.env` on the server:
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+`ANTHROPIC_API_KEY` is now declared in `Settings` (defaults to `""`) so the backend starts cleanly whether or not the key is present.
+
+---
+
+## Session 9 Changes (2026-03-27)
+
+### New Backend Endpoints
+- `GET /budget/estimates?months=3` — returns N-month average spending per expense/savings category (excludes current month)
+- `GET /financial-profile/infer-salary` — averages recent regular (non-bonus) paystubs; returns avg net/gross per paycheck, inferred annual salary, detected pay frequency
+- `GET /notifications/snapshot-preview` — returns list of stale accounts for snapshot reminder preview
+- `POST /notifications/send-snapshot` — manually triggers snapshot reminder email
+
+### New Scheduler Jobs
+- **Snapshot reminder**: every Sunday at 10:00 AM — emails users with stale account balances
+
+### Key Bug Fixes
+- **`gross_annual_salary` field name**: frontend was sending `salary` but backend expects `gross_annual_salary` — now correctly reads and writes; `FinancialProfile` type has both (`gross_annual_salary` primary, `salary` as legacy alias)
+- **Google Sheets income rows**: positive amounts were being negated even when category = income/salary/freelance; now detected and kept positive, mapped to appropriate income category
+- **Katherine's 401k parsing**: parser now tries 4 fallback patterns per 401k field type to handle non-Paylocity formats
+
+### Branch Cleanup (2026-03-27)
+Cleaned up 6 stale/empty branches. Kept only:
+- `main` — all work merged here
+- `feature/ios-redesign` — pending review (full visual redesign, not ready)
 
 ---
 
 ## Planned Features (Not Yet Built)
 
-### ✅ Sidebar Collapse + Display Preferences Toggle (DONE — session 6)
-- Hamburger button in AppLayout header toggles sidebar open/closed, persisted to localStorage (`sidebarOpen`)
-- Main content margin adjusts when sidebar is hidden (`md:ml-0` vs `md:ml-[220px]`)
-- Settings page → "Display Preferences" card with toggle to show/hide "Get Started" in sidebar
-- Uses custom `muni:settingsChanged` DOM event for same-tab sync + `storage` event for cross-tab
+### Mobile Transactions Page Redesign
+- Current layout is functional but hard to use on mobile
+- Needs: better filter UI (collapsible), swipe actions, cleaner card layout
 
-### ✅ Getting Started Auto-Update + Cleanup (DONE — session 6)
-- `visibilitychange` listener re-fetches completion status when user returns to tab
-- Removed "Connect a checking account" step
-- `load` converted to `useCallback` for proper dependency tracking
-
-### ✅ Student Loan Auto-Import in Financial Profile (DONE — session 6)
-- `student_loan` account types show as importable in Financial Profile → Loans section
-- Orange banner with per-account import buttons pre-fills name, balance, institution
-- Unlinked accounts detected by lowercased name comparison
-
-### ✅ PWA Home Screen Icon (DONE — session 6)
-- `icon.tsx` — 192×192 green (#10B981) MUNI favicon via `ImageResponse`
-- `apple-icon.tsx` — 180×180 Apple touch icon for iOS home screen
-- `icon-512/route.tsx` — 512×512 edge route for Android PWA install (must be `.tsx` not `.ts`)
-- `manifest.ts` — PWA manifest with standalone display, green theme
-- `layout.tsx` — `Viewport` export, `appleWebApp` metadata, manifest link
-
-### ✅ Bulk Paystub Upload (DONE — `feature/paystub-income-sync`)
-- Multi-file drop, multi-file picker (`multiple` on `<input>`), **folder drop** (FileSystem API `webkitGetAsEntry()` traversal), and **folder picker** (`webkitdirectory` input)
-- Single file → goes to existing single ReviewForm (review all fields before saving)
-- Multiple files → `BatchQueueView`: parses sequentially, shows each stub status (queued/parsing/done/saved/error/skipped)
-- Per-stub actions: inline Edit (4-field quick form), Skip, Save; global "Save All" saves all parsed non-skipped stubs
-- File references stored in `window.__paystubFiles__` Map to avoid serialization issues
-- Progress summary strip: X parsing / X ready / X saved / X skipped / X errors
-
-### ✅ Session 7 Fixes (DONE — 2026-03-23)
-- **Employer 401k routing**: employer 401k contribution now posts to 401k account (not checking); excluded from income totals in dashboard, forecast, and all income calculations
-- **G&P paystub bonus fix**: `paystub_parser.py` regex rewritten — G&P 3-col format (hours+amount+YTD or lone-YTD) handled correctly; bonus requires two numbers (period+YTD), lone YTD carry-forwards ignored; `regular_pay == 0` required to classify as bonus
-- **Forecast blank categories**: recurring rules now supplement historical averages — categories with no transaction history but active recurring rules now appear in predictions
-- **Life Events Clear All**: bulk DELETE `/events` endpoint added; "Clear All" button with confirm dialog on events page
-- **Mobile delete button**: Trash2 delete button added to mobile transaction cards
-- **Date filter labels**: iOS date inputs now have visible labels (placeholder doesn't show on iOS)
-- **Net Worth excl. HYSA**: dashboard net worth card shows a second figure excluding HYSA balance
-- **Dashboard income label**: clarified as net (after taxes/deductions)
-- **3-month spending average**: trailing 3-month avg shown as note under current month spending stat
-- **Monthly flow bar labels**: short month abbreviations; Jan gets year suffix (e.g. "Jan '26")
-- **Spending pie chart overflow**: reduced label radius; container gets `overflow-hidden`
-- **Google Sheets HYSA auto-categorize**: descriptions containing "hysa"/"everbank"/"high yield" auto-categorize as Savings Transfer
-- **Google Sheets upsert**: if a sheets transaction's amount changed in the sheet, it updates in app
-- **Google Sheets Katherine format**: `"item id"` column alias added; `"roth"`/`"roth ira"` → Savings Transfer category; her MAR2026/FEB2026 tab format already supported by existing regex
-- **Google Sheets dupe review**: sync result shows expandable list of skipped duplicates (date, description, amount, source tab)
-- **App name**: version string updated to MUNI v0.3
-
-### Monthly Snapshot Reminder Email
-- Scheduled email listing accounts with stale balances: 401k, IRA, HYSA, BofA Savings, student loans
-- Shows last-updated date per account and why each matters for forecast accuracy
-- BofA Checking and credit cards intentionally excluded (see money flow notes above)
-- Settings toggle alongside existing weekly digest
-- Draft email content designed; implementation not yet started
+### Joint HYSA — Full Shared Account Model
+- `is_joint` + `joint_user_id` columns already exist on accounts table
+- "Joint" badge and checkbox already in UI
+- Still needed: Katherine's HYSA contributions should apply to Keaton's HYSA account without double-counting in combined/joint net worth view
+- Currently: Keaton owns the HYSA account; Katherine should NOT create a separate HYSA account
 
 ### Balance Snapshots — Edit/Delete
-- The retroactive balance snapshots added to accounts need to be editable and removable
-- Currently they are append-only in the UI
+- Retroactive balance snapshots are append-only in the UI
+- Need to be able to correct or remove wrong entries
 
-### Joint HYSA (Keaton + Katherine)
-- `is_joint` + `joint_user_id` on accounts table
-- "Joint" badge in UI; both users see it; not double-counted in combined view
-- Alembic migration needed
-
-### Compensation History
-- Log raises, bonuses, awards, stipends via Financial Profile → Compensation tab
-- `CompensationEvent` model already partially designed — see `NEXT_PHASE_PLAN.md`
-- ✅ Model and API already built as part of Feature 25; UI still needs polish
+### Compensation History Polish
+- `CompensationEvent` model and API already built (Feature 26)
+- UI in Financial Profile → Compensation tab needs polish
 
 ### Historical Investment Statements
 - Manual entry form for 401k/IRA quarterly statements (beginning/ending balance, contributions, gains)
-- `InvestmentStatement` model — see `NEXT_PHASE_PLAN.md`
+- `InvestmentStatement` model planned
+
+### iOS Redesign (`feature/ios-redesign`)
+- Full visual redesign: jade green base, DM Serif Display fonts, iOS-style nav bubbles, frosted glass
+- Built but NOT merged — preview with `git checkout feature/ios-redesign` before deciding
 
 ---
 
@@ -395,3 +435,6 @@ Open http://localhost:3000 — click Keaton or Katherine to log in (no password)
 - Windows venv committed accidentally → `git rm -r --cached backend/venv/` then commit
 - Google Sheets sync "credentials not found" → copy `google-sheets-key.json` to `backend/credentials/`
 - Alembic `KeyError` on migration IDs → check `down_revision` matches the previous migration's revision string exactly (use short form like `"001"` not `"001_initial_schema"`)
+- `gross_annual_salary` not saving in Financial Profile → ensure frontend sends `gross_annual_salary` not `salary`
+- Backend crashes on startup with `pydantic_core.ValidationError: ANTHROPIC_API_KEY Extra inputs are not permitted` → add `ANTHROPIC_API_KEY: str = ""` to `Settings` in `config.py` (already fixed in main)
+- Statement parser returns `None` for balance/date → check pdfplumber can extract text; some PDFs strip spaces between words — parser handles EverBank/JH/Schwab known formats
