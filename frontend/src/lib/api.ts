@@ -163,6 +163,39 @@ export async function importTransactions(file: File): Promise<{ imported: number
   return res.data
 }
 
+export interface WidePreviewRow {
+  description: string
+  date: string
+  month_label: string
+  amount: number
+  inferred_kind: 'income' | 'expense' | 'unknown'
+}
+
+export interface WidePreviewResult {
+  rows: WidePreviewRow[]
+  errors: string[]
+}
+
+export async function previewWideImport(file: File): Promise<WidePreviewResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await api.post('/import/wide-preview', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return res.data
+}
+
+export async function commitWideImport(
+  transactions: { description: string; date: string; amount: number; kind: string }[],
+  accountId?: number,
+): Promise<{ imported: number; duplicates: number; errors: string[] }> {
+  const res = await api.post('/import/wide-commit', {
+    transactions,
+    account_id: accountId ?? null,
+  })
+  return res.data
+}
+
 // Recurring Rules
 export async function getRecurringRules(scenarioId?: number): Promise<RecurringRule[]> {
   const params = scenarioId ? `?scenario_id=${scenarioId}` : ''
