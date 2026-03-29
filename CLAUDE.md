@@ -350,6 +350,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```
 `ANTHROPIC_API_KEY` is now declared in `Settings` (defaults to `""`) so the backend starts cleanly whether or not the key is present.
 
+> **⚠️ AI Report not working as of 2026-03-29** — key is set in `.env` and backend loads without crashing, but `/ai-report` still returns an error. Root cause not yet diagnosed. Backend starts fine; issue is likely in how `ai_report.py` initializes the Anthropic client or passes the key.
+
 ---
 
 ## Session 9 Changes (2026-03-27)
