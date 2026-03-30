@@ -21,6 +21,7 @@ from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from dateutil.relativedelta import relativedelta
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.account import Account
@@ -282,9 +283,17 @@ def run_forecast(
     month_start = today.replace(day=1)
 
     # ── Accounts ──────────────────────────────────────────────────────────────
+    # Include joint accounts so Katherine sees (and contributes to) the shared HYSA.
     accounts = (
         db.query(Account)
-        .filter(Account.user_id == user.id, Account.is_active == True)
+        .filter(
+            Account.is_active == True,
+            or_(
+                Account.user_id == user.id,
+                Account.joint_user_id == user.id,
+                Account.is_joint == True,
+            ),
+        )
         .all()
     )
 
@@ -351,22 +360,32 @@ def run_forecast(
     hist_avgs = _get_historical_category_averages(user.id, db, today)
     variance_pct = _get_historical_variance(user.id, db, today)
 
-    # "Savings Transfer" category IDs (kind="savings") whose outflows should be skipped
-    # when the user has no savings/HYSA compound account to receive those funds.
-    # Without this, Katherine's forecast is penalised for HYSA transfers that go to
-    # Keaton's joint HYSA — producing a phantom net-worth decrease.
-    user_has_savings_account = any(
-        a.account_type in ("hysa", "savings") for a in accounts
-    )
-    savings_cat_ids: set = set()
-    if not user_has_savings_account:
-        savings_cat_ids = {
+    # For joint compound accounts that this user contributes to but doesn't own,
+    # derive their monthly contribution from their Savings Transfer (savings-kind)
+    # historical average. This correctly models Katherine contributing $1,700/month
+    # to the shared HYSA: her cash decreases (Savings Transfer outflow) and the
+    # joint HYSA compound balance grows by that amount each month.
+    joint_non_owned = [
+        a for a in accounts
+        if a.id in compound_ids and a.user_id != user.id
+    ]
+    if joint_non_owned:
+        savings_kind_ids = {
             c.id
             for c in db.query(Category).filter(
                 Category.user_id == user.id,
                 Category.kind == "savings",
             ).all()
         }
+        partner_contrib = 0.0
+        for cat_id, avgs in hist_avgs.items():
+            if cat_id in savings_kind_ids:
+                weighted = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
+                if weighted < 0:
+                    partner_contrib += abs(weighted)
+        for acc in joint_non_owned:
+            if account_monthly_contrib.get(acc.id, 0.0) == 0.0 and partner_contrib > 0:
+                account_monthly_contrib[acc.id] = partner_contrib
 
     # ── Recurring rules (supplement historical averages for missing categories) ──
     from app.models.recurring_rule import RecurringRule
@@ -409,13 +428,6 @@ def run_forecast(
         # Income categories (positive avg) and expense categories (negative avg) both included.
         for cat_id, avgs in hist_avgs.items():
             hist_amount = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
-
-            # Skip savings-category outflows for users with no savings/HYSA account.
-            # These are transfers to a joint account (e.g. Katherine's HYSA transfers).
-            # The receiving account is tracked separately (Keaton's HYSA), so deducting
-            # from Katherine's cash pool would double-penalise her net worth.
-            if cat_id in savings_cat_ids and hist_amount < 0:
-                continue
 
             if hist_amount < 0:
                 month_expenses += hist_amount
