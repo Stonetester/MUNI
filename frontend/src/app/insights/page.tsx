@@ -320,17 +320,25 @@ export default function InsightsPage() {
         income: 0, expenses: 0, net: 0, byCategory: {},
       }
     }
+    // Build a set of savings-kind category names so we can exclude them from expenses.
+    // Savings transfers (e.g. HYSA contributions) are not true expenses — treating them
+    // as expenses inflates spending and deflates the savings rate metric.
+    const savingsCatNames = new Set(
+      categories.filter(c => c.kind === 'savings').map(c => c.name)
+    )
+
     for (const t of transactions) {
       const m = t.date.slice(0, 7)
       if (!buckets[m]) continue
       const b = buckets[m]
+      const catName = t.category_name || 'Uncategorized'
       if (t.amount > 0) {
         b.income += t.amount
-      } else {
+      } else if (!savingsCatNames.has(catName)) {
+        // Only count as expense if it's not a savings transfer
         const abs = Math.abs(t.amount)
         b.expenses += abs
-        const cat = t.category_name || 'Uncategorized'
-        b.byCategory[cat] = (b.byCategory[cat] || 0) + abs
+        b.byCategory[catName] = (b.byCategory[catName] || 0) + abs
       }
       b.net = b.income - b.expenses
     }
@@ -383,6 +391,7 @@ export default function InsightsPage() {
 
   // ── Financial Health Metrics (Awesome Agent methodology) ─────────────────
 
+  // Include joint HYSA accounts (is_joint=true) — visible now that accounts.py includes all joint accounts
   const hysa = accounts.find((a) => a.account_type === 'hysa')
   const loanAccounts = accounts.filter((a) =>
     ['student_loan', 'car_loan', 'mortgage'].includes(a.account_type) && a.balance < 0

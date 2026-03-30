@@ -351,6 +351,23 @@ def run_forecast(
     hist_avgs = _get_historical_category_averages(user.id, db, today)
     variance_pct = _get_historical_variance(user.id, db, today)
 
+    # "Savings Transfer" category IDs (kind="savings") whose outflows should be skipped
+    # when the user has no savings/HYSA compound account to receive those funds.
+    # Without this, Katherine's forecast is penalised for HYSA transfers that go to
+    # Keaton's joint HYSA — producing a phantom net-worth decrease.
+    user_has_savings_account = any(
+        a.account_type in ("hysa", "savings") for a in accounts
+    )
+    savings_cat_ids: set = set()
+    if not user_has_savings_account:
+        savings_cat_ids = {
+            c.id
+            for c in db.query(Category).filter(
+                Category.user_id == user.id,
+                Category.kind == "savings",
+            ).all()
+        }
+
     # ── Recurring rules (supplement historical averages for missing categories) ──
     from app.models.recurring_rule import RecurringRule
     scenario_filter = (
@@ -392,6 +409,14 @@ def run_forecast(
         # Income categories (positive avg) and expense categories (negative avg) both included.
         for cat_id, avgs in hist_avgs.items():
             hist_amount = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
+
+            # Skip savings-category outflows for users with no savings/HYSA account.
+            # These are transfers to a joint account (e.g. Katherine's HYSA transfers).
+            # The receiving account is tracked separately (Keaton's HYSA), so deducting
+            # from Katherine's cash pool would double-penalise her net worth.
+            if cat_id in savings_cat_ids and hist_amount < 0:
+                continue
+
             if hist_amount < 0:
                 month_expenses += hist_amount
             elif hist_amount > 0:

@@ -29,13 +29,16 @@ def list_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Return own accounts + joint accounts where this user is the joint holder
+    # Return own accounts + any joint account (is_joint=True) regardless of whether
+    # joint_user_id was explicitly set.  In a household app all joint accounts
+    # should be visible to every member of the household.
     return (
         db.query(Account)
         .filter(
             or_(
                 Account.user_id == current_user.id,
                 Account.joint_user_id == current_user.id,
+                Account.is_joint == True,
             )
         )
         .order_by(Account.name)

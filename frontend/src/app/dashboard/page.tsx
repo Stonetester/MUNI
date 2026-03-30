@@ -15,6 +15,7 @@ import ForecastPreviewChart from '@/components/dashboard/ForecastPreviewChart'
 import UpcomingEventsCard from '@/components/dashboard/UpcomingEventsCard'
 import RecentTransactions from '@/components/dashboard/RecentTransactions'
 import AlertsCard from '@/components/dashboard/AlertsCard'
+import SpendingCategoriesWidget from '@/components/dashboard/SpendingCategoriesWidget'
 import StatDetailModal, { BreakdownItem } from '@/components/dashboard/StatDetailModal'
 import { TrendingUp, TrendingDown, DollarSign, CreditCard } from 'lucide-react'
 import { useViewMode } from '@/lib/viewMode'
@@ -369,10 +370,11 @@ export default function DashboardPage() {
         {/* Accounts Grid */}
         <AccountsGrid data={data} />
 
-        {/* Charts row */}
+        {/* Charts + Spending Categories */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MonthlyFlowCard flowMonths={data.flow_months} />
           <SpendingByCategoryChart byCategory={data.this_month.by_category} />
+          <SpendingCategoriesWidget />
         </div>
 
         {/* Forecast + Events */}
