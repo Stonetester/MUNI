@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import AppLayout from '@/components/layout/AppLayout'
-import { getTransactions, getCategories } from '@/lib/api'
+import { getTransactions, getCategories, getJointTransactions } from '@/lib/api'
 import { Transaction, Category } from '@/lib/types'
+import { useViewMode } from '@/lib/viewMode'
 import { formatCurrency } from '@/lib/utils'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -134,6 +135,7 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December']
 
 export default function CalendarPage() {
+  const { mode } = useViewMode()
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1) // 1-indexed
@@ -151,18 +153,28 @@ export default function CalendarPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [txns, cats] = await Promise.all([
-        getTransactions({ from_date: fromDate, to_date: toDate, limit: 2000 }),
-        getCategories(),
-      ])
-      setTransactions(txns.items)
-      setCategories(cats)
+      if (mode === 'joint') {
+        // Fetch enough transactions to cover the full month (joint endpoint uses offset/limit)
+        const txns = await getJointTransactions(2000, 0)
+        // Filter to selected month client-side since joint endpoint doesn't support date filters yet
+        const filtered = txns.items.filter(
+          (t) => t.date >= fromDate && t.date <= toDate
+        )
+        setTransactions(filtered)
+      } else {
+        const [txns, cats] = await Promise.all([
+          getTransactions({ from_date: fromDate, to_date: toDate, limit: 2000 }),
+          getCategories(),
+        ])
+        setTransactions(txns.items)
+        setCategories(cats)
+      }
     } catch {
       // ignore
     } finally {
       setLoading(false)
     }
-  }, [fromDate, toDate])
+  }, [fromDate, toDate, mode])
 
   useEffect(() => { load() }, [load])
 

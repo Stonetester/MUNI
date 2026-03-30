@@ -21,7 +21,9 @@ import {
   updateRecurringRule,
   deleteRecurringRule,
   getRecurringSuggestions,
+  getJointBudgetSummary,
 } from '@/lib/api'
+import { useViewMode } from '@/lib/viewMode'
 import {
   Category,
   CategoryKind,
@@ -231,6 +233,7 @@ function BudgetProgressBar({ pct, amount, budget }: { pct: number; amount: numbe
 }
 
 export default function BudgetPage() {
+  const { mode } = useViewMode()
   const [budget, setBudget] = useState<BudgetSummary[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [rules, setRules] = useState<RecurringRule[]>([])
@@ -250,24 +253,29 @@ export default function BudgetPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [b, cats, r, est] = await Promise.all([
-        getBudgetSummary(month),
-        getCategories(),
-        getRecurringRules(),
-        getBudgetEstimates(3),
-      ])
-      setBudget(b)
-      setCategories(cats)
-      setRules(r)
-      const estMap: Record<number, number> = {}
-      est.forEach(e => { estMap[e.category_id] = e.avg_monthly })
-      setEstimates(estMap)
+      if (mode === 'joint') {
+        const b = await getJointBudgetSummary(month)
+        setBudget(b)
+      } else {
+        const [b, cats, r, est] = await Promise.all([
+          getBudgetSummary(month),
+          getCategories(),
+          getRecurringRules(),
+          getBudgetEstimates(3),
+        ])
+        setBudget(b)
+        setCategories(cats)
+        setRules(r)
+        const estMap: Record<number, number> = {}
+        est.forEach(e => { estMap[e.category_id] = e.avg_monthly })
+        setEstimates(estMap)
+      }
     } catch (e) {
       console.error(e)
     } finally {
       setLoading(false)
     }
-  }, [month])
+  }, [month, mode])
 
   const loadSuggestions = useCallback(async () => {
     try {
@@ -329,18 +337,18 @@ export default function BudgetPage() {
   return (
     <AppLayout>
       <div className="flex flex-col gap-4">
-        {/* Tabs */}
+        {/* Tabs — hide category/recurring management in joint mode */}
         <div className="flex items-center gap-1 bg-surface border border-[#2d3748] rounded-xl p-1 w-full sm:w-fit overflow-x-auto">
-          {(['budget', 'categories', 'recurring'] as const).map((t) => (
+          {(mode === 'joint' ? ['budget'] as const : ['budget', 'categories', 'recurring'] as const).map((t) => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              onClick={() => setTab(t as typeof tab)}
               className={cn(
                 'px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors whitespace-nowrap flex-1 sm:flex-none',
                 tab === t ? 'bg-primary text-white' : 'text-text-secondary hover:text-text-primary'
               )}
             >
-              {t === 'recurring' ? 'Recurring' : t === 'budget' ? 'Budget' : 'Categories'}
+              {t === 'recurring' ? 'Recurring' : t === 'budget' ? (mode === 'joint' ? 'Household Budget' : 'Budget') : 'Categories'}
             </button>
           ))}
         </div>

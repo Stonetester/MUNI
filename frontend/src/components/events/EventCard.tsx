@@ -7,12 +7,13 @@ import { Badge } from '@/components/ui/Badge'
 import { Edit2, Trash2 } from 'lucide-react'
 
 interface EventCardProps {
-  event: LifeEvent
+  event: LifeEvent & { owner?: string }
   onEdit: (event: LifeEvent) => void
   onDeleted: () => void
+  readOnly?: boolean
 }
 
-export default function EventCard({ event, onEdit, onDeleted }: EventCardProps) {
+export default function EventCard({ event, onEdit, onDeleted, readOnly = false }: EventCardProps) {
   const daysUntil = getDaysUntil(event.start_date)
   const isPast = daysUntil < 0
   const isToday = daysUntil === 0
@@ -45,23 +46,30 @@ export default function EventCard({ event, onEdit, onDeleted }: EventCardProps) 
               {!isPast && !isToday && daysUntil <= 30 && (
                 <Badge label={`${daysUntil}d away`} variant="warning" />
               )}
+              {event.owner && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-surface-2 text-text-secondary border border-border">
+                  {event.owner}
+                </span>
+              )}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={() => onEdit(event)}
-            className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors"
-          >
-            <Edit2 size={14} />
-          </button>
-          <button
-            onClick={handleDelete}
-            className="p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-colors"
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={() => onEdit(event)}
+              className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors"
+            >
+              <Edit2 size={14} />
+            </button>
+            <button
+              onClick={handleDelete}
+              className="p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-colors"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-4">

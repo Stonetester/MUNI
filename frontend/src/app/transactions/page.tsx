@@ -10,13 +10,15 @@ import TransactionList from '@/components/transactions/TransactionList'
 import TransactionFiltersComponent from '@/components/transactions/TransactionFilters'
 import TransactionForm from '@/components/transactions/TransactionForm'
 import ImportModal from '@/components/transactions/ImportModal'
-import { getTransactions, getAccounts, getCategories } from '@/lib/api'
+import { getTransactions, getAccounts, getCategories, getJointTransactions } from '@/lib/api'
 import { Transaction, Account, Category, PaginatedTransactions, TransactionFilters } from '@/lib/types'
 import { Plus, Upload, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useViewMode } from '@/lib/viewMode'
 
 const DEFAULT_FILTERS: TransactionFilters = { limit: 50, offset: 0 }
 
 export default function TransactionsPage() {
+  const { mode } = useViewMode()
   const [data, setData] = useState<PaginatedTransactions | null>(null)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -29,20 +31,25 @@ export default function TransactionsPage() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [txData, accs, cats] = await Promise.all([
-        getTransactions(filters),
-        getAccounts(),
-        getCategories(),
-      ])
-      setData(txData)
-      setAccounts(accs)
-      setCategories(cats)
+      if (mode === 'joint') {
+        const txData = await getJointTransactions(filters.limit || 50, filters.offset || 0)
+        setData(txData)
+      } else {
+        const [txData, accs, cats] = await Promise.all([
+          getTransactions(filters),
+          getAccounts(),
+          getCategories(),
+        ])
+        setData(txData)
+        setAccounts(accs)
+        setCategories(cats)
+      }
     } catch (e) {
       console.error(e)
     } finally {
       setLoading(false)
     }
-  }, [filters])
+  }, [filters, mode])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -59,29 +66,33 @@ export default function TransactionsPage() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-text-secondary text-sm">
-              {data ? `${data.total} transactions` : ''}
+              {data ? `${data.total} transactions${mode === 'joint' ? ' · all members' : ''}` : ''}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setShowImport(true)}>
-              <Upload size={14} />
-              <span className="hidden sm:inline">Import</span>
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => setShowAddModal(true)}>
-              <Plus size={14} />
-              <span className="hidden sm:inline">Add Transaction</span>
-            </Button>
-          </div>
+          {mode !== 'joint' && (
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setShowImport(true)}>
+                <Upload size={14} />
+                <span className="hidden sm:inline">Import</span>
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => setShowAddModal(true)}>
+                <Plus size={14} />
+                <span className="hidden sm:inline">Add Transaction</span>
+              </Button>
+            </div>
+          )}
         </div>
 
-        {/* Filters */}
-        <TransactionFiltersComponent
-          filters={filters}
-          accounts={accounts}
-          categories={categories}
-          onChange={setFilters}
-          onReset={() => setFilters(DEFAULT_FILTERS)}
-        />
+        {/* Filters — solo only (joint uses fixed limit/offset pagination) */}
+        {mode !== 'joint' && (
+          <TransactionFiltersComponent
+            filters={filters}
+            accounts={accounts}
+            categories={categories}
+            onChange={setFilters}
+            onReset={() => setFilters(DEFAULT_FILTERS)}
+          />
+        )}
 
         {/* List */}
         <Card>
@@ -94,6 +105,8 @@ export default function TransactionsPage() {
               transactions={data?.items || []}
               onEdit={(tx) => setEditTransaction(tx)}
               onDeleted={loadData}
+              showOwner={mode === 'joint'}
+              readOnly={mode === 'joint'}
             />
           )}
 
@@ -128,28 +141,29 @@ export default function TransactionsPage() {
         </Card>
       </div>
 
-      {/* Add/Edit Modal */}
-      <Modal
-        isOpen={showAddModal || !!editTransaction}
-        onClose={() => { setShowAddModal(false); setEditTransaction(undefined) }}
-        title={editTransaction ? 'Edit Transaction' : 'Add Transaction'}
-        size="lg"
-      >
-        <TransactionForm
-          transaction={editTransaction}
-          accounts={accounts}
-          categories={categories}
-          onSuccess={handleSuccess}
-          onCancel={() => { setShowAddModal(false); setEditTransaction(undefined) }}
-        />
-      </Modal>
-
-      {/* Import Modal */}
-      <ImportModal
-        isOpen={showImport}
-        onClose={() => setShowImport(false)}
-        onSuccess={loadData}
-      />
+      {mode !== 'joint' && (
+        <>
+          <Modal
+            isOpen={showAddModal || !!editTransaction}
+            onClose={() => { setShowAddModal(false); setEditTransaction(undefined) }}
+            title={editTransaction ? 'Edit Transaction' : 'Add Transaction'}
+            size="lg"
+          >
+            <TransactionForm
+              transaction={editTransaction}
+              accounts={accounts}
+              categories={categories}
+              onSuccess={handleSuccess}
+              onCancel={() => { setShowAddModal(false); setEditTransaction(undefined) }}
+            />
+          </Modal>
+          <ImportModal
+            isOpen={showImport}
+            onClose={() => setShowImport(false)}
+            onSuccess={loadData}
+          />
+        </>
+      )}
     </AppLayout>
   )
 }

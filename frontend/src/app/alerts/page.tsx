@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { getAlerts } from '@/lib/api'
+import { getAlerts, getJointAlerts } from '@/lib/api'
 import type { AlertItem } from '@/lib/types'
+import { useViewMode } from '@/lib/viewMode'
 
 function badgeClass(severity: AlertItem['severity']) {
   if (severity === 'critical') return 'bg-danger/20 text-danger border-danger/30'
@@ -14,6 +15,7 @@ function badgeClass(severity: AlertItem['severity']) {
 }
 
 export default function AlertsPage() {
+  const { mode } = useViewMode()
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -21,7 +23,7 @@ export default function AlertsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const data = await getAlerts()
+        const data = mode === 'joint' ? await getJointAlerts() : await getAlerts()
         setAlerts(data)
       } catch {
         setError('Failed to load alerts.')
@@ -30,7 +32,7 @@ export default function AlertsPage() {
       }
     }
     load()
-  }, [])
+  }, [mode])
 
   return (
     <AppLayout>

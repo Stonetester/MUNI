@@ -548,3 +548,234 @@ def run_forecast(
         total_expenses=round(total_expenses, 2),
         account_forecasts=account_forecasts,
     )
+
+
+def run_joint_forecast(
+    db: Session,
+    months: int = 60,
+) -> ForecastResponse:
+    """
+    Combined household forecast across all users.
+    Unique accounts only (joint accounts counted once under the owner).
+    Monthly contributions to compound accounts are summed from all users.
+    Savings-kind outflows from users who don't own a savings account are excluded
+    from cash flow — they are captured as contributions to the joint compound account.
+    """
+    from app.models.user import User as UserModel
+    from app.models.category import Category as CategoryModel
+
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    # ── All unique accounts across all users (owner's copy only for joint accounts) ──
+    users = db.query(UserModel).all()
+    seen_ids: set = set()
+    all_accounts: List[Account] = []
+    for u in users:
+        for a in db.query(Account).filter(Account.user_id == u.id, Account.is_active == True).all():
+            if a.id not in seen_ids:
+                all_accounts.append(a)
+                seen_ids.add(a.id)
+
+    # ── Compound config: each user contributes to their owned accounts ──
+    account_monthly_rate: Dict[int, float] = {}
+    account_monthly_contrib: Dict[int, float] = {}
+
+    for u in users:
+        owned = [a for a in all_accounts if a.user_id == u.id]
+        rate_map, contrib_map = _build_compound_account_config(owned, db, u.id)
+        for acc_id, rate in rate_map.items():
+            if acc_id not in account_monthly_rate:
+                account_monthly_rate[acc_id] = rate
+        for acc_id, contrib in contrib_map.items():
+            account_monthly_contrib[acc_id] = account_monthly_contrib.get(acc_id, 0.0) + contrib
+
+    # For users without their own savings account, add their savings-transfer avg
+    # to the joint compound account (e.g. Katherine's $1,700 → joint HYSA).
+    joint_compound_ids = {
+        a.id for a in all_accounts
+        if a.account_type in COMPOUND_TYPES and a.is_joint
+    }
+    for u in users:
+        owned = [a for a in all_accounts if a.user_id == u.id]
+        user_has_savings = any(a.account_type in ("hysa", "savings") for a in owned)
+        if not user_has_savings and joint_compound_ids:
+            user_hist = _get_historical_category_averages(u.id, db, today)
+            savings_cats = {
+                c.id for c in db.query(CategoryModel).filter(
+                    CategoryModel.user_id == u.id,
+                    CategoryModel.kind == "savings",
+                ).all()
+            }
+            partner_contrib = 0.0
+            for cat_id, avgs in user_hist.items():
+                if cat_id in savings_cats:
+                    w = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
+                    if w < 0:
+                        partner_contrib += abs(w)
+            for acc_id in joint_compound_ids:
+                account_monthly_contrib[acc_id] = (
+                    account_monthly_contrib.get(acc_id, 0.0) + partner_contrib
+                )
+
+    # Also apply DEFAULT_ANNUAL_RETURNS for any compound account with no rate yet
+    for a in all_accounts:
+        if a.account_type in COMPOUND_TYPES and a.id not in account_monthly_rate:
+            default_annual = DEFAULT_ANNUAL_RETURNS.get(a.account_type, 5.0)
+            account_monthly_rate[a.id] = default_annual / 100.0 / 12.0
+
+    # ── Starting balances ──
+    account_balances: Dict[int, float] = {a.id: float(a.balance) for a in all_accounts}
+    cash_pool_ids = {a.id for a in all_accounts if a.account_type in CASH_POOL_TYPES}
+    compound_ids = {a.id for a in all_accounts if a.account_type in COMPOUND_TYPES}
+    liability_ids = {a.id for a in all_accounts if a.account_type in LIABILITY_TYPES}
+
+    starting_assets = sum(
+        a.balance for a in all_accounts
+        if a.account_type in ASSET_TYPES and a.balance > 0
+    )
+    starting_liabilities = sum(
+        abs(a.balance) for a in all_accounts
+        if a.account_type in LIABILITY_TYPES or a.balance < 0
+    )
+    starting_net_worth = starting_assets - starting_liabilities
+
+    running_cash = sum(a.balance for a in all_accounts if a.id in cash_pool_ids)
+    running_compound: Dict[int, float] = {
+        a.id: float(a.balance) for a in all_accounts if a.id in compound_ids
+    }
+
+    # ── Combined historical averages (merged by category name across all users) ──
+    combined_monthly: Dict[str, float] = {}
+
+    for u in users:
+        user_hist = _get_historical_category_averages(u.id, db, today)
+        cats_map = {c.id: c for c in db.query(CategoryModel).filter(CategoryModel.user_id == u.id).all()}
+        savings_cats = {c.id for c in cats_map.values() if c.kind == "savings"}
+        user_has_savings = any(
+            a.account_type in ("hysa", "savings") for a in all_accounts if a.user_id == u.id
+        )
+
+        for cat_id, avgs in user_hist.items():
+            hist_amount = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
+            # Skip savings-kind outflows from non-owners — captured in HYSA contrib above
+            if cat_id in savings_cats and not user_has_savings and hist_amount < 0:
+                continue
+            cat = cats_map.get(cat_id)
+            label = cat.name if cat else "Uncategorized"
+            combined_monthly[label] = combined_monthly.get(label, 0.0) + hist_amount
+
+    # ── Life events from all users ──
+    all_events = (
+        db.query(LifeEvent)
+        .filter(LifeEvent.is_active == True, LifeEvent.scenario_id.is_(None))
+        .all()
+    )
+
+    # ── Main forecast loop ──
+    account_balance_history: Dict[int, List[float]] = {a.id: [] for a in all_accounts}
+    points: List[ForecastPoint] = []
+    total_income = 0.0
+    total_expenses = 0.0
+    variance_pct = 0.15
+
+    for i in range(months):
+        ms = (month_start + relativedelta(months=i)).replace(day=1)
+        import calendar as _cal
+        month_str = ms.strftime("%Y-%m")
+
+        month_income = 0.0
+        month_expenses = 0.0
+        by_category: Dict[str, float] = {}
+
+        for label, hist_amount in combined_monthly.items():
+            if hist_amount < 0:
+                month_expenses += hist_amount
+            elif hist_amount > 0:
+                month_income += hist_amount
+            if hist_amount != 0:
+                by_category[label] = by_category.get(label, 0.0) + hist_amount
+
+        event_impact = _event_impact_for_month(all_events, month_str)
+        net = month_income + month_expenses
+        running_cash += net + event_impact
+
+        for acc_id in list(running_compound.keys()):
+            rate = account_monthly_rate.get(acc_id, 0.0)
+            contrib = account_monthly_contrib.get(acc_id, 0.0)
+            running_compound[acc_id] = running_compound[acc_id] * (1.0 + rate) + contrib
+
+        for a in all_accounts:
+            if a.id in cash_pool_ids:
+                pool_total = sum(account_balances[aid] for aid in cash_pool_ids) or 1.0
+                share = account_balances[a.id] / pool_total
+                account_balance_history[a.id].append(round(running_cash * share, 2))
+            elif a.id in compound_ids:
+                account_balance_history[a.id].append(round(running_compound[a.id], 2))
+            else:
+                account_balance_history[a.id].append(round(account_balances[a.id], 2))
+
+        compound_total = sum(running_compound.values())
+        liability_total = sum(abs(account_balances[acc_id]) for acc_id in liability_ids)
+        current_net_worth = running_cash + compound_total - liability_total
+
+        current_savings_total = sum(
+            running_compound[acc_id]
+            for acc_id in compound_ids
+            if any(a.id == acc_id and a.account_type in SAVINGS_TYPES for a in all_accounts)
+        )
+
+        low_cash = running_cash - abs(month_expenses) * variance_pct
+        high_cash = running_cash + abs(month_expenses) * variance_pct
+
+        total_income += month_income
+        total_expenses += month_expenses
+
+        points.append(
+            ForecastPoint(
+                month=month_str,
+                income=round(month_income, 2),
+                expenses=round(month_expenses, 2),
+                net=round(net, 2),
+                cash=round(running_cash, 2),
+                net_worth=round(current_net_worth, 2),
+                savings_total=round(current_savings_total, 2),
+                low_cash=round(low_cash, 2),
+                high_cash=round(high_cash, 2),
+                event_impact=round(event_impact, 2),
+                by_category=by_category,
+            )
+        )
+
+    ending_net_worth = points[-1].net_worth if points else starting_net_worth
+
+    account_forecasts: List[AccountForecast] = []
+    for a in all_accounts:
+        if a.account_type not in (ASSET_TYPES | LIABILITY_TYPES):
+            continue
+        history = account_balance_history[a.id]
+        annual_return = account_monthly_rate.get(a.id, 0.0) * 12.0 * 100.0
+        contrib = account_monthly_contrib.get(a.id, 0.0)
+        account_forecasts.append(
+            AccountForecast(
+                account_id=a.id,
+                account_name=a.name,
+                account_type=a.account_type,
+                starting_balance=account_balances[a.id],
+                ending_balance=history[-1] if history else account_balances[a.id],
+                monthly_balances=history,
+                annual_return_pct=round(annual_return, 2),
+                monthly_contribution=round(contrib, 2),
+            )
+        )
+
+    return ForecastResponse(
+        scenario_id=None,
+        months=months,
+        points=points,
+        starting_net_worth=round(starting_net_worth, 2),
+        ending_net_worth=round(ending_net_worth, 2),
+        total_income=round(total_income, 2),
+        total_expenses=round(total_expenses, 2),
+        account_forecasts=account_forecasts,
+    )

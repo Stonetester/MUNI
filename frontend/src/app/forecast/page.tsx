@@ -10,9 +10,10 @@ import NetWorthForecastChart from '@/components/forecast/NetWorthForecastChart'
 import ForecastChart from '@/components/forecast/ForecastChart'
 import CategoryForecastTable from '@/components/forecast/CategoryForecastTable'
 import AccountForecastChart from '@/components/forecast/AccountForecastChart'
-import { getForecast, getScenarios } from '@/lib/api'
+import { getForecast, getScenarios, getJointForecast } from '@/lib/api'
 import { ForecastResponse, Scenario } from '@/lib/types'
 import { formatCurrency } from '@/lib/utils'
+import { useViewMode } from '@/lib/viewMode'
 
 const MONTH_OPTIONS = [
   { value: 6, label: '6 months' },
@@ -30,6 +31,7 @@ const PAST_OPTIONS = [
 ]
 
 export default function ForecastPage() {
+  const { mode } = useViewMode()
   const [data, setData] = useState<ForecastResponse | null>(null)
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [scenarioId, setScenarioId] = useState<number | undefined>()
@@ -41,6 +43,11 @@ export default function ForecastPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
+      if (mode === 'joint') {
+        const forecastData = await getJointForecast(months, pastMonths)
+        setData(forecastData)
+        return
+      }
       const [forecastData, scenarioList] = await Promise.all([
         getForecast(scenarioId, months, pastMonths),
         getScenarios(),
@@ -52,7 +59,7 @@ export default function ForecastPage() {
     } finally {
       setLoading(false)
     }
-  }, [scenarioId, months, pastMonths])
+  }, [scenarioId, months, pastMonths, mode])
 
   useEffect(() => { load() }, [load])
 
@@ -63,13 +70,15 @@ export default function ForecastPage() {
       <div className="flex flex-col gap-4">
         {/* Controls */}
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
-          <Select
-            placeholder="All scenarios"
-            options={scenarioOptions}
-            value={scenarioId || ''}
-            onChange={(e) => setScenarioId(e.target.value ? Number(e.target.value) : undefined)}
-            className="w-full sm:w-44"
-          />
+          {mode !== 'joint' && (
+            <Select
+              placeholder="All scenarios"
+              options={scenarioOptions}
+              value={scenarioId || ''}
+              onChange={(e) => setScenarioId(e.target.value ? Number(e.target.value) : undefined)}
+              className="w-full sm:w-44"
+            />
+          )}
           <div className="flex items-center gap-1 bg-surface border border-[#2d3748] rounded-xl p-1 overflow-x-auto">
             {PAST_OPTIONS.map((opt) => (
               <button

@@ -7,13 +7,15 @@ import Modal from '@/components/ui/Modal'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EventCard from '@/components/events/EventCard'
 import EventForm from '@/components/events/EventForm'
-import { getLifeEvents, deleteAllLifeEvents } from '@/lib/api'
+import { getLifeEvents, deleteAllLifeEvents, getJointEvents } from '@/lib/api'
 import { LifeEvent } from '@/lib/types'
 import { formatCurrency } from '@/lib/utils'
 import { Plus, Trash2, Calendar } from 'lucide-react'
+import { useViewMode } from '@/lib/viewMode'
 
 export default function EventsPage() {
-  const [events, setEvents] = useState<LifeEvent[]>([])
+  const { mode } = useViewMode()
+  const [events, setEvents] = useState<(LifeEvent & { owner?: string })[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [editEvent, setEditEvent] = useState<LifeEvent | undefined>()
@@ -21,14 +23,14 @@ export default function EventsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await getLifeEvents()
+      const data = mode === 'joint' ? await getJointEvents() : await getLifeEvents()
       setEvents(data)
     } catch (e) {
       console.error(e)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [mode])
 
   useEffect(() => { load() }, [load])
 
@@ -54,26 +56,28 @@ export default function EventsPage() {
               </p>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {events.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={async () => {
-                  if (!window.confirm('Delete all life events? This cannot be undone.')) return
-                  await deleteAllLifeEvents()
-                  load()
-                }}
-              >
-                <Trash2 size={14} />
-                Clear All
+          {mode !== 'joint' && (
+            <div className="flex items-center gap-2">
+              {events.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={async () => {
+                    if (!window.confirm('Delete all life events? This cannot be undone.')) return
+                    await deleteAllLifeEvents()
+                    load()
+                  }}
+                >
+                  <Trash2 size={14} />
+                  Clear All
+                </Button>
+              )}
+              <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}>
+                <Plus size={14} />
+                Add Event
               </Button>
-            )}
-            <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}>
-              <Plus size={14} />
-              Add Event
-            </Button>
-          </div>
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -103,6 +107,7 @@ export default function EventsPage() {
                         event={event}
                         onEdit={setEditEvent}
                         onDeleted={load}
+                        readOnly={mode === 'joint'}
                       />
                     ))}
                 </div>
@@ -119,6 +124,7 @@ export default function EventsPage() {
                       event={event}
                       onEdit={setEditEvent}
                       onDeleted={load}
+                      readOnly={mode === 'joint'}
                     />
                   ))}
                 </div>
@@ -128,18 +134,20 @@ export default function EventsPage() {
         )}
       </div>
 
-      <Modal
-        isOpen={showAdd || !!editEvent}
-        onClose={() => { setShowAdd(false); setEditEvent(undefined) }}
-        title={editEvent ? 'Edit Event' : 'Add Life Event'}
-        size="lg"
-      >
-        <EventForm
-          event={editEvent}
-          onSuccess={handleSuccess}
-          onCancel={() => { setShowAdd(false); setEditEvent(undefined) }}
-        />
-      </Modal>
+      {mode !== 'joint' && (
+        <Modal
+          isOpen={showAdd || !!editEvent}
+          onClose={() => { setShowAdd(false); setEditEvent(undefined) }}
+          title={editEvent ? 'Edit Event' : 'Add Life Event'}
+          size="lg"
+        >
+          <EventForm
+            event={editEvent}
+            onSuccess={handleSuccess}
+            onCancel={() => { setShowAdd(false); setEditEvent(undefined) }}
+          />
+        </Modal>
+      )}
     </AppLayout>
   )
 }

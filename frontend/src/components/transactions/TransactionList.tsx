@@ -15,6 +15,8 @@ interface TransactionListProps {
   transactions: Transaction[]
   onEdit: (tx: Transaction) => void
   onDeleted: () => void
+  showOwner?: boolean
+  readOnly?: boolean
 }
 
 function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; sortDir: SortDir }) {
@@ -22,7 +24,12 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
   return sortDir === 'asc' ? <ChevronUp size={12} className="text-primary" /> : <ChevronDown size={12} className="text-primary" />
 }
 
-export default function TransactionList({ transactions, onEdit, onDeleted }: TransactionListProps) {
+const OWNER_COLORS: Record<string, string> = {
+  keaton: 'bg-primary/20 text-primary',
+  katherine: 'bg-purple-500/20 text-purple-300',
+}
+
+export default function TransactionList({ transactions, onEdit, onDeleted, showOwner = false, readOnly = false }: TransactionListProps) {
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
@@ -90,8 +97,9 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
               <ColHeader col="description" label="Description" />
               <ColHeader col="category" label="Category" />
               <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs uppercase tracking-wider">Account</th>
+              {showOwner && <th className="text-left py-3 px-3 text-text-secondary font-medium text-xs uppercase tracking-wider">Who</th>}
               <ColHeader col="amount" label="Amount" align="right" />
-              <th className="py-3 px-3" />
+              {!readOnly && <th className="py-3 px-3" />}
             </tr>
           </thead>
           <tbody className="divide-y divide-[#2d3748]">
@@ -113,19 +121,30 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
                   {tx.category_name && <Badge label={tx.category_name} variant="default" />}
                 </td>
                 <td className="py-3 px-3 text-text-secondary text-xs">{tx.account_name}</td>
+                {showOwner && (
+                  <td className="py-3 px-3">
+                    {(tx as any).owner && (
+                      <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', OWNER_COLORS[(tx as any).owner] || 'bg-surface-2 text-text-secondary')}>
+                        {(tx as any).owner}
+                      </span>
+                    )}
+                  </td>
+                )}
                 <td className={cn('py-3 px-3 text-right font-semibold', tx.amount >= 0 ? 'text-primary' : 'text-danger')}>
                   {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
                 </td>
-                <td className="py-3 px-3">
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => onEdit(tx)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors">
-                      <Edit2 size={14} />
-                    </button>
-                    <button onClick={() => handleDelete(tx.id)} className="p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-colors">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </td>
+                {!readOnly && (
+                  <td className="py-3 px-3">
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => onEdit(tx)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary hover:bg-primary/10 transition-colors">
+                        <Edit2 size={14} />
+                      </button>
+                      <button onClick={() => handleDelete(tx.id)} className="p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-colors">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -155,18 +174,30 @@ export default function TransactionList({ transactions, onEdit, onDeleted }: Tra
                     <span className="text-xs text-muted truncate">{tx.account_name}</span>
                   </>
                 )}
+                {showOwner && (tx as any).owner && (
+                  <>
+                    <span className="text-muted text-xs">·</span>
+                    <span className={cn('text-xs px-1.5 py-0.5 rounded-full font-medium', OWNER_COLORS[(tx as any).owner] || 'bg-surface-2 text-text-secondary')}>
+                      {(tx as any).owner}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
               <span className={cn('text-sm font-semibold mr-1', tx.amount >= 0 ? 'text-primary' : 'text-danger')}>
                 {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
               </span>
-              <button onClick={() => onEdit(tx)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary">
-                <Edit2 size={14} />
-              </button>
-              <button onClick={() => handleDelete(tx.id)} className="p-1.5 rounded-lg text-text-secondary hover:text-danger">
-                <Trash2 size={14} />
-              </button>
+              {!readOnly && (
+                <>
+                  <button onClick={() => onEdit(tx)} className="p-1.5 rounded-lg text-text-secondary hover:text-primary">
+                    <Edit2 size={14} />
+                  </button>
+                  <button onClick={() => handleDelete(tx.id)} className="p-1.5 rounded-lg text-text-secondary hover:text-danger">
+                    <Trash2 size={14} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ))}

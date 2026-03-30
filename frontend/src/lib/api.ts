@@ -431,6 +431,27 @@ export async function getJointTransactions(limit = 50, offset = 0): Promise<Pagi
   return res.data as PaginatedTransactions
 }
 
+export async function getJointEvents(): Promise<Array<LifeEvent & { owner: string }>> {
+  const res = await api.get('/joint/events')
+  return res.data
+}
+
+export async function getJointAlerts(): Promise<AlertItem[]> {
+  const res = await api.get('/joint/alerts')
+  return res.data
+}
+
+export async function getJointBudgetSummary(month?: string): Promise<BudgetSummary[]> {
+  const params = month ? `?month=${month}` : ''
+  const res = await api.get(`/joint/budget/summary${params}`)
+  return res.data
+}
+
+export async function getJointForecast(months = 60, pastMonths = 0): Promise<ForecastResponse> {
+  const res = await api.get(`/joint/forecast?months=${months}&past_months=${pastMonths}`)
+  return res.data
+}
+
 // Paystubs
 export async function parsePaystub(file: File): Promise<ParsedPaystub> {
   const formData = new FormData()
