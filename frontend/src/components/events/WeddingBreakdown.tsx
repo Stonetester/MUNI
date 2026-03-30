@@ -8,7 +8,7 @@ import Button from '@/components/ui/Button'
 import { formatCurrency } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import {
-  Plus, Trash2, ChevronDown, ChevronUp, Check, X, DollarSign, CalendarDays, TrendingDown,
+  Plus, Trash2, ChevronDown, ChevronUp, Check, CalendarDays, TrendingDown,
 } from 'lucide-react'
 
 // ── Default wedding categories with pre-filled starter items ─────────────────
@@ -73,100 +73,111 @@ function paidPct(estimated: number, actual?: number) {
   return Math.min(100, (actual / estimated) * 100)
 }
 
-// ── Editable row ──────────────────────────────────────────────────────────────
+// ── Item card (mobile-first) ──────────────────────────────────────────────────
 
-interface RowProps {
+interface CardProps {
   item: Omit<EventLineItem, 'id' | 'event_id'>
   index: number
   onChange: (index: number, field: keyof Omit<EventLineItem, 'id' | 'event_id'>, value: string | number | undefined) => void
   onDelete: (index: number) => void
 }
 
-function ItemRow({ item, index, onChange, onDelete }: RowProps) {
+function ItemCard({ item, index, onChange, onDelete }: CardProps) {
   const pct = paidPct(item.estimated_cost, item.actual_cost)
   const remaining = item.estimated_cost - (item.actual_cost ?? 0)
+  const isPaid = remaining <= 0 && item.estimated_cost > 0
 
   return (
-    <tr className="group border-b border-border/50 hover:bg-surface-2/40 transition-colors">
-      <td className="py-1.5 pl-2 pr-1">
+    <div className="bg-surface-2/40 border border-border/40 rounded-xl p-3 flex flex-col gap-2">
+      {/* Name row */}
+      <div className="flex items-center gap-2">
         <input
-          className="w-full bg-transparent text-sm text-text-primary focus:outline-none focus:bg-surface-2 rounded px-1 py-0.5"
+          className="flex-1 bg-transparent text-sm font-medium text-text-primary focus:outline-none placeholder:text-muted/50 min-w-0"
           value={item.name}
           onChange={e => onChange(index, 'name', e.target.value)}
           placeholder="Item name"
         />
-      </td>
-      <td className="py-1.5 px-1">
-        <select
-          className="bg-transparent text-xs text-text-secondary focus:outline-none focus:bg-surface-2 rounded px-1 py-0.5 w-full"
-          value={item.category ?? ''}
-          onChange={e => onChange(index, 'category', e.target.value)}
+        <button
+          onClick={() => onDelete(index)}
+          className="p-1.5 rounded-lg text-muted hover:text-danger hover:bg-danger/10 transition-colors shrink-0"
         >
-          {WEDDING_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-      </td>
-      <td className="py-1.5 px-1">
-        <div className="relative">
-          <span className="absolute left-1 top-1/2 -translate-y-1/2 text-muted text-xs">$</span>
-          <input
-            type="number"
-            min="0"
-            step="50"
-            className="w-24 bg-transparent text-sm text-right focus:outline-none focus:bg-surface-2 rounded pl-3 pr-1 py-0.5"
-            value={item.estimated_cost || ''}
-            onChange={e => onChange(index, 'estimated_cost', parseFloat(e.target.value) || 0)}
-          />
-        </div>
-      </td>
-      <td className="py-1.5 px-1">
-        <div className="relative">
-          <span className="absolute left-1 top-1/2 -translate-y-1/2 text-muted text-xs">$</span>
-          <input
-            type="number"
-            min="0"
-            step="50"
-            className="w-24 bg-transparent text-sm text-right focus:outline-none focus:bg-surface-2 rounded pl-3 pr-1 py-0.5"
-            value={item.actual_cost ?? ''}
-            placeholder="—"
-            onChange={e => {
-              const v = e.target.value === '' ? undefined : parseFloat(e.target.value) || 0
-              onChange(index, 'actual_cost', v)
-            }}
-          />
-        </div>
-      </td>
-      <td className="py-1.5 px-1 text-right text-sm">
-        <span className={cn(remaining > 0 ? 'text-warning' : 'text-primary', 'font-medium')}>
-          {remaining > 0 ? formatCurrency(remaining) : '✓'}
-        </span>
-      </td>
-      <td className="py-1.5 px-1">
-        <div className="flex items-center gap-1">
-          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden min-w-[40px]">
-            <div
-              className={cn('h-full rounded-full', pct >= 100 ? 'bg-primary' : 'bg-warning')}
-              style={{ width: `${pct}%` }}
+          <Trash2 size={14} />
+        </button>
+      </div>
+
+      {/* Est / Paid / Remaining */}
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <p className="text-[10px] text-muted mb-1">Estimated</p>
+          <div className="relative">
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted text-xs pointer-events-none">$</span>
+            <input
+              type="number"
+              min="0"
+              step="50"
+              inputMode="decimal"
+              className="w-full bg-surface-2 border border-border/60 text-sm text-right focus:outline-none focus:border-primary/50 rounded-lg pl-5 pr-2 py-1.5"
+              value={item.estimated_cost || ''}
+              onChange={e => onChange(index, 'estimated_cost', parseFloat(e.target.value) || 0)}
             />
           </div>
         </div>
-      </td>
-      <td className="py-1.5 px-1">
-        <input
-          className="w-full bg-transparent text-xs text-muted focus:outline-none focus:bg-surface-2 rounded px-1 py-0.5"
-          value={item.notes ?? ''}
-          onChange={e => onChange(index, 'notes', e.target.value)}
-          placeholder="notes"
-        />
-      </td>
-      <td className="py-1.5 pr-2 pl-1">
-        <button
-          onClick={() => onDelete(index)}
-          className="p-1 rounded text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100"
-        >
-          <Trash2 size={12} />
-        </button>
-      </td>
-    </tr>
+        <div>
+          <p className="text-[10px] text-muted mb-1">Paid</p>
+          <div className="relative">
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted text-xs pointer-events-none">$</span>
+            <input
+              type="number"
+              min="0"
+              step="50"
+              inputMode="decimal"
+              className="w-full bg-surface-2 border border-border/60 text-sm text-right focus:outline-none focus:border-primary/50 rounded-lg pl-5 pr-2 py-1.5"
+              value={item.actual_cost ?? ''}
+              placeholder="0"
+              onChange={e => {
+                const v = e.target.value === '' ? undefined : parseFloat(e.target.value) || 0
+                onChange(index, 'actual_cost', v)
+              }}
+            />
+          </div>
+        </div>
+        <div>
+          <p className="text-[10px] text-muted mb-1">Remaining</p>
+          <div className="flex items-center h-[34px] justify-end">
+            {isPaid ? (
+              <span className="text-xs font-semibold text-primary flex items-center gap-1">
+                <Check size={11} /> Done
+              </span>
+            ) : (
+              <span className={cn('text-sm font-semibold', remaining > 0 ? 'text-warning' : 'text-muted')}>
+                {item.estimated_cost > 0 ? formatCurrency(remaining) : '—'}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      {item.estimated_cost > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+            <div
+              className={cn('h-full rounded-full transition-all', isPaid ? 'bg-primary' : 'bg-warning')}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <span className="text-[10px] text-muted shrink-0">{pct.toFixed(0)}%</span>
+        </div>
+      )}
+
+      {/* Notes */}
+      <input
+        className="w-full bg-transparent text-xs text-muted focus:outline-none rounded px-0 py-0.5 border-b border-transparent focus:border-border/50 placeholder:text-muted/40 transition-colors"
+        value={item.notes ?? ''}
+        onChange={e => onChange(index, 'notes', e.target.value)}
+        placeholder="Notes (use YYYY-MM to schedule a payment)"
+      />
+    </div>
   )
 }
 
@@ -182,30 +193,30 @@ function CategoryHeader({ name, estimated, actual, collapsed, onToggle, onAddIte
 }) {
   const remaining = estimated - actual
   return (
-    <tr className="bg-surface-2/60">
-      <td colSpan={5} className="py-2 pl-3 pr-1">
-        <button
-          onClick={onToggle}
-          className="flex items-center gap-2 text-xs font-semibold text-text-secondary uppercase tracking-wider hover:text-text-primary transition-colors"
-        >
-          {collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-          {name}
-          <span className="font-normal normal-case text-muted">
-            {formatCurrency(estimated)}
-            {actual > 0 && <span className="text-primary"> · paid {formatCurrency(actual)}</span>}
-            {remaining > 0 && estimated > 0 && <span className="text-warning"> · {formatCurrency(remaining)} left</span>}
-          </span>
-        </button>
-      </td>
-      <td colSpan={3} className="py-2 pr-2 text-right">
+    <div className="flex items-center justify-between px-3 py-2.5 bg-surface-2/70">
+      <button
+        onClick={onToggle}
+        className="flex items-center gap-2 text-xs font-semibold text-text-secondary uppercase tracking-wider hover:text-text-primary transition-colors min-w-0"
+      >
+        {collapsed ? <ChevronDown size={12} className="shrink-0" /> : <ChevronUp size={12} className="shrink-0" />}
+        <span className="truncate">{name}</span>
+      </button>
+      <div className="flex items-center gap-3 shrink-0 ml-2">
+        <div className="text-right text-xs hidden sm:block">
+          <span className="text-muted">{formatCurrency(estimated)}</span>
+          {actual > 0 && <span className="text-primary ml-1">· {formatCurrency(actual)} paid</span>}
+          {remaining > 0 && estimated > 0 && <span className="text-warning ml-1">· {formatCurrency(remaining)} left</span>}
+        </div>
+        {/* Mobile: just show the estimated */}
+        <span className="text-xs text-muted sm:hidden">{formatCurrency(estimated)}</span>
         <button
           onClick={onAddItem}
-          className="text-xs text-primary/70 hover:text-primary flex items-center gap-0.5 ml-auto"
+          className="text-xs text-primary/70 hover:text-primary flex items-center gap-0.5 py-1 px-2 rounded-lg hover:bg-primary/10 transition-colors"
         >
           <Plus size={11} /> Add
         </button>
-      </td>
-    </tr>
+      </div>
+    </div>
   )
 }
 
@@ -219,20 +230,17 @@ interface WeddingBreakdownProps {
 }
 
 export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: WeddingBreakdownProps) {
-  // Working copy of line items (unsaved until user clicks Save)
   type DraftItem = Omit<EventLineItem, 'id' | 'event_id'>
   const [items, setItems] = useState<DraftItem[]>([])
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
-  // Initialise from event.line_items
   useEffect(() => {
     if (!isOpen) return
     if (event.line_items && event.line_items.length > 0) {
       setItems(event.line_items.map(({ id, event_id, ...rest }) => rest))
     } else {
-      // Pre-fill with starter items from the CSV template
       setItems(STARTER_ITEMS)
     }
     setDirty(false)
@@ -245,7 +253,6 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
       if (!map[cat]) map[cat] = []
       map[cat].push(item)
     }
-    // Sort groups in canonical order
     const order = WEDDING_CATEGORIES
     return order
       .filter(c => map[c])
@@ -262,11 +269,10 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
   const totalEstimated = items.reduce((s, i) => s + (i.estimated_cost || 0), 0)
   const totalPaid = items.reduce((s, i) => s + (i.actual_cost || 0), 0)
   const totalRemaining = totalEstimated - totalPaid
+  const overallPct = totalEstimated > 0 ? Math.min(100, (totalPaid / totalEstimated) * 100) : 0
 
   const today = new Date()
-  const weddingDate = event.end_date
-    ? new Date(event.end_date)
-    : new Date(event.start_date)
+  const weddingDate = event.end_date ? new Date(event.end_date) : new Date(event.start_date)
   const monthsLeft = monthsBetween(today, weddingDate)
   const monthlySavingsNeeded = monthsLeft > 0 ? totalRemaining / monthsLeft : totalRemaining
 
@@ -293,6 +299,12 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
       { name: '', category, estimated_cost: 0, actual_cost: undefined, notes: undefined, sort_order: maxOrder + 1 },
     ])
     setDirty(true)
+    // Ensure the category is expanded
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      next.delete(category)
+      return next
+    })
   }
 
   function handleAddCategory() {
@@ -324,7 +336,6 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
     })
   }
 
-  // Global index mapping (needed because items array isn't split by group)
   function globalIndex(category: string, localIndex: number) {
     let count = 0
     for (let i = 0; i < items.length; i++) {
@@ -336,7 +347,6 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
     return -1
   }
 
-  // ── Monthly breakdown (costs that have a specific month set via notes "YYYY-MM") ──
   const monthlyView = useMemo(() => {
     const map: Record<string, number> = {}
     for (const item of items) {
@@ -349,84 +359,72 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
   }, [items])
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`${event.name} — Budget Breakdown`} size="xl">
+    <Modal isOpen={isOpen} onClose={onClose} title={`${event.name} — Budget`} size="xl">
       <div className="flex flex-col gap-4">
 
-        {/* ── Summary bar ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {/* ── Summary cards ── */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div className="bg-surface-2 rounded-xl p-3">
-            <p className="text-xs text-text-secondary">Total Estimated</p>
-            <p className="text-lg font-bold text-text-primary">{formatCurrency(totalEstimated)}</p>
+            <p className="text-[11px] text-text-secondary mb-0.5">Total Budget</p>
+            <p className="text-base font-bold text-text-primary">{formatCurrency(totalEstimated)}</p>
           </div>
           <div className="bg-surface-2 rounded-xl p-3">
-            <p className="text-xs text-text-secondary">Paid So Far</p>
-            <p className="text-lg font-bold text-primary">{formatCurrency(totalPaid)}</p>
+            <p className="text-[11px] text-text-secondary mb-0.5">Paid</p>
+            <p className="text-base font-bold text-primary">{formatCurrency(totalPaid)}</p>
           </div>
           <div className="bg-surface-2 rounded-xl p-3">
-            <p className="text-xs text-text-secondary">Remaining</p>
-            <p className={cn('text-lg font-bold', totalRemaining > 0 ? 'text-warning' : 'text-primary')}>
+            <p className="text-[11px] text-text-secondary mb-0.5">Remaining</p>
+            <p className={cn('text-base font-bold', totalRemaining > 0 ? 'text-warning' : 'text-primary')}>
               {formatCurrency(totalRemaining)}
             </p>
           </div>
           <div className="bg-surface-2 rounded-xl p-3">
-            <p className="text-xs text-text-secondary flex items-center gap-1">
+            <p className="text-[11px] text-text-secondary mb-0.5 flex items-center gap-1">
               <CalendarDays size={10} />
-              {monthsLeft > 0 ? `${monthsLeft}mo left · Save/mo` : 'Date passed'}
+              {monthsLeft > 0 ? `${monthsLeft}mo · Save/mo` : 'Date passed'}
             </p>
-            <p className="text-lg font-bold text-text-primary">
+            <p className="text-base font-bold text-text-primary">
               {monthsLeft > 0 ? formatCurrency(monthlySavingsNeeded) : '—'}
             </p>
           </div>
         </div>
 
-        {/* ── Progress bar ── */}
-        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-primary rounded-full transition-all"
-            style={{ width: `${totalEstimated > 0 ? Math.min(100, (totalPaid / totalEstimated) * 100) : 0}%` }}
-          />
+        {/* ── Overall progress ── */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs text-muted">{overallPct.toFixed(1)}% paid</span>
+            <span className="text-xs text-muted">{formatCurrency(totalPaid)} of {formatCurrency(totalEstimated)}</span>
+          </div>
+          <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary rounded-full transition-all"
+              style={{ width: `${overallPct}%` }}
+            />
+          </div>
         </div>
-        <p className="text-xs text-muted -mt-2">
-          {totalEstimated > 0
-            ? `${((totalPaid / totalEstimated) * 100).toFixed(1)}% paid`
-            : 'Enter estimated costs to track progress'}
-        </p>
 
-        {/* ── Line items table ── */}
-        <div className="overflow-auto max-h-[50vh] border border-border rounded-xl">
-          <table className="w-full min-w-[700px] text-sm">
-            <thead>
-              <tr className="border-b border-border bg-surface-2">
-                <th className="text-left py-2 pl-3 text-xs text-text-secondary font-medium">Item</th>
-                <th className="text-left py-2 px-1 text-xs text-text-secondary font-medium">Category</th>
-                <th className="text-right py-2 px-1 text-xs text-text-secondary font-medium">Estimated</th>
-                <th className="text-right py-2 px-1 text-xs text-text-secondary font-medium">Paid</th>
-                <th className="text-right py-2 px-1 text-xs text-text-secondary font-medium">Remaining</th>
-                <th className="py-2 px-1 text-xs text-text-secondary font-medium w-16">%</th>
-                <th className="text-left py-2 px-1 text-xs text-text-secondary font-medium">Notes</th>
-                <th className="py-2 pr-2 w-6" />
-              </tr>
-            </thead>
-            <tbody>
-              {grouped.map(({ category, items: catItems }) => {
-                const catEst = catItems.reduce((s, i) => s + (i.estimated_cost || 0), 0)
-                const catPaid = catItems.reduce((s, i) => s + (i.actual_cost || 0), 0)
-                const isCollapsed = collapsed.has(category)
-                return (
-                  <>
-                    <CategoryHeader
-                      key={`hdr-${category}`}
-                      name={category}
-                      estimated={catEst}
-                      actual={catPaid}
-                      collapsed={isCollapsed}
-                      onToggle={() => toggleCollapse(category)}
-                      onAddItem={() => handleAddItem(category)}
-                    />
-                    {!isCollapsed && catItems.map((item, localIdx) => {
+        {/* ── Category sections ── */}
+        <div className="flex flex-col gap-2 max-h-[55vh] overflow-y-auto -mx-1 px-1">
+          {grouped.map(({ category, items: catItems }) => {
+            const catEst = catItems.reduce((s, i) => s + (i.estimated_cost || 0), 0)
+            const catPaid = catItems.reduce((s, i) => s + (i.actual_cost || 0), 0)
+            const isCollapsed = collapsed.has(category)
+            return (
+              <div key={category} className="border border-border/40 rounded-xl overflow-hidden">
+                <CategoryHeader
+                  name={category}
+                  estimated={catEst}
+                  actual={catPaid}
+                  collapsed={isCollapsed}
+                  onToggle={() => toggleCollapse(category)}
+                  onAddItem={() => handleAddItem(category)}
+                />
+                {!isCollapsed && (
+                  <div className="flex flex-col gap-2 p-2">
+                    {catItems.map((item, localIdx) => {
                       const gi = globalIndex(category, localIdx)
                       return (
-                        <ItemRow
+                        <ItemCard
                           key={`${category}-${localIdx}`}
                           item={item}
                           index={gi}
@@ -435,29 +433,24 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
                         />
                       )
                     })}
-                  </>
-                )
-              })}
-            </tbody>
-          </table>
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
 
-        {/* ── Add category + save ── */}
-        <div className="flex items-center justify-between pt-1">
+        {/* ── Footer ── */}
+        <div className="flex items-center justify-between pt-1 border-t border-border/30">
           <button
             onClick={handleAddCategory}
-            className="text-xs text-primary/70 hover:text-primary flex items-center gap-1"
+            className="text-xs text-primary/70 hover:text-primary flex items-center gap-1 py-1.5 px-2 rounded-lg hover:bg-primary/10 transition-colors"
           >
             <Plus size={12} /> Add category
           </button>
-
           <div className="flex items-center gap-2">
-            {dirty && (
-              <span className="text-xs text-muted">Unsaved changes</span>
-            )}
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              Cancel
-            </Button>
+            {dirty && <span className="text-xs text-muted hidden sm:inline">Unsaved changes</span>}
+            <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
             <Button variant="primary" size="sm" onClick={handleSave} loading={saving}>
               <Check size={14} />
               Save
@@ -465,11 +458,11 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
           </div>
         </div>
 
-        {/* ── Monthly savings needed breakdown (if items have "YYYY-MM" notes) ── */}
+        {/* ── Scheduled payments ── */}
         {monthlyView.length > 0 && (
-          <div className="border-t border-border pt-3">
+          <div className="border-t border-border/30 pt-3">
             <p className="text-xs font-medium text-text-secondary mb-2 flex items-center gap-1">
-              <TrendingDown size={12} /> Scheduled monthly payments (from notes)
+              <TrendingDown size={12} /> Scheduled payments
             </p>
             <div className="flex flex-wrap gap-2">
               {monthlyView.map(([month, amount]) => (
@@ -480,7 +473,7 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
               ))}
             </div>
             <p className="text-[11px] text-muted mt-1">
-              Tip: add a month like "2026-10" at the start of a note to schedule that cost.
+              Add &quot;YYYY-MM&quot; to the start of a note to schedule that cost.
             </p>
           </div>
         )}
