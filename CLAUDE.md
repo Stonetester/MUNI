@@ -1,5 +1,5 @@
 # Muni — Claude Project Context
-_Last updated: 2026-03-29 (session 10). Active branch: `main`._
+_Last updated: 2026-03-30 (session 11). Active branch: `main`._
 
 ---
 
@@ -52,8 +52,8 @@ systemctl restart muni-backend
 
 ---
 
-## Git State (as of 2026-03-29)
-- **Active branch**: `main` — all session 10 features merged
+## Git State (as of 2026-03-30)
+- **Active branch**: `main` — all session 11 features merged
 - **Branches**:
   - `main` — production-ready, working branch
   - `feature/ios-redesign` — full visual redesign experiment (jade green, DM Serif, iOS nav); NOT merged — needs local review before deciding
@@ -131,9 +131,9 @@ systemctl restart muni-backend
 10. ✅ **Dashboard** — net worth card (expandable with HYSA-excluded figure + asset/liability breakdown), quick stats, accounts grid, monthly flow chart (clickable, scrollable to earliest transaction), spending by category, forecast preview, upcoming events, alerts card, recent transactions
 11. ✅ **Transactions** — paginated list, CSV/XLSX import, add/edit/delete, filter by date/account/category/search, export CSV; mobile delete button always visible
 12. ✅ **Accounts** — CRUD, balance history chart, backdated snapshot entry, joint badge; account types: checking/savings/hysa/brokerage/ira/401k/hsa/credit_card/student_loan/car_loan/mortgage/other
-13. ✅ **Budget** — categories with `budget_amount`, recurring rules, spending vs budget comparison, over-budget alerts, 3-month avg spending estimate hint per category
+13. ✅ **Budget** — categories with `budget_amount`, recurring rules, spending vs budget comparison, over-budget alerts; weighted 50/30/20 budget estimate blend across 12/6/3 months
 14. ✅ **Forecast** — 60-month net worth + cash flow charts (both clickable months → `MonthDetailModal`), category contribution table, scenario selector; income labeled as "net (after taxes & deductions)"
-15. ✅ **Life Events** — CRUD (name, type, start/end dates, total cost, monthly breakdown, active toggle); bulk "Clear All" with confirm dialog
+15. ✅ **Life Events** — CRUD (name, type, start/end dates, total cost, monthly breakdown, active toggle); bulk "Clear All" with confirm dialog; wedding budget breakdown (line items per category, paid vs estimated, progress bars, monthly savings needed)
 16. ✅ **What-If Scenarios** — clone baseline, compare two scenarios side-by-side
 17. ✅ **Alerts** — over-budget categories + upcoming event payments with severity levels
 18. ✅ **Spending Calendar** (`/calendar`) — monthly grid with day-level pie charts, click day for transaction detail
@@ -148,6 +148,9 @@ systemctl restart muni-backend
 27. ✅ **Joint accounts** — `is_joint` flag on accounts; "Joint" badge on AccountCard; checkbox in AccountForm; both users can see joint accounts; `is_joint`/`joint_user_id` columns added inline on startup
 28. ✅ **Balance snapshot reminder email** — `build_snapshot_reminder_html()` in email_service; lists stale accounts by type with last-updated date, days-ago, why it matters; scheduler job every Sunday 10am; preview + manual send on Notifications page
 29. ✅ **Statement import** (`/statements`) — upload EverBank/John Hancock/Schwab PDFs → pdfplumber parser extracts institution, date, ending balance → review form with auto-matched account selector → saves via POST /balance-snapshots; supports batch upload
+30. ✅ **Joint mode everywhere** — when joint toggle is on, every page shows combined household data: transactions (with owner color badges), events, alerts, budget summary, forecast (via `run_joint_forecast`), calendar; add/edit controls hidden in joint mode
+31. ✅ **Wedding budget breakdown** — `WeddingBreakdown` full-screen overlay on mobile; 29 pre-filled starter items across 11 categories; per-item: name, estimated cost, paid, remaining, progress bar, notes; category sections collapsible with subtotals; monthly savings needed; scheduled payments from YYYY-MM notes; saves via `POST /events/{id}/items/bulk`
+32. ✅ **Event line items** — `EventLineItem` model + `event_line_items` table (migration 004); bulk save endpoint; mini-summary shown on EventCard with progress bar; wedding CTA if no items yet
 
 ---
 
@@ -162,9 +165,9 @@ systemctl restart muni-backend
   - `accounts.py` — account CRUD; queries own + joint accounts
   - `balance_snapshots.py` — `/balance-snapshots?account_id=` (chart data)
   - `categories.py` — category CRUD + budget amounts
-  - `budget.py` — `/budget/summary` (spending vs budget); `/budget/estimates` (3-month avg per category)
+  - `budget.py` — `/budget/summary` (spending vs budget); `/budget/estimates` (weighted 50/30/20 blend across 12/6/3 months — no `months` param needed)
   - `forecast.py` — 60-month projection engine endpoint
-  - `events.py` — life events CRUD + bulk DELETE `/events`
+  - `events.py` — life events CRUD + bulk DELETE `/events`; line item sub-routes: `GET/POST/PUT/DELETE /events/{id}/items`, `POST /events/{id}/items/bulk`
   - `scenarios.py` — scenario CRUD + clone
   - `alerts.py` — budget + event alerts
   - `import_data.py` — CSV/XLSX import
@@ -173,17 +176,18 @@ systemctl restart muni-backend
   - `paystubs.py` — POST `/paystubs/parse`, POST `/paystubs` (save+create transactions), GET `/paystubs`, DELETE `/paystubs/{id}`, PUT `/paystubs/{id}` (recreates transactions)
   - `notifications.py` — email digest config + send; `/notifications/snapshot-preview` GET; `/notifications/send-snapshot` POST
   - `ai_report.py` — Claude API monthly report
-  - `joint.py` — joint view transaction list with `owner` field for color-coded display
+  - `joint.py` — joint view: `/joint/transactions`, `/joint/accounts`, `/joint/summary`, `/joint/events`, `/joint/alerts`, `/joint/budget/summary`, `/joint/forecast`
   - `statements.py` — `POST /statements/parse` — upload PDF, returns parsed institution/date/balance
 - Services: `backend/app/services/`
-  - `forecasting.py` — 60-month projection engine (historical avgs + recurring rules + life events + debt amortization + investment growth)
+  - `forecasting.py` — 60-month projection engine; `run_joint_forecast()` function combines all users' accounts (deduped), sums contributions from both Financial Profiles, adds partner Savings Transfer avg as monthly_contrib to joint HYSA, merges historical category averages by name across users
   - `statement_parser.py` — pdfplumber + regex for EverBank, John Hancock, Schwab statements; `parse_statement(pdf_path)` returns `ParsedStatement` dataclass; handles whitespace-stripped PDFs; JH uses `findall` + last match to get ending (not beginning) balance
   - `paystub_parser.py` — pdfplumber + regex for Paylocity AND G&P (Grimm & Parker); bonus detection (requires period+YTD pair, lone YTD carry-forwards ignored); `pay_type = "bonus"` only when `bonus_pay > 0` and `regular_pay == 0`; employee 401k: tries `401K`, `401(k)`, `401K-EE`, `Employee 401k`; employer 401k: tries `401 Safe H`, `401K-ER`, `Employer 401k`, `401(k) Match/Employer`
   - `google_sheets_sync.py` — sheets API, tab parsing, SHA-256 dedup, upsert, HYSA auto-categorize, income row detection (salary/freelance → keeps positive, maps to Salary/Side Income), Katherine's format, duplicate review list
   - `email_service.py` — weekly digest + snapshot reminder (`build_snapshot_reminder_html`, `send_snapshot_reminder_for_user`, `send_snapshot_reminders_all`); stale threshold: 35 days for monthly accounts, 95 days for quarterly
 - Models: `backend/app/models/`
   - `user.py`, `account.py` (has `is_joint`, `joint_user_id`), `transaction.py`, `category.py`, `recurring_rule.py`
-  - `balance_snapshot.py`, `life_event.py`, `scenario.py`
+  - `balance_snapshot.py`, `life_event.py` (has `line_items` relationship), `scenario.py`
+  - `event_line_item.py` — `EventLineItem` (id, event_id FK→life_events CASCADE, name, category, estimated_cost, actual_cost, notes, sort_order)
   - `sync_config.py` — `UserSyncConfig` (sheet_id, is_enabled, last_sync_at, last_sync_status)
   - `financial_profile.py` — `FinancialProfile` (field: `gross_annual_salary` — NOT `salary`), `StudentLoan`, `InvestmentHolding`, `CompensationEvent`
   - `paystub.py` — `Paystub` model with all parsed fields including `pay_type`, `bonus_pay`
@@ -194,11 +198,12 @@ systemctl restart muni-backend
   - `001_initial_schema.py` — all base tables
   - `002_paystub_bonus_fields.py` — adds `pay_type` (String) and `bonus_pay` (Float) to paystubs
   - `003_home_buying_profiles.py` — home buying profile fields; `down_revision = "002"`
+  - `004_event_line_items.py` — creates `event_line_items` table; `down_revision = "003"`
 - Credentials (gitignored): `backend/credentials/google-sheets-key.json`
 - PDF uploads (gitignored): `backend/uploads/paystubs/`
 
 ### Frontend
-- API calls: `frontend/src/lib/api.ts` — all fetch wrappers including: `getBudgetEstimates`, `inferSalaryFromPaystubs`, `getSnapshotReminderPreview`, `sendSnapshotReminderNow`, `parseStatement`, `createBalanceSnapshot`
+- API calls: `frontend/src/lib/api.ts` — all fetch wrappers including: `getBudgetEstimates` (no args — uses weighted blend), `inferSalaryFromPaystubs`, `getSnapshotReminderPreview`, `sendSnapshotReminderNow`, `parseStatement`, `createBalanceSnapshot`, `getJointEvents`, `getJointAlerts`, `getJointBudgetSummary`, `getJointForecast`, `getEventLineItems`, `createEventLineItem`, `updateEventLineItem`, `deleteEventLineItem`, `bulkSaveEventLineItems`
 - Types: `frontend/src/lib/types.ts` — all TypeScript interfaces; `FinancialProfile` uses `gross_annual_salary` (not `salary`)
 - Auth utils: `frontend/src/lib/auth.ts` — `login()`, `switchProfiles()`, `getAltUser()`, `storeAltProfile()`
 - Layout + nav: `frontend/src/components/layout/`
@@ -226,6 +231,9 @@ systemctl restart muni-backend
   - `/financial-profile` — salary (with auto-calculate button), loans, holdings, compensation history
   - `/notifications` — weekly digest + snapshot reminder (stale account list + manual send)
   - `/statements` — upload EverBank/JH/Schwab PDFs, review parsed results, save balance snapshots
+- Event components: `frontend/src/components/events/`
+  - `EventCard.tsx` — mini budget summary (estimated/paid/remaining + progress bar) when line items exist; wedding CTA if no items; opens WeddingBreakdown on click
+  - `WeddingBreakdown.tsx` — full-screen mobile overlay (not a modal); sticky header with X; sticky Save/Discard footer; collapsible CategorySection rows with progress bar; ItemCard per line item (name, est, paid, remaining, notes); 29 pre-filled STARTER_ITEMS; saves via `bulkSaveEventLineItems`
 
 ---
 
@@ -330,6 +338,45 @@ _Established 2026-03-24. Use when advising on account setup, forecasting, or syn
 
 ---
 
+## Session 11 Changes (2026-03-30)
+
+### New Features
+- **Wedding budget breakdown** — `WeddingBreakdown` component; full-screen overlay on mobile (not a popup modal); 29 pre-filled starter items across 11 categories; per-item editing (name, estimated cost, paid, notes); category sections collapsible; monthly savings needed; scheduled payments via YYYY-MM notes; bulk save to backend
+- **Event line items** — new `EventLineItem` model + migration 004; `event_line_items` table with cascade delete; mini-summary shown on EventCard; `WeddingBreakdown` opens for any event (not just weddings)
+- **Joint mode everywhere** — all pages (transactions, events, alerts, budget, forecast, calendar) switch to joint endpoints when joint toggle is on; add/edit controls hidden in joint mode; TransactionList shows owner color badges in joint mode
+- **HYSA joint contributions in forecast** — `run_joint_forecast()` in `forecasting.py`; Katherine's Savings Transfer historical average routed as monthly contribution to joint HYSA; prevents double-counting while correctly growing the HYSA balance
+- **Weighted budget estimates** — `/budget/estimates` now uses 50/30/20 weighted blend across 3/6/12 months (was simple 3-month avg); consistent with forecast engine methodology; `SpendingCategoriesWidget` updated to use new signature (no `months` arg)
+
+### New Backend
+- `GET /joint/events` — returns combined life events from all users with `owner` field
+- `GET /joint/alerts` — merges alerts from all users
+- `GET /joint/budget/summary` — merges category spending by name across all users
+- `GET /joint/forecast` — calls `run_joint_forecast()`, prepends historical actuals
+- `GET /events/{id}/items` — list line items for an event
+- `POST /events/{id}/items` — create a single line item
+- `PUT /events/{id}/items/{item_id}` — update a single line item
+- `DELETE /events/{id}/items/{item_id}` — delete a single line item
+- `POST /events/{id}/items/bulk` — replace all line items atomically (used by WeddingBreakdown save)
+
+### New Frontend Types
+- `EventLineItem` interface in `types.ts` (id, event_id, name, category, estimated_cost, actual_cost, notes, sort_order)
+- `LifeEvent` updated to include `line_items?: EventLineItem[]`
+
+### Bug Fixes
+- **`EventLineItem` not imported in `api.ts`** — caused TypeScript build error `Cannot find name 'EventLineItem'`; fixed by adding to import block
+- **`EACCES` on `.next/` after manual `rm -rf`** — running `rm -rf .next` as root then building as `muni` user fails with permission denied; fix: `chown -R muni:muni /opt/muni/app/frontend/.next`
+
+### Mobile UX
+- `WeddingBreakdown` fully redesigned twice this session:
+  1. First pass: table → cards (better but still windowed popup)
+  2. Final: full-screen overlay, sticky header/footer, large tappable CategorySection rows, always-visible X and delete buttons, `inputMode="decimal"` on number inputs for mobile keyboard
+
+### HomeLab Vault Updated
+- New: `Projects/Home Lab/200 - Services/Muni.md` — full service doc
+- Updated: `Roman.md`, `HOME.md`, `RACK_OVERVIEW.md`, `Startup-Sequence.md`, `Shutdown-Sequence.md`, `Backup-Procedures.md`, `Disaster-Recovery.md`
+
+---
+
 ## Session 10 Changes (2026-03-29)
 
 ### New Features
@@ -386,8 +433,8 @@ Cleaned up 6 stale/empty branches. Kept only:
 ### Joint HYSA — Full Shared Account Model
 - `is_joint` + `joint_user_id` columns already exist on accounts table
 - "Joint" badge and checkbox already in UI
-- Still needed: Katherine's HYSA contributions should apply to Keaton's HYSA account without double-counting in combined/joint net worth view
-- Currently: Keaton owns the HYSA account; Katherine should NOT create a separate HYSA account
+- **Forecast is now correct** — `run_joint_forecast()` routes Katherine's Savings Transfer avg as monthly_contrib to the joint HYSA; no double-counting
+- Still needed: the joint net worth view in the UI (NetWorthCard) should show a combined balance for the HYSA rather than counting it twice if both users have it visible
 
 ### Balance Snapshots — Edit/Delete
 - Retroactive balance snapshots are append-only in the UI
@@ -427,6 +474,16 @@ Open http://localhost:3000 — click Keaton or Katherine to log in (no password)
 
 ---
 
+## Schema Notes (do not revert)
+| Feature | Backend field | Frontend field | Notes |
+|---------|--------------|----------------|-------|
+| Event line items | `event_line_items` table | `EventLineItem` interface | cascade delete when life_event deleted |
+| Bulk line item save | `POST /events/{id}/items/bulk` | `bulkSaveEventLineItems(eventId, items)` | replaces all items atomically |
+| Budget estimates | `GET /budget/estimates` | `getBudgetEstimates()` | no months param — uses 50/30/20 weighted blend |
+| Joint forecast | `GET /joint/forecast` | `getJointForecast()` | calls `run_joint_forecast()` in forecasting.py |
+
+---
+
 ## Common Issues
 - `ModuleNotFoundError: email_validator` → `pip install "pydantic[email]"` or `pip install -r requirements.txt`
 - `'next' is not recognized` → run `npm install` in `frontend/` first
@@ -440,3 +497,6 @@ Open http://localhost:3000 — click Keaton or Katherine to log in (no password)
 - `gross_annual_salary` not saving in Financial Profile → ensure frontend sends `gross_annual_salary` not `salary`
 - Backend crashes on startup with `pydantic_core.ValidationError: ANTHROPIC_API_KEY Extra inputs are not permitted` → add `ANTHROPIC_API_KEY: str = ""` to `Settings` in `config.py` (already fixed in main)
 - Statement parser returns `None` for balance/date → check pdfplumber can extract text; some PDFs strip spaces between words — parser handles EverBank/JH/Schwab known formats
+- `EACCES: permission denied` on `.next/trace` during build → ran `rm -rf .next` as root; fix: `chown -R muni:muni /opt/muni/app/frontend/.next` then re-run `muni-deploy`
+- TypeScript build error `Cannot find name 'EventLineItem'` in `api.ts` → type added to `types.ts` but not imported in `api.ts`; add to the `import type { ... } from './types'` block
+- Joint forecast shows wrong HYSA balance → ensure `run_joint_forecast()` is being called (not the single-user version); check that the HYSA account has `is_joint=true` and Katherine's Savings Transfer transactions exist
