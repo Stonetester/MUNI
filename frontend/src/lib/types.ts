@@ -75,6 +75,17 @@ export interface BalanceSnapshot {
 
 export type EventType = 'wedding' | 'marriage' | 'move' | 'new_job' | 'baby' | 'home_purchase' | 'vacation' | 'loan_payoff' | 'other'
 
+export interface EventLineItem {
+  id: number
+  event_id: number
+  name: string
+  category?: string
+  estimated_cost: number
+  actual_cost?: number
+  notes?: string
+  sort_order: number
+}
+
 export interface LifeEvent {
   id: number
   name: string
@@ -86,6 +97,7 @@ export interface LifeEvent {
   is_active: boolean
   scenario_id?: number
   monthly_breakdown?: Array<{month: string, amount: number}>
+  line_items?: EventLineItem[]
 }
 
 export interface Scenario {

@@ -107,6 +107,7 @@ export default function EventsPage() {
                         event={event}
                         onEdit={setEditEvent}
                         onDeleted={load}
+                        onUpdated={(updated) => setEvents(prev => prev.map(e => e.id === updated.id ? { ...e, ...updated } : e))}
                         readOnly={mode === 'joint'}
                       />
                     ))}
@@ -124,6 +125,7 @@ export default function EventsPage() {
                       event={event}
                       onEdit={setEditEvent}
                       onDeleted={load}
+                      onUpdated={(updated) => setEvents(prev => prev.map(e => e.id === updated.id ? { ...e, ...updated } : e))}
                       readOnly={mode === 'joint'}
                     />
                   ))}

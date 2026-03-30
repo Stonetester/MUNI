@@ -13,6 +13,7 @@ from app.models.investment_holding import InvestmentHolding
 from app.models.compensation_event import CompensationEvent
 from app.models.paystub import Paystub
 from app.models.home_buying import HomeBuyingGoal
+from app.models.event_line_item import EventLineItem
 
 __all__ = [
     "User",
@@ -30,4 +31,5 @@ __all__ = [
     "CompensationEvent",
     "Paystub",
     "HomeBuyingGoal",
+    "EventLineItem",
 ]

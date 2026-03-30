@@ -242,6 +242,31 @@ export async function deleteAllLifeEvents(): Promise<void> {
   await api.delete('/events')
 }
 
+// Event Line Items
+export async function getEventLineItems(eventId: number): Promise<EventLineItem[]> {
+  const res = await api.get(`/events/${eventId}/items`)
+  return res.data
+}
+
+export async function createEventLineItem(eventId: number, data: Omit<EventLineItem, 'id' | 'event_id'>): Promise<EventLineItem> {
+  const res = await api.post(`/events/${eventId}/items`, data)
+  return res.data
+}
+
+export async function updateEventLineItem(eventId: number, itemId: number, data: Partial<EventLineItem>): Promise<EventLineItem> {
+  const res = await api.put(`/events/${eventId}/items/${itemId}`, data)
+  return res.data
+}
+
+export async function deleteEventLineItem(eventId: number, itemId: number): Promise<void> {
+  await api.delete(`/events/${eventId}/items/${itemId}`)
+}
+
+export async function bulkSaveEventLineItems(eventId: number, items: Omit<EventLineItem, 'id' | 'event_id'>[]): Promise<EventLineItem[]> {
+  const res = await api.post(`/events/${eventId}/items/bulk`, items)
+  return res.data
+}
+
 // Scenarios
 export async function getScenarios(): Promise<Scenario[]> {
   const res: AxiosResponse<Scenario[]> = await api.get('/scenarios')

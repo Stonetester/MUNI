@@ -6,8 +6,12 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.database import get_db
 from app.models.life_event import LifeEvent
+from app.models.event_line_item import EventLineItem
 from app.models.user import User
-from app.schemas.life_event import LifeEventCreate, LifeEventOut, LifeEventUpdate
+from app.schemas.life_event import (
+    LifeEventCreate, LifeEventOut, LifeEventUpdate,
+    EventLineItemCreate, EventLineItemUpdate, EventLineItemOut,
+)
 
 router = APIRouter(prefix="/events", tags=["life-events"])
 
@@ -98,3 +102,82 @@ def delete_life_event(
     event = get_event_or_404(event_id, current_user, db)
     db.delete(event)
     db.commit()
+
+
+# ── Line Items ────────────────────────────────────────────────────────────────
+
+@router.get("/{event_id}/items", response_model=List[EventLineItemOut])
+def list_line_items(
+    event_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    get_event_or_404(event_id, current_user, db)
+    return db.query(EventLineItem).filter(EventLineItem.event_id == event_id).order_by(EventLineItem.sort_order).all()
+
+
+@router.post("/{event_id}/items", response_model=EventLineItemOut, status_code=status.HTTP_201_CREATED)
+def create_line_item(
+    event_id: int,
+    item_in: EventLineItemCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    get_event_or_404(event_id, current_user, db)
+    item = EventLineItem(**item_in.model_dump(), event_id=event_id)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.put("/{event_id}/items/{item_id}", response_model=EventLineItemOut)
+def update_line_item(
+    event_id: int,
+    item_id: int,
+    item_in: EventLineItemUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    get_event_or_404(event_id, current_user, db)
+    item = db.query(EventLineItem).filter(EventLineItem.id == item_id, EventLineItem.event_id == event_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Line item not found")
+    for field, value in item_in.model_dump(exclude_unset=True).items():
+        setattr(item, field, value)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/{event_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_line_item(
+    event_id: int,
+    item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    get_event_or_404(event_id, current_user, db)
+    item = db.query(EventLineItem).filter(EventLineItem.id == item_id, EventLineItem.event_id == event_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Line item not found")
+    db.delete(item)
+    db.commit()
+
+
+@router.post("/{event_id}/items/bulk", response_model=List[EventLineItemOut], status_code=status.HTTP_201_CREATED)
+def bulk_create_line_items(
+    event_id: int,
+    items_in: List[EventLineItemCreate],
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Replace all line items for an event with a new set (used for bulk save)."""
+    get_event_or_404(event_id, current_user, db)
+    db.query(EventLineItem).filter(EventLineItem.event_id == event_id).delete()
+    new_items = [EventLineItem(**item.model_dump(), event_id=event_id) for item in items_in]
+    db.add_all(new_items)
+    db.commit()
+    for item in new_items:
+        db.refresh(item)
+    return new_items

@@ -28,3 +28,4 @@ class LifeEvent(Base):
     # Relationships
     user = relationship("User", back_populates="life_events")
     scenario = relationship("Scenario", back_populates="life_events")
+    line_items = relationship("EventLineItem", back_populates="event", cascade="all, delete-orphan", order_by="EventLineItem.sort_order")
