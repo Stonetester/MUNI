@@ -7,6 +7,7 @@ import type {
   RecurringRule,
   BalanceSnapshot,
   LifeEvent,
+  EventLineItem,
   Scenario,
   ForecastResponse,
   DashboardData,
