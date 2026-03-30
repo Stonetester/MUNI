@@ -241,7 +241,7 @@ export default function SpendingCategoriesWidget() {
       try {
         const [s, e] = await Promise.all([
           getBudgetSummary(),
-          getBudgetEstimates(3),
+          getBudgetEstimates(),
         ])
         if (cancelled) return
         setSummary(s)

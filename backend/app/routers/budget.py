@@ -81,14 +81,23 @@ def get_budget_summary(
 
 @router.get("/estimates")
 def get_spending_estimates(
-    months: int = Query(default=3, ge=1, le=12, description="How many past months to average"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return N-month average spending per expense/savings category (excluding current month)."""
+    """
+    Return weighted-average monthly spend per expense/savings category.
+    Uses the same 50/30/20 weighting as the forecast engine:
+      - 3-month avg × 0.50  (recent behaviour — highest weight)
+      - 6-month avg × 0.30  (medium-term trend)
+      - 12-month avg × 0.20 (seasonal baseline)
+    This produces budget suggestions that react to recent changes while
+    staying anchored to the full year of history.
+    """
     today = date.today()
-    period_start = today.replace(day=1) - relativedelta(months=months)
-    period_end = today.replace(day=1)  # up to but not including this month
+    period_end = today.replace(day=1)  # exclude current (partial) month
+    start_12 = period_end - relativedelta(months=12)
+    start_6  = period_end - relativedelta(months=6)
+    start_3  = period_end - relativedelta(months=3)
 
     categories = (
         db.query(Category)
@@ -99,29 +108,44 @@ def get_spending_estimates(
         .all()
     )
 
-    spending_rows = (
-        db.query(Transaction.category_id, func.sum(Transaction.amount).label("total"))
-        .filter(
-            Transaction.user_id == current_user.id,
-            Transaction.date >= period_start,
-            Transaction.date < period_end,
-            Transaction.scenario_id.is_(None),
+    def _sum_for_period(period_start: date) -> dict:
+        rows = (
+            db.query(Transaction.category_id, func.sum(Transaction.amount).label("total"))
+            .filter(
+                Transaction.user_id == current_user.id,
+                Transaction.date >= period_start,
+                Transaction.date < period_end,
+                Transaction.scenario_id.is_(None),
+                Transaction.amount < 0,  # expenses only
+            )
+            .group_by(Transaction.category_id)
+            .all()
         )
-        .group_by(Transaction.category_id)
-        .all()
-    )
-    spend_map = {row.category_id: abs(row.total) for row in spending_rows if row.total}
+        return {r.category_id: abs(r.total) for r in rows if r.total}
+
+    sums_12 = _sum_for_period(start_12)
+    sums_6  = _sum_for_period(start_6)
+    sums_3  = _sum_for_period(start_3)
 
     result = []
     for cat in categories:
-        total = spend_map.get(cat.id, 0.0)
-        avg = round(total / months, 2) if total > 0 else 0.0
-        if avg > 0:
+        avg12 = sums_12.get(cat.id, 0.0) / 12
+        avg6  = sums_6.get(cat.id, 0.0)  / 6
+        avg3  = sums_3.get(cat.id, 0.0)  / 3
+
+        # Weighted blend — same as forecast engine
+        weighted = avg3 * 0.50 + avg6 * 0.30 + avg12 * 0.20
+
+        # Fall back to whatever window has data if the full 12 months isn't available
+        if weighted == 0:
+            weighted = avg6 or avg3
+
+        if weighted > 0:
             result.append({
                 "category_id": cat.id,
                 "category_name": cat.name,
-                "avg_monthly": avg,
-                "months_sampled": months,
+                "avg_monthly": round(weighted, 2),
+                "months_sampled": 12,
             })
 
     result.sort(key=lambda x: -x["avg_monthly"])

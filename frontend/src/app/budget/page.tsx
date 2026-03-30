@@ -261,7 +261,7 @@ export default function BudgetPage() {
           getBudgetSummary(month),
           getCategories(),
           getRecurringRules(),
-          getBudgetEstimates(3),
+          getBudgetEstimates(),
         ])
         setBudget(b)
         setCategories(cats)
