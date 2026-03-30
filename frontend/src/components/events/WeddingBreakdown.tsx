@@ -3,15 +3,14 @@
 import { useState, useEffect, useMemo } from 'react'
 import { bulkSaveEventLineItems } from '@/lib/api'
 import { LifeEvent, EventLineItem } from '@/lib/types'
-import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import { formatCurrency } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import {
-  Plus, Trash2, ChevronDown, ChevronUp, Check, CalendarDays, TrendingDown,
+  Plus, Trash2, ChevronRight, ChevronDown, Check, CalendarDays, X, TrendingDown,
 } from 'lucide-react'
 
-// ── Default wedding categories with pre-filled starter items ─────────────────
+// ── Categories & starter data ─────────────────────────────────────────────────
 
 const WEDDING_CATEGORIES = [
   'Pre-Wedding',
@@ -68,47 +67,50 @@ function monthsBetween(from: Date, to: Date) {
   )
 }
 
-function paidPct(estimated: number, actual?: number) {
-  if (!estimated || !actual) return 0
-  return Math.min(100, (actual / estimated) * 100)
-}
+// ── Item card ─────────────────────────────────────────────────────────────────
 
-// ── Item card (mobile-first) ──────────────────────────────────────────────────
+type DraftItem = Omit<EventLineItem, 'id' | 'event_id'>
 
 interface CardProps {
-  item: Omit<EventLineItem, 'id' | 'event_id'>
+  item: DraftItem
   index: number
-  onChange: (index: number, field: keyof Omit<EventLineItem, 'id' | 'event_id'>, value: string | number | undefined) => void
+  onChange: (index: number, field: keyof DraftItem, value: string | number | undefined) => void
   onDelete: (index: number) => void
 }
 
 function ItemCard({ item, index, onChange, onDelete }: CardProps) {
-  const pct = paidPct(item.estimated_cost, item.actual_cost)
-  const remaining = item.estimated_cost - (item.actual_cost ?? 0)
-  const isPaid = remaining <= 0 && item.estimated_cost > 0
+  const paid = item.actual_cost ?? 0
+  const est = item.estimated_cost || 0
+  const remaining = est - paid
+  const pct = est > 0 ? Math.min(100, (paid / est) * 100) : 0
+  const isDone = est > 0 && remaining <= 0
 
   return (
-    <div className="bg-surface-2/40 border border-border/40 rounded-xl p-3 flex flex-col gap-2">
-      {/* Name row */}
+    <div className={cn(
+      'rounded-xl border p-3 flex flex-col gap-2.5',
+      isDone ? 'border-primary/30 bg-primary/5' : 'border-border/50 bg-surface-2/30',
+    )}>
+      {/* Name + delete */}
       <div className="flex items-center gap-2">
         <input
-          className="flex-1 bg-transparent text-sm font-medium text-text-primary focus:outline-none placeholder:text-muted/50 min-w-0"
+          className="flex-1 bg-transparent text-sm font-medium text-text-primary focus:outline-none placeholder:text-muted/50 min-w-0 py-0.5"
           value={item.name}
           onChange={e => onChange(index, 'name', e.target.value)}
           placeholder="Item name"
         />
+        {isDone && <Check size={14} className="text-primary shrink-0" />}
         <button
           onClick={() => onDelete(index)}
-          className="p-1.5 rounded-lg text-muted hover:text-danger hover:bg-danger/10 transition-colors shrink-0"
+          className="p-2 rounded-lg text-muted hover:text-danger hover:bg-danger/10 active:bg-danger/20 transition-colors shrink-0"
         >
-          <Trash2 size={14} />
+          <Trash2 size={15} />
         </button>
       </div>
 
-      {/* Est / Paid / Remaining */}
+      {/* Estimated / Paid / Remaining */}
       <div className="grid grid-cols-3 gap-2">
-        <div>
-          <p className="text-[10px] text-muted mb-1">Estimated</p>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] text-muted font-medium uppercase tracking-wide">Estimated</span>
           <div className="relative">
             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted text-xs pointer-events-none">$</span>
             <input
@@ -116,14 +118,14 @@ function ItemCard({ item, index, onChange, onDelete }: CardProps) {
               min="0"
               step="50"
               inputMode="decimal"
-              className="w-full bg-surface-2 border border-border/60 text-sm text-right focus:outline-none focus:border-primary/50 rounded-lg pl-5 pr-2 py-1.5"
-              value={item.estimated_cost || ''}
+              className="w-full bg-surface border border-border/60 text-sm text-right focus:outline-none focus:border-primary/60 rounded-lg pl-5 pr-2 py-2"
+              value={est || ''}
               onChange={e => onChange(index, 'estimated_cost', parseFloat(e.target.value) || 0)}
             />
           </div>
-        </div>
-        <div>
-          <p className="text-[10px] text-muted mb-1">Paid</p>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] text-muted font-medium uppercase tracking-wide">Paid</span>
           <div className="relative">
             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted text-xs pointer-events-none">$</span>
             <input
@@ -131,7 +133,7 @@ function ItemCard({ item, index, onChange, onDelete }: CardProps) {
               min="0"
               step="50"
               inputMode="decimal"
-              className="w-full bg-surface-2 border border-border/60 text-sm text-right focus:outline-none focus:border-primary/50 rounded-lg pl-5 pr-2 py-1.5"
+              className="w-full bg-surface border border-border/60 text-sm text-right focus:outline-none focus:border-primary/60 rounded-lg pl-5 pr-2 py-2"
               value={item.actual_cost ?? ''}
               placeholder="0"
               onChange={e => {
@@ -140,39 +142,33 @@ function ItemCard({ item, index, onChange, onDelete }: CardProps) {
               }}
             />
           </div>
-        </div>
-        <div>
-          <p className="text-[10px] text-muted mb-1">Remaining</p>
-          <div className="flex items-center h-[34px] justify-end">
-            {isPaid ? (
-              <span className="text-xs font-semibold text-primary flex items-center gap-1">
-                <Check size={11} /> Done
-              </span>
-            ) : (
-              <span className={cn('text-sm font-semibold', remaining > 0 ? 'text-warning' : 'text-muted')}>
-                {item.estimated_cost > 0 ? formatCurrency(remaining) : '—'}
-              </span>
-            )}
+        </label>
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] text-muted font-medium uppercase tracking-wide">Left</span>
+          <div className="flex items-center h-[38px]">
+            <span className={cn('text-sm font-bold', isDone ? 'text-primary' : est > 0 ? 'text-warning' : 'text-muted')}>
+              {isDone ? '✓ Paid' : est > 0 ? formatCurrency(remaining) : '—'}
+            </span>
           </div>
         </div>
       </div>
 
       {/* Progress bar */}
-      {item.estimated_cost > 0 && (
+      {est > 0 && (
         <div className="flex items-center gap-2">
           <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
             <div
-              className={cn('h-full rounded-full transition-all', isPaid ? 'bg-primary' : 'bg-warning')}
+              className={cn('h-full rounded-full transition-all', isDone ? 'bg-primary' : 'bg-warning')}
               style={{ width: `${pct}%` }}
             />
           </div>
-          <span className="text-[10px] text-muted shrink-0">{pct.toFixed(0)}%</span>
+          <span className="text-[10px] text-muted w-8 text-right shrink-0">{pct.toFixed(0)}%</span>
         </div>
       )}
 
       {/* Notes */}
       <input
-        className="w-full bg-transparent text-xs text-muted focus:outline-none rounded px-0 py-0.5 border-b border-transparent focus:border-border/50 placeholder:text-muted/40 transition-colors"
+        className="w-full bg-transparent text-xs text-muted focus:outline-none border-b border-transparent focus:border-border/50 pb-0.5 placeholder:text-muted/40 transition-colors"
         value={item.notes ?? ''}
         onChange={e => onChange(index, 'notes', e.target.value)}
         placeholder="Notes (use YYYY-MM to schedule a payment)"
@@ -181,41 +177,93 @@ function ItemCard({ item, index, onChange, onDelete }: CardProps) {
   )
 }
 
-// ── Category group header ─────────────────────────────────────────────────────
+// ── Category section header ───────────────────────────────────────────────────
 
-function CategoryHeader({ name, estimated, actual, collapsed, onToggle, onAddItem }: {
+function CategorySection({
+  name, estimated, actual, collapsed, onToggle, onAddItem, children,
+}: {
   name: string
   estimated: number
   actual: number
   collapsed: boolean
   onToggle: () => void
   onAddItem: () => void
+  children?: React.ReactNode
 }) {
   const remaining = estimated - actual
+  const pct = estimated > 0 ? Math.min(100, (actual / estimated) * 100) : 0
+  const isDone = estimated > 0 && remaining <= 0
+
   return (
-    <div className="flex items-center justify-between px-3 py-2.5 bg-surface-2/70">
+    <div className={cn(
+      'rounded-xl overflow-hidden border',
+      collapsed ? 'border-border/40' : 'border-primary/20',
+    )}>
+      {/* Header tap area */}
       <button
         onClick={onToggle}
-        className="flex items-center gap-2 text-xs font-semibold text-text-secondary uppercase tracking-wider hover:text-text-primary transition-colors min-w-0"
+        className={cn(
+          'w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors',
+          collapsed ? 'bg-surface-2/80 hover:bg-surface-2' : 'bg-primary/10',
+        )}
       >
-        {collapsed ? <ChevronDown size={12} className="shrink-0" /> : <ChevronUp size={12} className="shrink-0" />}
-        <span className="truncate">{name}</span>
-      </button>
-      <div className="flex items-center gap-3 shrink-0 ml-2">
-        <div className="text-right text-xs hidden sm:block">
-          <span className="text-muted">{formatCurrency(estimated)}</span>
-          {actual > 0 && <span className="text-primary ml-1">· {formatCurrency(actual)} paid</span>}
-          {remaining > 0 && estimated > 0 && <span className="text-warning ml-1">· {formatCurrency(remaining)} left</span>}
+        {/* Chevron */}
+        <span className="shrink-0 text-text-secondary">
+          {collapsed
+            ? <ChevronRight size={18} />
+            : <ChevronDown size={18} className="text-primary" />}
+        </span>
+
+        {/* Name + stats */}
+        <div className="flex-1 min-w-0">
+          <p className={cn(
+            'text-sm font-semibold truncate',
+            collapsed ? 'text-text-primary' : 'text-primary',
+          )}>
+            {name}
+          </p>
+          {collapsed ? (
+            <p className="text-xs text-muted mt-0.5">
+              {formatCurrency(estimated)}
+              {actual > 0 && <span className="text-primary"> · {formatCurrency(actual)} paid</span>}
+              {remaining > 0 && estimated > 0 && <span className="text-warning"> · {formatCurrency(remaining)} left</span>}
+            </p>
+          ) : (
+            estimated > 0 && (
+              <div className="flex items-center gap-2 mt-1">
+                <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className={cn('h-full rounded-full', isDone ? 'bg-primary' : 'bg-warning')}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-muted shrink-0">{formatCurrency(remaining)} left</span>
+              </div>
+            )
+          )}
         </div>
-        {/* Mobile: just show the estimated */}
-        <span className="text-xs text-muted sm:hidden">{formatCurrency(estimated)}</span>
-        <button
-          onClick={onAddItem}
-          className="text-xs text-primary/70 hover:text-primary flex items-center gap-0.5 py-1 px-2 rounded-lg hover:bg-primary/10 transition-colors"
-        >
-          <Plus size={11} /> Add
-        </button>
-      </div>
+
+        {/* Right: amount badge */}
+        <span className={cn(
+          'shrink-0 text-sm font-bold',
+          isDone ? 'text-primary' : 'text-text-primary',
+        )}>
+          {formatCurrency(estimated)}
+        </span>
+      </button>
+
+      {/* Expanded content */}
+      {!collapsed && (
+        <div className="flex flex-col gap-2 p-3 pt-2">
+          {children}
+          <button
+            onClick={onAddItem}
+            className="w-full py-2.5 rounded-xl border border-dashed border-primary/30 text-xs text-primary/70 hover:text-primary hover:border-primary/60 hover:bg-primary/5 active:bg-primary/10 transition-colors flex items-center justify-center gap-1.5"
+          >
+            <Plus size={13} /> Add item to {name}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -230,11 +278,24 @@ interface WeddingBreakdownProps {
 }
 
 export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: WeddingBreakdownProps) {
-  type DraftItem = Omit<EventLineItem, 'id' | 'event_id'>
   const [items, setItems] = useState<DraftItem[]>([])
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+
+  // Lock body scroll when open
+  useEffect(() => {
+    if (isOpen) document.body.style.overflow = 'hidden'
+    else document.body.style.overflow = ''
+    return () => { document.body.style.overflow = '' }
+  }, [isOpen])
+
+  // Esc to close
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
 
   useEffect(() => {
     if (!isOpen) return
@@ -257,15 +318,10 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
     return order
       .filter(c => map[c])
       .map(c => ({ category: c, items: map[c] }))
-      .concat(
-        Object.keys(map)
-          .filter(c => !order.includes(c))
-          .map(c => ({ category: c, items: map[c] })),
-      )
+      .concat(Object.keys(map).filter(c => !order.includes(c)).map(c => ({ category: c, items: map[c] })))
   }, [items])
 
   // ── Totals ──────────────────────────────────────────────────────────────────
-
   const totalEstimated = items.reduce((s, i) => s + (i.estimated_cost || 0), 0)
   const totalPaid = items.reduce((s, i) => s + (i.actual_cost || 0), 0)
   const totalRemaining = totalEstimated - totalPaid
@@ -277,13 +333,8 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
   const monthlySavingsNeeded = monthsLeft > 0 ? totalRemaining / monthsLeft : totalRemaining
 
   // ── Mutations ────────────────────────────────────────────────────────────────
-
   function handleChange(index: number, field: keyof DraftItem, value: string | number | undefined) {
-    setItems(prev => {
-      const next = [...prev]
-      next[index] = { ...next[index], [field]: value }
-      return next
-    })
+    setItems(prev => { const next = [...prev]; next[index] = { ...next[index], [field]: value }; return next })
     setDirty(true)
   }
 
@@ -294,26 +345,15 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
 
   function handleAddItem(category: string) {
     const maxOrder = items.filter(i => i.category === category).reduce((m, i) => Math.max(m, i.sort_order), 0)
-    setItems(prev => [
-      ...prev,
-      { name: '', category, estimated_cost: 0, actual_cost: undefined, notes: undefined, sort_order: maxOrder + 1 },
-    ])
+    setItems(prev => [...prev, { name: '', category, estimated_cost: 0, actual_cost: undefined, notes: undefined, sort_order: maxOrder + 1 }])
+    setCollapsed(prev => { const next = new Set(prev); next.delete(category); return next })
     setDirty(true)
-    // Ensure the category is expanded
-    setCollapsed(prev => {
-      const next = new Set(prev)
-      next.delete(category)
-      return next
-    })
   }
 
   function handleAddCategory() {
     const name = prompt('New category name:')
     if (!name) return
-    setItems(prev => [
-      ...prev,
-      { name: 'New item', category: name, estimated_cost: 0, actual_cost: undefined, notes: undefined, sort_order: 0 },
-    ])
+    setItems(prev => [...prev, { name: 'New item', category: name, estimated_cost: 0, actual_cost: undefined, notes: undefined, sort_order: 0 }])
     setDirty(true)
   }
 
@@ -326,14 +366,6 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
     } finally {
       setSaving(false)
     }
-  }
-
-  function toggleCollapse(cat: string) {
-    setCollapsed(prev => {
-      const next = new Set(prev)
-      next.has(cat) ? next.delete(cat) : next.add(cat)
-      return next
-    })
   }
 
   function globalIndex(category: string, localIndex: number) {
@@ -351,134 +383,161 @@ export default function WeddingBreakdown({ event, isOpen, onClose, onSaved }: We
     const map: Record<string, number> = {}
     for (const item of items) {
       const match = item.notes?.match(/^(\d{4}-\d{2})/)
-      if (match) {
-        map[match[1]] = (map[match[1]] || 0) + (item.estimated_cost || 0)
-      }
+      if (match) map[match[1]] = (map[match[1]] || 0) + (item.estimated_cost || 0)
     }
     return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
   }, [items])
 
+  if (!isOpen) return null
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`${event.name} — Budget`} size="xl">
-      <div className="flex flex-col gap-4">
-
-        {/* ── Summary cards ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <div className="bg-surface-2 rounded-xl p-3">
-            <p className="text-[11px] text-text-secondary mb-0.5">Total Budget</p>
-            <p className="text-base font-bold text-text-primary">{formatCurrency(totalEstimated)}</p>
-          </div>
-          <div className="bg-surface-2 rounded-xl p-3">
-            <p className="text-[11px] text-text-secondary mb-0.5">Paid</p>
-            <p className="text-base font-bold text-primary">{formatCurrency(totalPaid)}</p>
-          </div>
-          <div className="bg-surface-2 rounded-xl p-3">
-            <p className="text-[11px] text-text-secondary mb-0.5">Remaining</p>
-            <p className={cn('text-base font-bold', totalRemaining > 0 ? 'text-warning' : 'text-primary')}>
-              {formatCurrency(totalRemaining)}
-            </p>
-          </div>
-          <div className="bg-surface-2 rounded-xl p-3">
-            <p className="text-[11px] text-text-secondary mb-0.5 flex items-center gap-1">
-              <CalendarDays size={10} />
-              {monthsLeft > 0 ? `${monthsLeft}mo · Save/mo` : 'Date passed'}
-            </p>
-            <p className="text-base font-bold text-text-primary">
-              {monthsLeft > 0 ? formatCurrency(monthlySavingsNeeded) : '—'}
-            </p>
-          </div>
+    <div className="fixed inset-0 z-50 flex flex-col bg-surface">
+      {/* ── Sticky header ── */}
+      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border bg-surface-2/80 backdrop-blur-sm">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-text-primary truncate">{event.name}</h2>
+          <p className="text-xs text-muted">Budget Breakdown</p>
         </div>
+        <button
+          onClick={onClose}
+          className="ml-3 shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-surface border border-border text-text-secondary hover:text-text-primary hover:bg-surface-2 active:scale-95 transition-all"
+          aria-label="Close"
+        >
+          <X size={18} />
+        </button>
+      </div>
 
-        {/* ── Overall progress ── */}
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-muted">{overallPct.toFixed(1)}% paid</span>
-            <span className="text-xs text-muted">{formatCurrency(totalPaid)} of {formatCurrency(totalEstimated)}</span>
-          </div>
-          <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all"
-              style={{ width: `${overallPct}%` }}
-            />
-          </div>
-        </div>
+      {/* ── Scrollable body ── */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-2xl mx-auto px-3 py-4 flex flex-col gap-4">
 
-        {/* ── Category sections ── */}
-        <div className="flex flex-col gap-2 max-h-[55vh] overflow-y-auto -mx-1 px-1">
-          {grouped.map(({ category, items: catItems }) => {
-            const catEst = catItems.reduce((s, i) => s + (i.estimated_cost || 0), 0)
-            const catPaid = catItems.reduce((s, i) => s + (i.actual_cost || 0), 0)
-            const isCollapsed = collapsed.has(category)
-            return (
-              <div key={category} className="border border-border/40 rounded-xl overflow-hidden">
-                <CategoryHeader
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-surface-2 rounded-xl p-3">
+              <p className="text-[11px] text-muted mb-0.5">Total Budget</p>
+              <p className="text-lg font-bold text-text-primary">{formatCurrency(totalEstimated)}</p>
+            </div>
+            <div className="bg-surface-2 rounded-xl p-3">
+              <p className="text-[11px] text-muted mb-0.5">Paid So Far</p>
+              <p className="text-lg font-bold text-primary">{formatCurrency(totalPaid)}</p>
+            </div>
+            <div className="bg-surface-2 rounded-xl p-3">
+              <p className="text-[11px] text-muted mb-0.5">Still Owed</p>
+              <p className={cn('text-lg font-bold', totalRemaining > 0 ? 'text-warning' : 'text-primary')}>
+                {formatCurrency(totalRemaining)}
+              </p>
+            </div>
+            <div className="bg-surface-2 rounded-xl p-3">
+              <p className="text-[11px] text-muted mb-0.5 flex items-center gap-1">
+                <CalendarDays size={10} />
+                {monthsLeft > 0 ? `${monthsLeft} months left` : 'Date passed'}
+              </p>
+              <p className="text-lg font-bold text-text-primary">
+                {monthsLeft > 0 ? `${formatCurrency(monthlySavingsNeeded)}/mo` : '—'}
+              </p>
+            </div>
+          </div>
+
+          {/* Overall progress */}
+          <div className="bg-surface-2 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-text-secondary font-medium">Overall Progress</span>
+              <span className="text-xs text-muted">{overallPct.toFixed(1)}% paid</span>
+            </div>
+            <div className="h-3 bg-white/10 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all"
+                style={{ width: `${overallPct}%` }}
+              />
+            </div>
+            <p className="text-xs text-muted mt-1.5">{formatCurrency(totalPaid)} of {formatCurrency(totalEstimated)}</p>
+          </div>
+
+          {/* Category sections */}
+          <div className="flex flex-col gap-3">
+            {grouped.map(({ category, items: catItems }) => {
+              const catEst = catItems.reduce((s, i) => s + (i.estimated_cost || 0), 0)
+              const catPaid = catItems.reduce((s, i) => s + (i.actual_cost || 0), 0)
+              const isCollapsed = collapsed.has(category)
+              return (
+                <CategorySection
+                  key={category}
                   name={category}
                   estimated={catEst}
                   actual={catPaid}
                   collapsed={isCollapsed}
-                  onToggle={() => toggleCollapse(category)}
+                  onToggle={() => setCollapsed(prev => {
+                    const next = new Set(prev)
+                    next.has(category) ? next.delete(category) : next.add(category)
+                    return next
+                  })}
                   onAddItem={() => handleAddItem(category)}
-                />
-                {!isCollapsed && (
-                  <div className="flex flex-col gap-2 p-2">
-                    {catItems.map((item, localIdx) => {
-                      const gi = globalIndex(category, localIdx)
-                      return (
-                        <ItemCard
-                          key={`${category}-${localIdx}`}
-                          item={item}
-                          index={gi}
-                          onChange={handleChange}
-                          onDelete={handleDelete}
-                        />
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+                >
+                  {catItems.map((item, localIdx) => {
+                    const gi = globalIndex(category, localIdx)
+                    return (
+                      <ItemCard
+                        key={`${category}-${localIdx}`}
+                        item={item}
+                        index={gi}
+                        onChange={handleChange}
+                        onDelete={handleDelete}
+                      />
+                    )
+                  })}
+                </CategorySection>
+              )
+            })}
+          </div>
 
-        {/* ── Footer ── */}
-        <div className="flex items-center justify-between pt-1 border-t border-border/30">
+          {/* Add category */}
           <button
             onClick={handleAddCategory}
-            className="text-xs text-primary/70 hover:text-primary flex items-center gap-1 py-1.5 px-2 rounded-lg hover:bg-primary/10 transition-colors"
+            className="w-full py-3 rounded-xl border border-dashed border-border text-sm text-muted hover:text-text-primary hover:border-primary/40 hover:bg-primary/5 active:bg-primary/10 transition-colors flex items-center justify-center gap-2"
           >
-            <Plus size={12} /> Add category
+            <Plus size={14} /> Add new category
           </button>
+
+          {/* Scheduled payments */}
+          {monthlyView.length > 0 && (
+            <div className="border border-border/40 rounded-xl p-4">
+              <p className="text-xs font-semibold text-text-secondary mb-3 flex items-center gap-1.5">
+                <TrendingDown size={13} /> Scheduled Payments
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {monthlyView.map(([month, amount]) => (
+                  <div key={month} className="bg-surface-2 rounded-lg px-3 py-1.5 text-xs">
+                    <span className="text-muted">{month}</span>
+                    <span className="ml-2 font-semibold text-text-primary">{formatCurrency(amount)}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted mt-2">
+                Add &quot;YYYY-MM&quot; to the start of a note to schedule a cost to a month.
+              </p>
+            </div>
+          )}
+
+          {/* Bottom padding so content clears the sticky footer */}
+          <div className="h-4" />
+        </div>
+      </div>
+
+      {/* ── Sticky footer ── */}
+      <div className="shrink-0 border-t border-border bg-surface-2/80 backdrop-blur-sm px-4 py-3">
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
+          {dirty
+            ? <p className="text-xs text-warning">Unsaved changes</p>
+            : <p className="text-xs text-muted">All changes saved</p>
+          }
           <div className="flex items-center gap-2">
-            {dirty && <span className="text-xs text-muted hidden sm:inline">Unsaved changes</span>}
-            <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-            <Button variant="primary" size="sm" onClick={handleSave} loading={saving}>
-              <Check size={14} />
-              Save
+            <Button variant="ghost" size="sm" onClick={onClose}>Discard</Button>
+            <Button variant="primary" size="sm" onClick={handleSave} loading={saving} disabled={!dirty}>
+              <Check size={14} /> Save
             </Button>
           </div>
         </div>
-
-        {/* ── Scheduled payments ── */}
-        {monthlyView.length > 0 && (
-          <div className="border-t border-border/30 pt-3">
-            <p className="text-xs font-medium text-text-secondary mb-2 flex items-center gap-1">
-              <TrendingDown size={12} /> Scheduled payments
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {monthlyView.map(([month, amount]) => (
-                <div key={month} className="bg-surface-2 rounded-lg px-3 py-1.5 text-xs">
-                  <span className="text-muted">{month}</span>
-                  <span className="ml-2 font-semibold text-text-primary">{formatCurrency(amount)}</span>
-                </div>
-              ))}
-            </div>
-            <p className="text-[11px] text-muted mt-1">
-              Add &quot;YYYY-MM&quot; to the start of a note to schedule that cost.
-            </p>
-          </div>
-        )}
-
       </div>
-    </Modal>
+    </div>
   )
 }
