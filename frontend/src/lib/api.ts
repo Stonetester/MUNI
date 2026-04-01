@@ -606,13 +606,13 @@ export async function sendSnapshotReminderNow(email?: string): Promise<{ sent: b
 }
 
 // Budget estimates
-export async function getBudgetEstimates(months = 3): Promise<Array<{
+export async function getBudgetEstimates(): Promise<Array<{
   category_id: number
   category_name: string
   avg_monthly: number
   months_sampled: number
 }>> {
-  const res = await api.get(`/budget/estimates?months=${months}`)
+  const res = await api.get('/budget/estimates')
   return res.data
 }
 

@@ -67,8 +67,23 @@ def create_balance_snapshot(
     if existing:
         return existing
 
+    # Check if this snapshot is more recent than any existing one before adding
+    most_recent = (
+        db.query(BalanceSnapshot)
+        .filter(BalanceSnapshot.account_id == snapshot_in.account_id)
+        .order_by(BalanceSnapshot.date.desc())
+        .first()
+    )
+    is_latest = most_recent is None or snapshot_in.date >= most_recent.date
+
     snapshot = BalanceSnapshot(**snapshot_in.model_dump())
     db.add(snapshot)
+
+    # Keep Account.balance in sync with the most recent snapshot so the dashboard,
+    # accounts page, and forecast all reflect the latest statement balance.
+    if is_latest:
+        account.balance = snapshot_in.balance
+
     db.commit()
     db.refresh(snapshot)
     return snapshot

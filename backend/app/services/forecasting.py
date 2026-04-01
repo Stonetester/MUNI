@@ -25,6 +25,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.account import Account
+from app.models.balance_snapshot import BalanceSnapshot
 from app.models.category import Category
 from app.models.life_event import LifeEvent
 from app.models.transaction import Transaction
@@ -63,6 +64,23 @@ FREQUENCY_MONTHS: Dict[str, float] = {
     "annual": 1 / 12,
     "one_time": 0.0,           # handled separately
 }
+
+
+def _latest_snapshot_balances(account_ids: List[int], db: Session) -> Dict[int, float]:
+    """Return {account_id: balance} from the most recent BalanceSnapshot for each account."""
+    if not account_ids:
+        return {}
+    snapshots = (
+        db.query(BalanceSnapshot)
+        .filter(BalanceSnapshot.account_id.in_(account_ids))
+        .order_by(BalanceSnapshot.date.desc())
+        .all()
+    )
+    result: Dict[int, float] = {}
+    for snap in snapshots:
+        if snap.account_id not in result:
+            result[snap.account_id] = float(snap.balance)
+    return result
 
 
 def _rule_applies_to_month(rule: RecurringRule, month_start: date, month_end: date) -> bool:
@@ -309,7 +327,10 @@ def run_forecast(
     )
 
     # ── Starting balances ─────────────────────────────────────────────────────
+    # Seed from Account.balance, then override with the most recent BalanceSnapshot
+    # so that uploaded statement PDFs (EverBank, JH, Schwab) are reflected correctly.
     account_balances: Dict[int, float] = {a.id: float(a.balance) for a in accounts}
+    account_balances.update(_latest_snapshot_balances(list(account_balances.keys()), db))
 
     # Separate accounts into cash pool (no compound growth) vs compound accounts
     cash_pool_ids = {a.id for a in accounts if a.account_type in CASH_POOL_TYPES}
@@ -318,26 +339,26 @@ def run_forecast(
 
     # Starting net worth
     starting_assets = sum(
-        a.balance for a in accounts
-        if a.account_type in ASSET_TYPES and a.balance > 0
+        account_balances[a.id] for a in accounts
+        if a.account_type in ASSET_TYPES and account_balances[a.id] > 0
     )
     starting_liabilities = sum(
-        abs(a.balance) for a in accounts
-        if a.account_type in LIABILITY_TYPES or a.balance < 0
+        abs(account_balances[a.id]) for a in accounts
+        if a.account_type in LIABILITY_TYPES or account_balances[a.id] < 0
     )
     starting_net_worth = starting_assets - starting_liabilities
 
     # Running cash pool = checking + paycheck accounts
-    running_cash = sum(a.balance for a in accounts if a.id in cash_pool_ids)
+    running_cash = sum(account_balances[a.id] for a in accounts if a.id in cash_pool_ids)
 
     # Running compound balances for investment/savings accounts
     running_compound: Dict[int, float] = {
-        a.id: float(a.balance)
+        a.id: account_balances[a.id]
         for a in accounts if a.id in compound_ids
     }
 
     # For backward compat: savings_total starts as HYSA + savings + IRA + 401k balances
-    savings_total = sum(a.balance for a in accounts if a.account_type in SAVINGS_TYPES)
+    savings_total = sum(account_balances[a.id] for a in accounts if a.account_type in SAVINGS_TYPES)
 
     # Per-account balance history for account_forecasts output
     account_balance_history: Dict[int, List[float]] = {a.id: [] for a in accounts}
@@ -625,24 +646,28 @@ def run_joint_forecast(
             account_monthly_rate[a.id] = default_annual / 100.0 / 12.0
 
     # ── Starting balances ──
+    # Seed from Account.balance, then override with the most recent BalanceSnapshot
+    # so that uploaded statement PDFs (EverBank, JH, Schwab) are reflected correctly.
     account_balances: Dict[int, float] = {a.id: float(a.balance) for a in all_accounts}
+    account_balances.update(_latest_snapshot_balances(list(account_balances.keys()), db))
+
     cash_pool_ids = {a.id for a in all_accounts if a.account_type in CASH_POOL_TYPES}
     compound_ids = {a.id for a in all_accounts if a.account_type in COMPOUND_TYPES}
     liability_ids = {a.id for a in all_accounts if a.account_type in LIABILITY_TYPES}
 
     starting_assets = sum(
-        a.balance for a in all_accounts
-        if a.account_type in ASSET_TYPES and a.balance > 0
+        account_balances[a.id] for a in all_accounts
+        if a.account_type in ASSET_TYPES and account_balances[a.id] > 0
     )
     starting_liabilities = sum(
-        abs(a.balance) for a in all_accounts
-        if a.account_type in LIABILITY_TYPES or a.balance < 0
+        abs(account_balances[a.id]) for a in all_accounts
+        if a.account_type in LIABILITY_TYPES or account_balances[a.id] < 0
     )
     starting_net_worth = starting_assets - starting_liabilities
 
-    running_cash = sum(a.balance for a in all_accounts if a.id in cash_pool_ids)
+    running_cash = sum(account_balances[a.id] for a in all_accounts if a.id in cash_pool_ids)
     running_compound: Dict[int, float] = {
-        a.id: float(a.balance) for a in all_accounts if a.id in compound_ids
+        a.id: account_balances[a.id] for a in all_accounts if a.id in compound_ids
     }
 
     # ── Combined historical averages (merged by category name across all users) ──
