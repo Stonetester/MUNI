@@ -5,7 +5,6 @@ Gathers financial data and generates a financial advisor style report.
 from __future__ import annotations
 
 import calendar
-import os
 from datetime import date, datetime
 from typing import Optional
 
@@ -156,27 +155,8 @@ def _gather_financial_data(user: User, db: Session, year: int, month: int) -> di
     }
 
 
-def generate_monthly_report(user: User, db: Session, year: int, month: int) -> str:
-    """Generate a financial advisor monthly report using Claude."""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return (
-            "⚠️ **AI Report Unavailable**\n\n"
-            "To enable AI-powered reports, set `ANTHROPIC_API_KEY` in your environment.\n\n"
-            "Get a key at https://console.anthropic.com/"
-        )
-
-    try:
-        import anthropic
-    except ImportError:
-        return (
-            "⚠️ **AI Report Unavailable**\n\n"
-            "The `anthropic` package is not installed. Run `pip install anthropic` in the backend venv."
-        )
-
-    data = _gather_financial_data(user, db, year, month)
-
-    # Build the data context for Claude
+def _build_prompt(data: dict) -> tuple[str, str]:
+    """Build the system + user prompts from gathered financial data."""
     ctx_lines = [
         f"# Financial Data for {data['report_month']} — {data['user'].capitalize()}",
         "",
@@ -227,11 +207,13 @@ def generate_monthly_report(user: User, db: Session, year: int, month: int) -> s
 
     financial_context = "\n".join(ctx_lines)
 
-    system_prompt = """You are a personal financial advisor generating a monthly financial report.
-Your tone is warm, encouraging, and honest — like a trusted advisor who knows this person well.
-You write in clear prose with markdown formatting (headers, bullet points where appropriate).
-Be specific with numbers. Celebrate wins, flag concerns constructively, and give actionable advice.
-Keep the report between 400-600 words. Do not use generic filler — every sentence should be specific to the data."""
+    system_prompt = (
+        "You are a personal financial advisor generating a monthly financial report. "
+        "Your tone is warm, encouraging, and honest — like a trusted advisor who knows this person well. "
+        "You write in clear prose with markdown formatting (headers, bullet points where appropriate). "
+        "Be specific with numbers. Celebrate wins, flag concerns constructively, and give actionable advice. "
+        "Keep the report between 400-600 words. Do not use generic filler — every sentence should be specific to the data."
+    )
 
     user_prompt = f"""Using the financial data below, write a comprehensive monthly financial report.
 
@@ -246,19 +228,69 @@ Structure it as:
 
 {financial_context}"""
 
+    return system_prompt, user_prompt
+
+
+def _generate_with_claude(api_key: str, system_prompt: str, user_prompt: str) -> str:
+    try:
+        import anthropic
+    except ImportError:
+        raise RuntimeError("The `anthropic` package is not installed. Run `pip install anthropic` in the backend venv.")
+
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model="claude-opus-4-6",
         max_tokens=1024,
-        thinking={"type": "adaptive"},
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )
+    return "".join(block.text for block in response.content if block.type == "text")
 
-    # Extract text from response
-    report_text = ""
-    for block in response.content:
-        if block.type == "text":
-            report_text += block.text
 
-    return report_text
+def _generate_with_openai(api_key: str, system_prompt: str, user_prompt: str) -> str:
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError("The `openai` package is not installed. Run `pip install openai` in the backend venv.")
+
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        max_tokens=1024,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    return response.choices[0].message.content or ""
+
+
+def generate_monthly_report(user: User, db: Session, year: int, month: int, provider: str = "claude") -> str:
+    """Generate a financial advisor monthly report using Claude or ChatGPT."""
+    from app.config import settings
+
+    data = _gather_financial_data(user, db, year, month)
+    system_prompt, user_prompt = _build_prompt(data)
+
+    if provider == "openai":
+        if not settings.OPENAI_API_KEY:
+            return (
+                "⚠️ **ChatGPT Report Unavailable**\n\n"
+                "Set `OPENAI_API_KEY` in your backend `.env` file, then restart the backend.\n\n"
+                "Get a key at https://platform.openai.com/api-keys"
+            )
+        try:
+            return _generate_with_openai(settings.OPENAI_API_KEY, system_prompt, user_prompt)
+        except Exception as e:
+            return f"⚠️ **ChatGPT Error**\n\n{e}"
+    else:
+        if not settings.ANTHROPIC_API_KEY:
+            return (
+                "⚠️ **AI Report Unavailable**\n\n"
+                "Set `ANTHROPIC_API_KEY` in your backend `.env` file, then restart the backend.\n\n"
+                "Get a key at https://console.anthropic.com/"
+            )
+        try:
+            return _generate_with_claude(settings.ANTHROPIC_API_KEY, system_prompt, user_prompt)
+        except Exception as e:
+            return f"⚠️ **Claude Error**\n\n{e}"

@@ -17,6 +17,7 @@ router = APIRouter(prefix="/ai-report", tags=["ai-report"])
 def get_ai_report(
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
+    provider: str = Query(default="claude", description="AI provider: 'claude' or 'openai'"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -33,9 +34,10 @@ def get_ai_report(
         else:
             target_month = today.month - 1
 
-    report = generate_monthly_report(current_user, db, target_year, target_month)
+    report = generate_monthly_report(current_user, db, target_year, target_month, provider=provider)
     return {
         "year": target_year,
         "month": target_month,
         "report": report,
+        "provider": provider,
     }

@@ -547,12 +547,12 @@ export async function deleteHomeBuyingGoal(id: number): Promise<void> {
 }
 
 // AI Monthly Report
-export async function getAiReport(year?: number, month?: number): Promise<{ year: number; month: number; report: string }> {
+export async function getAiReport(year?: number, month?: number, provider: 'claude' | 'openai' = 'claude'): Promise<{ year: number; month: number; report: string; provider: string }> {
   const params = new URLSearchParams()
   if (year) params.append('year', String(year))
   if (month) params.append('month', String(month))
-  const query = params.toString()
-  const res = await api.get(`/ai-report${query ? '?' + query : ''}`)
+  params.append('provider', provider)
+  const res = await api.get(`/ai-report?${params.toString()}`)
   return res.data
 }
 
