@@ -108,12 +108,19 @@ def delete_all_sheets_transactions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete all transactions imported from Google Sheets for the current user."""
+    """Delete all transactions imported from Google Sheets for the current user.
+    Matches rows tagged 'sheets:*' plus NULL import_source rows (legacy rows
+    synced before tagging was introduced — paystubs tag themselves so NULL
+    rows are safely assumed to be sheets imports).
+    """
     result = (
         db.query(Transaction)
         .filter(
             Transaction.user_id == current_user.id,
-            Transaction.import_source.like("sheets:%"),
+            or_(
+                Transaction.import_source.like("sheets:%"),
+                Transaction.import_source.is_(None),
+            ),
         )
         .delete(synchronize_session=False)
     )
