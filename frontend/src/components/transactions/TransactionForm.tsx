@@ -38,6 +38,26 @@ export default function TransactionForm({
 
   const accountOptions = accounts.map((a) => ({ value: a.id, label: a.name }))
   const categoryOptions = categories.map((c) => ({ value: c.id, label: `${c.name} (${c.kind})` }))
+
+  const selectedCategory = categories.find((c) => c.id.toString() === formData.category_id)
+  const categoryKind = selectedCategory?.kind ?? null
+
+  // When category changes, flip the sign of the current amount to match the kind
+  const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newCatId = e.target.value
+    const newCat = categories.find((c) => c.id.toString() === newCatId)
+    const currentAmount = parseFloat(formData.amount)
+    let newAmount = formData.amount
+    if (newCat && !isNaN(currentAmount) && currentAmount !== 0) {
+      if (newCat.kind === 'income' && currentAmount < 0) {
+        newAmount = String(Math.abs(currentAmount))
+      } else if ((newCat.kind === 'expense' || newCat.kind === 'savings') && currentAmount > 0) {
+        newAmount = String(-Math.abs(currentAmount))
+      }
+    }
+    setFormData({ ...formData, category_id: newCatId, amount: newAmount })
+  }
+
   const paymentOptions = [
     { value: 'cash', label: 'Cash' },
     { value: 'debit', label: 'Debit' },
@@ -52,11 +72,18 @@ export default function TransactionForm({
     setError('')
     setLoading(true)
     try {
+      let amount = parseFloat(formData.amount)
+      // Enforce correct sign based on category kind — user always enters positive numbers
+      if (categoryKind === 'expense' || categoryKind === 'savings') {
+        amount = -Math.abs(amount)
+      } else if (categoryKind === 'income') {
+        amount = Math.abs(amount)
+      }
       const payload = {
         date: formData.date,
         description: formData.description,
         merchant: formData.merchant || undefined,
-        amount: parseFloat(formData.amount),
+        amount,
         account_id: formData.account_id ? Number(formData.account_id) : undefined,
         category_id: formData.category_id ? Number(formData.category_id) : undefined,
         payment_method: formData.payment_method || undefined,
@@ -101,7 +128,12 @@ export default function TransactionForm({
           value={formData.amount}
           onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
           required
-          hint="Positive=income, Negative=expense"
+          hint={
+            categoryKind === 'income' ? 'Income — enter a positive number' :
+            categoryKind === 'savings' ? 'Savings transfer — enter a positive number' :
+            categoryKind === 'expense' ? 'Expense — enter a positive number' :
+            'Select a category first'
+          }
         />
       </div>
 
@@ -135,7 +167,7 @@ export default function TransactionForm({
           placeholder="Select category"
           options={categoryOptions}
           value={formData.category_id}
-          onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
+          onChange={handleCategoryChange}
         />
       </div>
 
