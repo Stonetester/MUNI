@@ -579,13 +579,20 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                     desc_key = _dedup_desc_key(txn_date, raw_desc)
                     if desc_key in sheets_by_key:
                         existing_txn = sheets_by_key[desc_key]
+                        changed = False
                         if existing_txn.amount != amount:
-                            # Remove old hash, update amount, add new hash
                             old_hash = _dedup_hash(existing_txn.date, existing_txn.description, existing_txn.amount)
                             existing_hashes.discard(old_hash)
                             existing_txn.amount = amount
-                            existing_txn.category_id = category.id if category else existing_txn.category_id
                             existing_hashes.add(_dedup_hash(txn_date, raw_desc, amount))
+                            changed = True
+                        # Always re-apply the current category logic — fixes previously
+                        # miscategorized rows (e.g. Everbank rows saved as "Wedding" expense)
+                        new_cat_id = category.id if category else existing_txn.category_id
+                        if existing_txn.category_id != new_cat_id:
+                            existing_txn.category_id = new_cat_id
+                            changed = True
+                        if changed:
                             updated += 1
                         else:
                             duplicates.append({
