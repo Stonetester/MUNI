@@ -9,6 +9,7 @@ import MobileNavBar from './MobileNavBar'
 import ProfileSwitcher from './ProfileSwitcher'
 import { cn } from '@/lib/utils'
 import { useViewMode } from '@/lib/viewMode'
+import { useDemoMode } from '@/lib/demoMode'
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -51,6 +52,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
   const [mounted, setMounted] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const { mode, toggle } = useViewMode()
+  const { isDemoMode } = useDemoMode()
 
   useEffect(() => {
     setMounted(true)
@@ -159,6 +161,14 @@ export default function AppLayout({ children }: AppLayoutProps) {
           </div>
           </div>
         </header>
+
+        {/* Demo mode banner */}
+        {isDemoMode && (
+          <div className="sticky top-14 z-20 bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 flex items-center justify-center gap-2 text-xs text-amber-300 font-medium">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
+            Demo Mode — all data is fictional. Toggle off in Settings to see your real finances.
+          </div>
+        )}
 
         {/* Page content */}
         <main className="flex-1 p-4 md:p-6 pb-20 md:pb-6">

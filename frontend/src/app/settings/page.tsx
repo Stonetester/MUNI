@@ -9,8 +9,9 @@ import { getSyncConfig, updateSyncConfig, runSync, deleteSheetsTransactions, del
 import { getToken } from '@/lib/auth'
 import type { SyncConfig, SyncResult } from '@/lib/types'
 import { formatCurrency } from '@/lib/utils'
-import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home, Monitor, Trash2 } from 'lucide-react'
+import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home, Monitor, Trash2, FlaskConical } from 'lucide-react'
 import { switchProfiles, getAltUser } from '@/lib/auth'
+import { useDemoMode } from '@/lib/demoMode'
 
 function fmtDate(s?: string | null) {
   if (!s) return 'Never'
@@ -35,6 +36,7 @@ export default function SettingsPage() {
   const [clearingAll, setClearingAll] = useState(false)
   const [clearResult, setClearResult] = useState<string | null>(null)
   const [showGettingStarted, setShowGettingStarted] = useState(true)
+  const { isDemoMode, toggleDemoMode } = useDemoMode()
 
   useEffect(() => {
     const token = getToken()
@@ -349,6 +351,31 @@ export default function SettingsPage() {
             <p className="text-xs text-muted -mt-2">
               Your checklist progress is always saved — this only controls whether it appears in the sidebar.
             </p>
+
+            <div className="h-px bg-[#2d3748]" />
+
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-text-primary flex items-center gap-2">
+                  <FlaskConical size={14} className="text-amber-400" />
+                  Demo Mode
+                  {isDemoMode && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold">ON</span>}
+                </p>
+                <p className="text-xs text-text-secondary mt-0.5">Replace all financial data with realistic fake data</p>
+              </div>
+              <div
+                className={`w-10 h-5 rounded-full transition-colors cursor-pointer flex-shrink-0 ${isDemoMode ? 'bg-amber-500' : 'bg-[#2d3748]'}`}
+                onClick={toggleDemoMode}
+              >
+                <div className={`w-4 h-4 rounded-full bg-white m-0.5 transition-transform ${isDemoMode ? 'translate-x-5' : 'translate-x-0'}`} />
+              </div>
+            </div>
+            {isDemoMode && (
+              <p className="text-xs text-amber-400/80 -mt-2 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
+                Active — you're viewing fictional data. Toggle off to return to your real finances.
+              </p>
+            )}
           </div>
         </Card>
 

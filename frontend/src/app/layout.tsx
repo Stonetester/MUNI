@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { ViewModeProvider } from '@/lib/viewMode'
+import { DemoModeProvider } from '@/lib/demoMode'
 
 export const metadata: Metadata = {
   title: 'MUNI',
@@ -28,9 +29,11 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="bg-background text-text-primary antialiased">
-        <ViewModeProvider>
-          {children}
-        </ViewModeProvider>
+        <DemoModeProvider>
+          <ViewModeProvider>
+            {children}
+          </ViewModeProvider>
+        </DemoModeProvider>
       </body>
     </html>
   )
