@@ -41,6 +41,7 @@ export default function EventForm({ event, onSuccess, onCancel }: EventFormProps
     total_cost: event?.total_cost?.toString() || '0',
     description: event?.description || '',
     is_active: event?.is_active ?? true,
+    is_joint: event?.is_joint ?? false,
   })
   const [breakdown, setBreakdown] = useState<MonthBreakdown[]>(
     event?.monthly_breakdown || []
@@ -84,6 +85,7 @@ export default function EventForm({ event, onSuccess, onCancel }: EventFormProps
         total_cost: parseFloat(formData.total_cost),
         description: formData.description || undefined,
         is_active: formData.is_active,
+        is_joint: formData.is_joint,
         monthly_breakdown: breakdown.length > 0 ? breakdown : undefined,
       }
       if (event) {
@@ -201,15 +203,26 @@ export default function EventForm({ event, onSuccess, onCancel }: EventFormProps
         )}
       </div>
 
-      <label className="flex items-center gap-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={formData.is_active}
-          onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-          className="w-4 h-4 accent-primary"
-        />
-        <span className="text-sm text-text-secondary">Active (include in forecast)</span>
-      </label>
+      <div className="flex flex-col gap-2">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={formData.is_active}
+            onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-text-secondary">Active (include in forecast)</span>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={formData.is_joint}
+            onChange={(e) => setFormData({ ...formData, is_joint: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-text-secondary">Joint event — visible and editable by both profiles</span>
+        </label>
+      </div>
 
       <div className="flex gap-3 pt-2">
         <Button type="button" variant="secondary" onClick={onCancel} className="flex-1">Cancel</Button>

@@ -18,6 +18,8 @@ interface EventCardProps {
 
 export default function EventCard({ event, onEdit, onDeleted, onUpdated, readOnly = false }: EventCardProps) {
   const daysUntil = getDaysUntil(event.start_date)
+  // Joint events are always editable regardless of view mode
+  const canEdit = !readOnly || event.is_joint
   const isPast = daysUntil < 0
   const isToday = daysUntil === 0
   const [showBreakdown, setShowBreakdown] = useState(false)
@@ -68,6 +70,9 @@ export default function EventCard({ event, onEdit, onDeleted, onUpdated, readOnl
                 {!isPast && !isToday && daysUntil <= 30 && (
                   <Badge label={`${daysUntil}d away`} variant="warning" />
                 )}
+                {event.is_joint && (
+                  <Badge label="Joint" variant="info" />
+                )}
                 {event.owner && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-surface-2 text-text-secondary border border-border">
                     {event.owner}
@@ -78,7 +83,7 @@ export default function EventCard({ event, onEdit, onDeleted, onUpdated, readOnl
           </div>
           <div className="flex items-center gap-1">
             {/* Budget breakdown button for all events that support it */}
-            {!readOnly && (
+            {canEdit && (
               <button
                 onClick={() => setShowBreakdown(true)}
                 title="Budget breakdown"
@@ -87,7 +92,7 @@ export default function EventCard({ event, onEdit, onDeleted, onUpdated, readOnl
                 <LayoutList size={14} />
               </button>
             )}
-            {!readOnly && (
+            {canEdit && (
               <>
                 <button
                   onClick={() => onEdit(event)}
@@ -159,7 +164,7 @@ export default function EventCard({ event, onEdit, onDeleted, onUpdated, readOnl
         )}
 
         {/* Wedding CTA if no items yet */}
-        {!hasItems && isWedding && !readOnly && (
+        {!hasItems && isWedding && canEdit && (
           <div className="mt-3 border-t border-[#2d3748] pt-3">
             <button
               onClick={() => setShowBreakdown(true)}

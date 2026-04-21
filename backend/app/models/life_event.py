@@ -21,6 +21,7 @@ class LifeEvent(Base):
     total_cost = Column(Float, nullable=False, default=0.0)
     description = Column(String, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    is_joint = Column(Boolean, default=False, nullable=False)
     monthly_breakdown = Column(JSON, nullable=True)
     # list of {month: "YYYY-MM", amount: float}
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

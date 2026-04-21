@@ -257,7 +257,7 @@ export async function getLifeEvents(scenarioId?: number): Promise<LifeEvent[]> {
 }
 
 export async function createLifeEvent(data: Partial<LifeEvent>): Promise<LifeEvent> {
-  if (isDemoModeActive()) return { id: 99, name: data.name || 'Demo Event', event_type: data.event_type || 'other', start_date: data.start_date!, total_cost: data.total_cost || 0, is_active: true }
+  if (isDemoModeActive()) return { id: 99, name: data.name || 'Demo Event', event_type: data.event_type || 'other', start_date: data.start_date!, total_cost: data.total_cost || 0, is_active: true, is_joint: data.is_joint ?? false }
   const res: AxiosResponse<LifeEvent> = await api.post('/events', data)
   return res.data
 }

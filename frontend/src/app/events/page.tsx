@@ -136,20 +136,18 @@ export default function EventsPage() {
         )}
       </div>
 
-      {mode !== 'joint' && (
-        <Modal
-          isOpen={showAdd || !!editEvent}
-          onClose={() => { setShowAdd(false); setEditEvent(undefined) }}
-          title={editEvent ? 'Edit Event' : 'Add Life Event'}
-          size="lg"
-        >
-          <EventForm
-            event={editEvent}
-            onSuccess={handleSuccess}
-            onCancel={() => { setShowAdd(false); setEditEvent(undefined) }}
-          />
-        </Modal>
-      )}
+      <Modal
+        isOpen={showAdd || !!editEvent}
+        onClose={() => { setShowAdd(false); setEditEvent(undefined) }}
+        title={editEvent ? 'Edit Event' : 'Add Life Event'}
+        size="lg"
+      >
+        <EventForm
+          event={editEvent}
+          onSuccess={handleSuccess}
+          onCancel={() => { setShowAdd(false); setEditEvent(undefined) }}
+        />
+      </Modal>
     </AppLayout>
   )
 }

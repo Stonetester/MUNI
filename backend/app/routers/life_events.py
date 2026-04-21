@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -17,13 +18,11 @@ router = APIRouter(prefix="/events", tags=["life-events"])
 
 
 def get_event_or_404(event_id: int, user: User, db: Session) -> LifeEvent:
-    event = (
-        db.query(LifeEvent)
-        .filter(LifeEvent.id == event_id, LifeEvent.user_id == user.id)
-        .first()
-    )
+    event = db.query(LifeEvent).filter(LifeEvent.id == event_id).first()
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Life event not found")
+    if event.user_id != user.id and not event.is_joint:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
     return event
 
 
@@ -34,7 +33,9 @@ def list_life_events(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(LifeEvent).filter(LifeEvent.user_id == current_user.id)
+    query = db.query(LifeEvent).filter(
+        or_(LifeEvent.user_id == current_user.id, LifeEvent.is_joint == True)
+    )
     if scenario_id is not None:
         query = query.filter(LifeEvent.scenario_id == scenario_id)
     if is_active is not None:
@@ -89,7 +90,10 @@ def delete_all_life_events(
     db: Session = Depends(get_db),
 ):
     """Delete all life events for the current user."""
-    db.query(LifeEvent).filter(LifeEvent.user_id == current_user.id).delete()
+    db.query(LifeEvent).filter(
+        LifeEvent.user_id == current_user.id,
+        LifeEvent.is_joint == False
+    ).delete()
     db.commit()
 
 

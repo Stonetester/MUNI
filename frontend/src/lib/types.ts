@@ -95,6 +95,7 @@ export interface LifeEvent {
   total_cost: number
   description?: string
   is_active: boolean
+  is_joint: boolean
   scenario_id?: number
   monthly_breakdown?: Array<{month: string, amount: number}>
   line_items?: EventLineItem[]

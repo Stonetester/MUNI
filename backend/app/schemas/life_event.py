@@ -48,6 +48,7 @@ class LifeEventBase(BaseModel):
     total_cost: float = 0.0
     description: Optional[str] = None
     is_active: bool = True
+    is_joint: bool = False
     scenario_id: Optional[int] = None
     monthly_breakdown: Optional[List[MonthlyBreakdownEntry]] = None
 
@@ -64,6 +65,7 @@ class LifeEventUpdate(BaseModel):
     total_cost: Optional[float] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    is_joint: Optional[bool] = None
     scenario_id: Optional[int] = None
     monthly_breakdown: Optional[List[MonthlyBreakdownEntry]] = None
 

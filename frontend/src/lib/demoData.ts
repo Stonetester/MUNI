@@ -132,6 +132,7 @@ export const DEMO_LIFE_EVENTS: LifeEvent[] = [
     total_cost: 28000,
     description: 'Wedding at Moonlight Farm, Frederick MD',
     is_active: true,
+    is_joint: true,
     monthly_breakdown: [
       { month: monthsAgo(2), amount: 2500 },
       { month: monthsAgo(1), amount: 3200 },
@@ -146,6 +147,7 @@ export const DEMO_LIFE_EVENTS: LifeEvent[] = [
     total_cost: 45000,
     description: 'Down payment + closing costs for first home',
     is_active: true,
+    is_joint: true,
   },
 ]
 
