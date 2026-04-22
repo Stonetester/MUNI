@@ -26,6 +26,7 @@ import {
   Sparkles,
   Mail,
   Home,
+  Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { APP_VERSION, APP_NAME } from '@/lib/version'
@@ -48,6 +49,7 @@ const ALL_PRIMARY_ITEMS = [
 
 const extrasItems = [
   { label: 'AI Report', icon: Sparkles, href: '/ai-report' },
+  { label: 'Money Flow', icon: Workflow, href: '/flow' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },
   { label: 'What-If', icon: FlaskConical, href: '/scenarios' },

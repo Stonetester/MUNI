@@ -24,6 +24,7 @@ const pageTitles: Record<string, string> = {
   '/insights': 'Spending Insights',
   '/ai-report': 'AI Financial Report',
   '/notifications': 'Notifications',
+  '/flow': 'Money Flow',
 }
 
 // Toast notification system
