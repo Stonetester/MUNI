@@ -14,8 +14,11 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table("life_events") as batch_op:
-        batch_op.add_column(sa.Column("is_joint", sa.Boolean(), nullable=False, server_default="0"))
+    conn = op.get_bind()
+    cols = [row[1] for row in conn.execute(sa.text("PRAGMA table_info(life_events)"))]
+    if "is_joint" not in cols:
+        with op.batch_alter_table("life_events") as batch_op:
+            batch_op.add_column(sa.Column("is_joint", sa.Boolean(), nullable=False, server_default="0"))
 
 
 def downgrade():
