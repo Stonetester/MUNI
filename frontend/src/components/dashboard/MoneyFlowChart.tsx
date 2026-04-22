@@ -215,35 +215,11 @@ function VerticalFlow({ data, simplified }: { data: FlowData; simplified: boolea
   )
 }
 
-// ─── Sankey (Mode B) ─────────────────────────────────────────────────────────
-
-interface SankeyNode {
-  id: string
-  label: string
-  amount: number
-  color: string
-  x: number
-  y: number
-  height: number
-}
-
-interface SankeyLink {
-  source: SankeyNode
-  target: SankeyNode
-  amount: number
-  color: string
-}
+// ─── Sankey (Mode B) — vertical top-to-bottom ────────────────────────────────
 
 function SankeyFlow({ data, simplified }: { data: FlowData; simplified: boolean }) {
   const cats = simplified ? groupCategories(data.byCategory) : data.byCategory
   const remaining = data.income - data.spending
-
-  const W = 320
-  const H = 420
-  const NODE_W = 14
-  const COL1_X = 20
-  const COL2_X = W - NODE_W - 20
-  const PADDING = 6
 
   const entries: FlowEntry[] = Object.entries(cats)
     .filter(([, v]) => v > 0)
@@ -255,164 +231,155 @@ function SankeyFlow({ data, simplified }: { data: FlowData; simplified: boolean 
       pct: data.income > 0 ? (amount / data.income) * 100 : 0,
     }))
 
-  const scale = data.income > 0 ? (H - PADDING * (entries.length + 2)) / data.income : 0
+  // Layout constants
+  const NODE_H = 14          // height of each horizontal bar node
+  const ROW1_Y = 30          // income row top
+  const ROW2_Y = 180         // category row top
+  const ROW3_Y = 340         // remaining row top
+  const LABEL_ABOVE = 12     // gap for label above node
+  const GAP = 6              // gap between category nodes
 
-  // Source node (income)
-  const sourceH = data.income * scale
-  const sourceNode: SankeyNode = {
-    id: 'income',
-    label: 'Income',
-    amount: data.income,
-    color: '#22c55e',
-    x: COL1_X,
-    y: (H - sourceH) / 2,
-    height: sourceH,
-  }
+  // Total available width for nodes (SVG is 100% wide via viewBox)
+  const SVG_W = 360
+  const SVG_H = ROW3_Y + NODE_H + 40
 
-  // Target nodes
-  const targetNodes: SankeyNode[] = []
-  let curY = 0
+  // Income node spans full width
+  const incomeNode = { x: 0, y: ROW1_Y, w: SVG_W, h: NODE_H }
+
+  // Category nodes — proportional widths, packed left-to-right with gaps
+  const totalGaps = GAP * (entries.length - 1)
+  const availW = SVG_W - totalGaps
+  type CatNode = { id: string; x: number; y: number; w: number; h: number; color: string; label: string; amount: number }
+  const catNodes: CatNode[] = []
+  let curX = 0
   for (const e of entries) {
-    const h = Math.max(4, e.amount * scale)
-    targetNodes.push({
-      id: e.name,
-      label: e.name,
-      amount: e.amount,
-      color: e.color,
-      x: COL2_X,
-      y: curY,
-      height: h,
-    })
-    curY += h + PADDING
+    const w = Math.max(4, (e.amount / data.income) * availW)
+    catNodes.push({ id: e.name, x: curX, y: ROW2_Y, w, h: NODE_H, color: e.color, label: e.name, amount: e.amount })
+    curX += w + GAP
   }
 
-  // Remaining node
-  const remainingH = Math.max(4, Math.abs(remaining) * scale)
-  const remainingNode: SankeyNode = {
-    id: 'remaining',
+  // Remaining node — proportional width
+  const remainingPct = data.income > 0 ? Math.max(0, remaining) / data.income : 0
+  const remainingW = Math.max(4, remainingPct * SVG_W)
+  const remainingNode = {
+    x: 0, y: ROW3_Y, w: remainingW, h: NODE_H,
+    color: remaining >= 0 ? '#22c55e' : '#ef4444',
     label: remaining >= 0 ? 'Remaining' : 'Overspent',
     amount: Math.abs(remaining),
-    color: remaining >= 0 ? '#22c55e' : '#ef4444',
-    x: COL2_X,
-    y: curY,
-    height: remainingH,
-  }
-  curY += remainingH
-
-  // Adjust source node to center on the targets' total span
-  const totalTargetSpan = curY
-  sourceNode.y = (totalTargetSpan - sourceH) / 2
-
-  // Build links
-  const links: SankeyLink[] = []
-  let sourceOffsetY = sourceNode.y
-  for (const t of [...targetNodes, remainingNode]) {
-    links.push({
-      source: { ...sourceNode, y: sourceOffsetY },
-      target: t,
-      amount: t.amount,
-      color: t.color,
-    })
-    sourceOffsetY += t.height + PADDING
   }
 
-  // SVG path for curved band
-  function bandPath(link: SankeyLink): string {
-    const sx = link.source.x + NODE_W
-    const sy = link.source.y
-    const sh = Math.max(2, link.amount * scale)
-    const tx = link.target.x
-    const ty = link.target.y
-    const th = link.target.height
-    const mx = (sx + tx) / 2
+  // Curved band path: flows from a horizontal segment on row1 down to a horizontal segment on row2
+  // sx1,sx2 = x range on source row; tx1,tx2 = x range on target row; sy = source bottom; ty = target top
+  function bandPath(sx1: number, sx2: number, sy: number, tx1: number, tx2: number, ty: number): string {
+    const my = (sy + ty) / 2
     return [
-      `M ${sx} ${sy}`,
-      `C ${mx} ${sy}, ${mx} ${ty}, ${tx} ${ty}`,
-      `L ${tx} ${ty + th}`,
-      `C ${mx} ${ty + th}, ${mx} ${sy + sh}, ${sx} ${sy + sh}`,
+      `M ${sx1} ${sy}`,
+      `C ${sx1} ${my}, ${tx1} ${my}, ${tx1} ${ty}`,
+      `L ${tx2} ${ty}`,
+      `C ${tx2} ${my}, ${sx2} ${my}, ${sx2} ${sy}`,
       `Z`,
     ].join(' ')
   }
 
-  const svgH = Math.max(H, curY + 20)
+  // Map each category node's x position back to a segment on the income bar
+  // The income bar is full width, so each cat maps to a proportional slice of it
+  let incomeOffsetX = 0
+  const incomeSlices: { x1: number; x2: number }[] = catNodes.map((n) => {
+    const w = n.w
+    const slice = { x1: incomeOffsetX, x2: incomeOffsetX + w }
+    incomeOffsetX += w + GAP
+    return slice
+  })
+  // Remaining slice on income bar
+  const remainingSlice = { x1: incomeOffsetX, x2: incomeOffsetX + remainingW }
+
+  // Map each category node's x to a segment on the remaining bar (only top categories for now — all flow to remaining as one)
+  // Actually: top bands go income→categories; bottom bands go categories→remaining (each cat drains to remaining proportionally)
+  // For simplicity: income→each cat (top bands), each cat→remaining (bottom bands, but remaining only shows leftover)
+  // Better: just draw income→cat bands (top) and no bottom bands for remaining — keep it clean
 
   return (
-    <div className="overflow-x-auto">
-      <svg width={W} height={svgH} viewBox={`0 0 ${W} ${svgH}`} className="mx-auto">
-        {/* Link bands */}
-        {links.map((link) => (
+    <div className="w-full">
+      <svg
+        viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+        className="w-full"
+        style={{ maxHeight: 420 }}
+      >
+        {/* ── Top bands: income → categories ── */}
+        {catNodes.map((cat, i) => (
           <path
-            key={link.target.id}
-            d={bandPath(link)}
-            fill={link.color}
-            opacity={0.25}
+            key={cat.id}
+            d={bandPath(
+              incomeSlices[i].x1, incomeSlices[i].x2, ROW1_Y + NODE_H,
+              cat.x, cat.x + cat.w, ROW2_Y
+            )}
+            fill={cat.color}
+            opacity={0.2}
           />
         ))}
 
-        {/* Source node */}
-        <rect
-          x={sourceNode.x}
-          y={sourceNode.y}
-          width={NODE_W}
-          height={sourceNode.height}
-          rx={3}
-          fill={sourceNode.color}
-        />
-        <text
-          x={sourceNode.x - 4}
-          y={sourceNode.y + sourceNode.height / 2}
-          textAnchor="end"
-          dominantBaseline="middle"
-          fill="#d1d5db"
-          fontSize={10}
-        >
+        {/* Remaining band: income → remaining node */}
+        {remaining > 0 && (
+          <path
+            d={bandPath(
+              remainingSlice.x1, remainingSlice.x2, ROW1_Y + NODE_H,
+              remainingNode.x, remainingNode.x + remainingNode.w, ROW3_Y
+            )}
+            fill={remainingNode.color}
+            opacity={0.15}
+          />
+        )}
+
+        {/* ── Income node ── */}
+        <rect x={incomeNode.x} y={incomeNode.y} width={incomeNode.w} height={incomeNode.h} rx={4} fill="#22c55e" />
+        <text x={SVG_W / 2} y={ROW1_Y - LABEL_ABOVE} textAnchor="middle" fill="#d1d5db" fontSize={10} fontWeight="600">
           Income
         </text>
-        <text
-          x={sourceNode.x - 4}
-          y={sourceNode.y + sourceNode.height / 2 + 12}
-          textAnchor="end"
-          dominantBaseline="middle"
-          fill="#22c55e"
-          fontSize={9}
-          fontWeight="600"
-        >
-          {formatCurrency(sourceNode.amount)}
+        <text x={SVG_W / 2} y={ROW1_Y - LABEL_ABOVE + 11} textAnchor="middle" fill="#22c55e" fontSize={9} fontWeight="700">
+          {formatCurrency(data.income)}
         </text>
 
-        {/* Target nodes */}
-        {[...targetNodes, remainingNode].map((node) => (
-          <g key={node.id}>
-            <rect
-              x={node.x}
-              y={node.y}
-              width={NODE_W}
-              height={node.height}
-              rx={3}
-              fill={node.color}
-            />
-            <text
-              x={node.x + NODE_W + 4}
-              y={node.y + node.height / 2}
-              dominantBaseline="middle"
-              fill="#d1d5db"
-              fontSize={10}
-            >
-              {node.label}
-            </text>
-            <text
-              x={node.x + NODE_W + 4}
-              y={node.y + node.height / 2 + 12}
-              dominantBaseline="middle"
-              fill={node.color}
-              fontSize={9}
-              fontWeight="600"
-            >
-              {formatCurrency(node.amount)}
-            </text>
-          </g>
-        ))}
+        {/* ── Category nodes ── */}
+        {catNodes.map((cat) => {
+          const cx = cat.x + cat.w / 2
+          return (
+            <g key={cat.id}>
+              <rect x={cat.x} y={cat.y} width={cat.w} height={cat.h} rx={3} fill={cat.color} />
+              {cat.w > 28 && (
+                <>
+                  <text x={cx} y={ROW2_Y - LABEL_ABOVE} textAnchor="middle" fill="#d1d5db" fontSize={9}>
+                    {cat.label}
+                  </text>
+                  <text x={cx} y={ROW2_Y - LABEL_ABOVE + 11} textAnchor="middle" fill={cat.color} fontSize={8} fontWeight="600">
+                    {formatCurrency(cat.amount)}
+                  </text>
+                </>
+              )}
+            </g>
+          )
+        })}
+
+        {/* ── Remaining node ── */}
+        <rect x={remainingNode.x} y={remainingNode.y} width={remainingNode.w} height={remainingNode.h} rx={4} fill={remainingNode.color} />
+        <text x={remainingNode.w / 2} y={ROW3_Y - LABEL_ABOVE} textAnchor="middle" fill="#d1d5db" fontSize={10} fontWeight="600">
+          {remainingNode.label}
+        </text>
+        <text x={remainingNode.w / 2} y={ROW3_Y - LABEL_ABOVE + 11} textAnchor="middle" fill={remainingNode.color} fontSize={9} fontWeight="700">
+          {formatCurrency(remainingNode.amount)}
+        </text>
       </svg>
+
+      {/* Legend for narrow cats that can't fit a label */}
+      {catNodes.some((c) => c.w <= 28) && (
+        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
+          {catNodes.filter((c) => c.w <= 28).map((c) => (
+            <div key={c.id} className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
+              <span className="text-[10px] text-text-secondary">{c.label} {formatCurrency(c.amount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
