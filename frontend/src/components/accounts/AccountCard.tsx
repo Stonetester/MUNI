@@ -30,16 +30,19 @@ function getAccentColor(type: string): string {
   return 'text-primary'
 }
 
+const COMPOUND_TYPES = new Set(['savings', 'hysa', 'ira', '401k', 'hsa', 'brokerage'])
+
 export default function AccountCard({ account, balanceDetail, onEdit, onDeleted, onClick }: AccountCardProps) {
   const liability = isLiability(account.account_type)
   const accentColor = getAccentColor(account.account_type)
+  const isCompound = COMPOUND_TYPES.has(account.account_type)
 
-  const hasEstimated = !!balanceDetail
   const estimatedBalance = balanceDetail?.estimated_balance ?? account.balance
   const actualBalance = balanceDetail?.actual_balance ?? null
 
-  // Show both rows when there's an actual snapshot to compare against
-  const showDualBalance = hasEstimated && actualBalance !== null
+  // Show estimated label for compound accounts always; show actual row only when a snapshot exists
+  const showEstimatedLabel = isCompound
+  const showActualRow = isCompound && actualBalance !== null
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -93,25 +96,27 @@ export default function AccountCard({ account, balanceDetail, onEdit, onDeleted,
       </div>
 
       <div className="mt-3 pt-3 border-t border-[#2d3748]">
-        {showDualBalance ? (
-          <div className="flex flex-col gap-1">
+        {showEstimatedLabel ? (
+          <div className="flex flex-col gap-0.5">
             <div className="flex items-baseline justify-between">
               <span className="text-[10px] text-text-secondary uppercase tracking-wider">Estimated</span>
               <p className={cn('text-xl font-bold', liability ? 'text-danger' : 'text-text-primary')}>
                 {liability ? '-' : ''}{formatCurrency(estimatedBalance)}
               </p>
             </div>
-            <div className="flex items-baseline justify-between">
-              <span className="text-[10px] text-text-secondary uppercase tracking-wider">Actual</span>
-              <p className={cn('text-sm font-medium', liability ? 'text-orange-400/80' : 'text-text-secondary')}>
-                {liability ? '-' : ''}{formatCurrency(actualBalance!)}
-                {balanceDetail?.last_snapshot_date && (
-                  <span className="text-[10px] text-muted ml-1">
-                    {new Date(balanceDetail.last_snapshot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </span>
-                )}
-              </p>
-            </div>
+            {showActualRow && (
+              <div className="flex items-baseline justify-between">
+                <span className="text-[10px] text-muted uppercase tracking-wider">Actual</span>
+                <p className="text-sm text-text-secondary">
+                  {liability ? '-' : ''}{formatCurrency(actualBalance!)}
+                  {balanceDetail?.last_snapshot_date && (
+                    <span className="text-[10px] text-muted ml-1">
+                      ({new Date(balanceDetail.last_snapshot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
+                    </span>
+                  )}
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <p className={cn('text-xl font-bold', liability ? 'text-danger' : 'text-text-primary')}>
