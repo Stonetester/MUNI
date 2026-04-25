@@ -42,17 +42,18 @@ export default function AccountCard({ account, balanceDetail, onEdit, onDeleted,
   const accentColor = getAccentColor(account.account_type)
   const isCompound = COMPOUND_TYPES.has(account.account_type)
   const isCashPool = CASH_POOL_TYPES.has(account.account_type)
+  const excluded = account.exclude_from_estimate
 
   const estimatedBalance = balanceDetail?.estimated_balance ?? account.balance
   const actualBalance = balanceDetail?.actual_balance ?? null
   const nextPayDate = balanceDetail?.next_pay_date ?? null
 
   // Compound accounts: always show Estimated label; show Actual row when snapshot exists
-  const showEstimatedLabel = isCompound
-  const showActualRow = isCompound && actualBalance !== null
+  const showEstimatedLabel = isCompound && !excluded
+  const showActualRow = isCompound && !excluded && actualBalance !== null
 
   // Cash pool (checking): show estimated + next pay date hint
-  const showCashEstimate = isCashPool && balanceDetail != null
+  const showCashEstimate = isCashPool && !excluded && balanceDetail != null
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation()

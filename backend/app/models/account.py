@@ -36,6 +36,7 @@ class Account(Base):
     balance = Column(Float, default=0.0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     forecast_enabled = Column(Boolean, default=True, nullable=False)
+    exclude_from_estimate = Column(Boolean, default=False, nullable=False)
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

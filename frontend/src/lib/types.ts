@@ -8,6 +8,7 @@ export interface Account {
   balance: number
   is_active: boolean
   forecast_enabled: boolean
+  exclude_from_estimate: boolean
   notes?: string
   is_joint: boolean
   joint_user_id?: number
