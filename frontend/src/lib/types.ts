@@ -14,6 +14,14 @@ export interface Account {
   created_at: string
 }
 
+export interface AccountBalanceDetail {
+  account_id: number
+  estimated_balance: number
+  actual_balance: number | null
+  last_snapshot_date: string | null
+  monthly_contribution: number
+}
+
 export type CategoryKind = 'income' | 'expense' | 'transfer' | 'savings'
 
 export interface Category {

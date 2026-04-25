@@ -1,6 +1,6 @@
 'use client'
 
-import { Account } from '@/lib/types'
+import { Account, AccountBalanceDetail } from '@/lib/types'
 import { formatCurrency, accountTypeLabel, isLiability } from '@/lib/utils'
 import { AccountTypeBadge } from '@/components/ui/Badge'
 import { deleteAccount } from '@/lib/api'
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 
 interface AccountCardProps {
   account: Account
+  balanceDetail?: AccountBalanceDetail
   onEdit: (account: Account) => void
   onDeleted: () => void
   onClick: (account: Account) => void
@@ -29,9 +30,19 @@ function getAccentColor(type: string): string {
   return 'text-primary'
 }
 
-export default function AccountCard({ account, onEdit, onDeleted, onClick }: AccountCardProps) {
+const COMPOUND_TYPES = new Set(['savings', 'hysa', 'ira', '401k', 'hsa', 'brokerage'])
+
+export default function AccountCard({ account, balanceDetail, onEdit, onDeleted, onClick }: AccountCardProps) {
   const liability = isLiability(account.account_type)
   const accentColor = getAccentColor(account.account_type)
+  const isCompound = COMPOUND_TYPES.has(account.account_type)
+
+  const estimatedBalance = balanceDetail?.estimated_balance ?? account.balance
+  const actualBalance = balanceDetail?.actual_balance ?? null
+
+  // Show estimated label for compound accounts always; show actual row only when a snapshot exists
+  const showEstimatedLabel = isCompound
+  const showActualRow = isCompound && actualBalance !== null
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -85,9 +96,33 @@ export default function AccountCard({ account, onEdit, onDeleted, onClick }: Acc
       </div>
 
       <div className="mt-3 pt-3 border-t border-[#2d3748]">
-        <p className={cn('text-xl font-bold', liability ? 'text-danger' : 'text-text-primary')}>
-          {liability ? '-' : ''}{formatCurrency(account.balance)}
-        </p>
+        {showEstimatedLabel ? (
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[10px] text-text-secondary uppercase tracking-wider">Estimated</span>
+              <p className={cn('text-xl font-bold', liability ? 'text-danger' : 'text-text-primary')}>
+                {liability ? '-' : ''}{formatCurrency(estimatedBalance)}
+              </p>
+            </div>
+            {showActualRow && (
+              <div className="flex items-baseline justify-between">
+                <span className="text-[10px] text-muted uppercase tracking-wider">Actual</span>
+                <p className="text-sm text-text-secondary">
+                  {liability ? '-' : ''}{formatCurrency(actualBalance!)}
+                  {balanceDetail?.last_snapshot_date && (
+                    <span className="text-[10px] text-muted ml-1">
+                      ({new Date(balanceDetail.last_snapshot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
+                    </span>
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className={cn('text-xl font-bold', liability ? 'text-danger' : 'text-text-primary')}>
+            {liability ? '-' : ''}{formatCurrency(estimatedBalance)}
+          </p>
+        )}
         {!account.is_active && (
           <p className="text-xs text-muted mt-1">Inactive</p>
         )}
