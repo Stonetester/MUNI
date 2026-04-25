@@ -20,6 +20,8 @@ export interface AccountBalanceDetail {
   actual_balance: number | null
   last_snapshot_date: string | null
   monthly_contribution: number
+  next_pay_date: string | null
+  paychecks_since_anchor: number
 }
 
 export type CategoryKind = 'income' | 'expense' | 'transfer' | 'savings'
