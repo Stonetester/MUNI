@@ -291,6 +291,101 @@ def _build_compound_account_config(
     return monthly_rate, monthly_contrib
 
 
+def compute_estimated_balances(
+    accounts: List[Account],
+    db: Session,
+    user_id: int,
+) -> Dict[int, Dict[str, object]]:
+    """
+    For each account, compute an estimated current balance by forward-projecting
+    from the most recent BalanceSnapshot (or Account.balance if no snapshot) to today
+    using the same compound-growth + contribution logic as the forecast engine.
+
+    Returns {account_id: {"estimated": float, "actual": float|None, "last_snapshot_date": date|None,
+                           "monthly_contribution": float, "anchor_date": date}}.
+
+    - "actual" is the most recent BalanceSnapshot balance (None if no snapshot recorded).
+    - "estimated" is the anchor balance grown forward to today.
+    - For non-compound accounts (checking, liabilities) estimated == actual == account.balance.
+    """
+    today = date.today()
+
+    # Latest snapshot for each account
+    account_ids = [a.id for a in accounts]
+    all_snapshots = (
+        db.query(BalanceSnapshot)
+        .filter(BalanceSnapshot.account_id.in_(account_ids))
+        .order_by(BalanceSnapshot.date.desc())
+        .all()
+    )
+    latest_snapshot: Dict[int, BalanceSnapshot] = {}
+    for snap in all_snapshots:
+        if snap.account_id not in latest_snapshot:
+            latest_snapshot[snap.account_id] = snap
+
+    monthly_rate, monthly_contrib = _build_compound_account_config(accounts, db, user_id)
+
+    results: Dict[int, Dict[str, object]] = {}
+    for acc in accounts:
+        snap = latest_snapshot.get(acc.id)
+
+        # Actual balance: the most recent real snapshot balance (authoritative)
+        actual_balance = float(snap.balance) if snap else None
+
+        # Anchor: start estimating from the snapshot date; if no snapshot, from account creation
+        if snap:
+            anchor_balance = float(snap.balance)
+            anchor_date: date = snap.date
+        else:
+            anchor_balance = float(acc.balance)
+            anchor_date = acc.created_at.date() if acc.created_at else today
+
+        # Only compound accounts get forward-projected
+        if acc.account_type not in COMPOUND_TYPES:
+            results[acc.id] = {
+                "estimated": actual_balance if actual_balance is not None else float(acc.balance),
+                "actual": actual_balance,
+                "last_snapshot_date": snap.date if snap else None,
+                "monthly_contribution": 0.0,
+                "anchor_date": anchor_date,
+            }
+            continue
+
+        rate = monthly_rate.get(acc.id, 0.0)
+        contrib = monthly_contrib.get(acc.id, 0.0)
+
+        # Count full months from anchor_date to today
+        if anchor_date >= today:
+            months_elapsed = 0
+        else:
+            months_elapsed = (
+                (today.year - anchor_date.year) * 12
+                + (today.month - anchor_date.month)
+            )
+            # Don't count the partial current month as a full contribution cycle
+            if today.day < anchor_date.day:
+                months_elapsed = max(0, months_elapsed - 1)
+
+        # Apply FV formula: B(n) = B(0) * (1+r)^n + C * ((1+r)^n - 1) / r
+        balance = anchor_balance
+        if months_elapsed > 0:
+            if rate > 0:
+                growth_factor = (1.0 + rate) ** months_elapsed
+                balance = anchor_balance * growth_factor + contrib * (growth_factor - 1.0) / rate
+            else:
+                balance = anchor_balance + contrib * months_elapsed
+
+        results[acc.id] = {
+            "estimated": round(balance, 2),
+            "actual": actual_balance,
+            "last_snapshot_date": snap.date if snap else None,
+            "monthly_contribution": round(contrib, 2),
+            "anchor_date": anchor_date,
+        }
+
+    return results
+
+
 def run_forecast(
     user: User,
     db: Session,

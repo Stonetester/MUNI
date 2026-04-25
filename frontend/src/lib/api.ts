@@ -4,6 +4,7 @@ import { isDemoModeActive } from './demoMode'
 import * as demo from './demoData'
 import type {
   Account,
+  AccountBalanceDetail,
   Category,
   Transaction,
   RecurringRule,
@@ -88,6 +89,12 @@ export async function updateAccount(id: number, data: Partial<Account>): Promise
 export async function deleteAccount(id: number): Promise<void> {
   if (isDemoModeActive()) return
   await api.delete(`/accounts/${id}`)
+}
+
+export async function getAccountBalanceDetails(): Promise<AccountBalanceDetail[]> {
+  if (isDemoModeActive()) return []
+  const res: AxiosResponse<AccountBalanceDetail[]> = await api.get('/accounts/balances')
+  return res.data
 }
 
 export async function getAccountSnapshots(accountId: number): Promise<BalanceSnapshot[]> {

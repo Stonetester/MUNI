@@ -8,8 +8,8 @@ import Modal from '@/components/ui/Modal'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AccountCard from '@/components/accounts/AccountCard'
 import AccountForm from '@/components/accounts/AccountForm'
-import { getAccounts, getAccountSnapshots, createSnapshot, deleteSnapshot } from '@/lib/api'
-import { Account, BalanceSnapshot } from '@/lib/types'
+import { getAccounts, getAccountSnapshots, getAccountBalanceDetails, createSnapshot, deleteSnapshot } from '@/lib/api'
+import { Account, AccountBalanceDetail, BalanceSnapshot } from '@/lib/types'
 import { formatCurrency, isLiability, formatDate } from '@/lib/utils'
 import { Plus, Wallet, Trash2, TrendingUp, ExternalLink } from 'lucide-react'
 import {
@@ -195,6 +195,7 @@ function BalanceHistoryModal({ account, onClose }: { account: Account; onClose: 
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [balanceDetails, setBalanceDetails] = useState<Map<number, AccountBalanceDetail>>(new Map())
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [editAccount, setEditAccount] = useState<Account | undefined>()
@@ -203,8 +204,12 @@ export default function AccountsPage() {
   const loadAccounts = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await getAccounts()
+      const [data, details] = await Promise.all([
+        getAccounts(),
+        getAccountBalanceDetails().catch(() => [] as AccountBalanceDetail[]),
+      ])
       setAccounts(data)
+      setBalanceDetails(new Map(details.map((d) => [d.account_id, d])))
     } catch (e) {
       console.error(e)
     } finally {
@@ -224,8 +229,11 @@ export default function AccountsPage() {
   const liabilities = accounts.filter((a) => isLiability(a.account_type) && a.is_active)
   const inactive = accounts.filter((a) => !a.is_active)
 
-  const totalAssets = assets.reduce((s, a) => s + a.balance, 0)
-  const totalLiabilities = liabilities.reduce((s, a) => s + a.balance, 0)
+  const getDisplayBalance = (a: Account) =>
+    balanceDetails.get(a.id)?.estimated_balance ?? a.balance
+
+  const totalAssets = assets.reduce((s, a) => s + getDisplayBalance(a), 0)
+  const totalLiabilities = liabilities.reduce((s, a) => s + getDisplayBalance(a), 0)
   const netWorth = totalAssets - totalLiabilities
 
   return (
@@ -276,6 +284,7 @@ export default function AccountsPage() {
                     <AccountCard
                       key={a.id}
                       account={a}
+                      balanceDetail={balanceDetails.get(a.id)}
                       onEdit={setEditAccount}
                       onDeleted={loadAccounts}
                       onClick={setDetailAccount}
@@ -294,6 +303,7 @@ export default function AccountsPage() {
                     <AccountCard
                       key={a.id}
                       account={a}
+                      balanceDetail={balanceDetails.get(a.id)}
                       onEdit={setEditAccount}
                       onDeleted={loadAccounts}
                       onClick={setDetailAccount}
@@ -312,6 +322,7 @@ export default function AccountsPage() {
                     <AccountCard
                       key={a.id}
                       account={a}
+                      balanceDetail={balanceDetails.get(a.id)}
                       onEdit={setEditAccount}
                       onDeleted={loadAccounts}
                       onClick={setDetailAccount}
