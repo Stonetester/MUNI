@@ -11,6 +11,7 @@ class AccountBase(BaseModel):
     balance: float = 0.0
     is_active: bool = True
     forecast_enabled: bool = True
+    exclude_from_estimate: bool = False
     notes: Optional[str] = None
     is_joint: bool = False
     joint_user_id: Optional[int] = None
@@ -27,6 +28,7 @@ class AccountUpdate(BaseModel):
     balance: Optional[float] = None
     is_active: Optional[bool] = None
     forecast_enabled: Optional[bool] = None
+    exclude_from_estimate: Optional[bool] = None
     notes: Optional[str] = None
     is_joint: Optional[bool] = None
     joint_user_id: Optional[int] = None

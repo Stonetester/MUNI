@@ -491,6 +491,19 @@ def compute_estimated_balances(
             anchor_balance = float(acc.balance)
             anchor_date = acc.created_at.date() if acc.created_at else today
 
+        # ── Excluded accounts: return raw balance, no projection ────────────
+        if getattr(acc, "exclude_from_estimate", False):
+            results[acc.id] = {
+                "estimated": float(acc.balance),
+                "actual": actual_balance,
+                "last_snapshot_date": snap.date if snap else None,
+                "monthly_contribution": 0.0,
+                "anchor_date": anchor_date,
+                "next_pay_date": None,
+                "paychecks_since_anchor": 0,
+            }
+            continue
+
         # ── Cash pool accounts: project using paycheck cadence ─────────────
         if acc.account_type in CASH_POOL_TYPES:
             paychecks_landed = 0

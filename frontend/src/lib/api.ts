@@ -75,7 +75,7 @@ export async function getAccounts(): Promise<Account[]> {
 }
 
 export async function createAccount(data: Partial<Account>): Promise<Account> {
-  if (isDemoModeActive()) return { id: 99, name: data.name || 'Demo Account', account_type: data.account_type || 'checking', balance: 0, is_active: true, forecast_enabled: false, is_joint: false, created_at: new Date().toISOString() }
+  if (isDemoModeActive()) return { id: 99, name: data.name || 'Demo Account', account_type: data.account_type || 'checking', balance: 0, is_active: true, forecast_enabled: false, exclude_from_estimate: false, is_joint: false, created_at: new Date().toISOString() }
   const res: AxiosResponse<Account> = await api.post('/accounts', data)
   return res.data
 }

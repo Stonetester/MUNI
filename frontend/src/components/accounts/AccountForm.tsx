@@ -37,6 +37,7 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
     balance: account?.balance?.toString() || '0',
     is_active: account?.is_active ?? true,
     forecast_enabled: account?.forecast_enabled ?? true,
+    exclude_from_estimate: account?.exclude_from_estimate ?? false,
     is_joint: account?.is_joint ?? false,
     notes: account?.notes || '',
   })
@@ -62,6 +63,7 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
         balance: parseFloat(formData.balance),
         is_active: formData.is_active,
         forecast_enabled: formData.forecast_enabled,
+        exclude_from_estimate: formData.exclude_from_estimate,
         is_joint: formData.is_joint,
         notes: formData.notes || undefined,
       }
@@ -150,6 +152,15 @@ export default function AccountForm({ account, onSuccess, onCancel }: AccountFor
             className="w-4 h-4 accent-primary"
           />
           <span className="text-sm text-text-secondary">Include in forecast</span>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={formData.exclude_from_estimate}
+            onChange={(e) => setFormData({ ...formData, exclude_from_estimate: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-text-secondary">Exclude from balance estimation <span className="text-muted">(show raw balance — good for high-activity accounts)</span></span>
         </label>
         <label className="flex items-center gap-2 cursor-pointer">
           <input

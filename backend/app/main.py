@@ -41,6 +41,7 @@ def _apply_migrations():
     migrations = [
         "ALTER TABLE accounts ADD COLUMN is_joint BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE accounts ADD COLUMN joint_user_id INTEGER REFERENCES users(id)",
+        "ALTER TABLE accounts ADD COLUMN exclude_from_estimate BOOLEAN NOT NULL DEFAULT 0",
     ]
     with engine.connect() as conn:
         for sql in migrations:

@@ -42,13 +42,13 @@ function monthsAgoDate(n: number): string {
 // ── accounts ────────────────────────────────────────────────────────────────
 
 export const DEMO_ACCOUNTS: Account[] = [
-  { id: 1, name: 'Chase Checking', account_type: 'checking', institution: 'Chase', balance: 4820.55, is_active: true, forecast_enabled: true, is_joint: false, created_at: '2024-01-15T00:00:00' },
-  { id: 2, name: 'Chase Savings', account_type: 'savings', institution: 'Chase', balance: 9200.00, is_active: true, forecast_enabled: true, is_joint: false, created_at: '2024-01-15T00:00:00' },
-  { id: 3, name: 'EverBank HYSA', account_type: 'hysa', institution: 'EverBank', balance: 18750.00, is_active: true, forecast_enabled: true, is_joint: true, created_at: '2024-03-01T00:00:00' },
-  { id: 4, name: 'Fidelity 401k', account_type: '401k', institution: 'Fidelity', balance: 52400.00, is_active: true, forecast_enabled: true, is_joint: false, created_at: '2024-01-15T00:00:00' },
-  { id: 5, name: 'Fidelity Brokerage', account_type: 'brokerage', institution: 'Fidelity', balance: 11300.00, is_active: true, forecast_enabled: true, is_joint: false, created_at: '2024-06-01T00:00:00' },
-  { id: 6, name: 'Chase Sapphire', account_type: 'credit_card', institution: 'Chase', balance: -1840.22, is_active: true, forecast_enabled: false, is_joint: false, created_at: '2024-01-15T00:00:00' },
-  { id: 7, name: 'Capital One Quicksilver', account_type: 'credit_card', institution: 'Capital One', balance: -620.45, is_active: true, forecast_enabled: false, is_joint: false, created_at: '2024-02-01T00:00:00' },
+  { id: 1, name: 'Chase Checking', account_type: 'checking', institution: 'Chase', balance: 4820.55, is_active: true, forecast_enabled: true, exclude_from_estimate: false, is_joint: false, created_at: '2024-01-15T00:00:00' },
+  { id: 2, name: 'Chase Savings', account_type: 'savings', institution: 'Chase', balance: 9200.00, is_active: true, forecast_enabled: true, exclude_from_estimate: false, is_joint: false, created_at: '2024-01-15T00:00:00' },
+  { id: 3, name: 'EverBank HYSA', account_type: 'hysa', institution: 'EverBank', balance: 18750.00, is_active: true, forecast_enabled: true, exclude_from_estimate: false, is_joint: true, created_at: '2024-03-01T00:00:00' },
+  { id: 4, name: 'Fidelity 401k', account_type: '401k', institution: 'Fidelity', balance: 52400.00, is_active: true, forecast_enabled: true, exclude_from_estimate: false, is_joint: false, created_at: '2024-01-15T00:00:00' },
+  { id: 5, name: 'Fidelity Brokerage', account_type: 'brokerage', institution: 'Fidelity', balance: 11300.00, is_active: true, forecast_enabled: true, exclude_from_estimate: false, is_joint: false, created_at: '2024-06-01T00:00:00' },
+  { id: 6, name: 'Chase Sapphire', account_type: 'credit_card', institution: 'Chase', balance: -1840.22, is_active: true, forecast_enabled: false, exclude_from_estimate: false, is_joint: false, created_at: '2024-01-15T00:00:00' },
+  { id: 7, name: 'Capital One Quicksilver', account_type: 'credit_card', institution: 'Capital One', balance: -620.45, is_active: true, forecast_enabled: false, exclude_from_estimate: false, is_joint: false, created_at: '2024-02-01T00:00:00' },
 ]
 
 // ── categories ───────────────────────────────────────────────────────────────
