@@ -31,18 +31,28 @@ function getAccentColor(type: string): string {
 }
 
 const COMPOUND_TYPES = new Set(['savings', 'hysa', 'ira', '401k', 'hsa', 'brokerage'])
+const CASH_POOL_TYPES = new Set(['checking', 'paycheck'])
+
+function formatShortDate(dateStr: string): string {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
 export default function AccountCard({ account, balanceDetail, onEdit, onDeleted, onClick }: AccountCardProps) {
   const liability = isLiability(account.account_type)
   const accentColor = getAccentColor(account.account_type)
   const isCompound = COMPOUND_TYPES.has(account.account_type)
+  const isCashPool = CASH_POOL_TYPES.has(account.account_type)
 
   const estimatedBalance = balanceDetail?.estimated_balance ?? account.balance
   const actualBalance = balanceDetail?.actual_balance ?? null
+  const nextPayDate = balanceDetail?.next_pay_date ?? null
 
-  // Show estimated label for compound accounts always; show actual row only when a snapshot exists
+  // Compound accounts: always show Estimated label; show Actual row when snapshot exists
   const showEstimatedLabel = isCompound
   const showActualRow = isCompound && actualBalance !== null
+
+  // Cash pool (checking): show estimated + next pay date hint
+  const showCashEstimate = isCashPool && balanceDetail != null
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -111,11 +121,36 @@ export default function AccountCard({ account, balanceDetail, onEdit, onDeleted,
                   {liability ? '-' : ''}{formatCurrency(actualBalance!)}
                   {balanceDetail?.last_snapshot_date && (
                     <span className="text-[10px] text-muted ml-1">
-                      ({new Date(balanceDetail.last_snapshot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
+                      ({formatShortDate(balanceDetail.last_snapshot_date)})
                     </span>
                   )}
                 </p>
               </div>
+            )}
+          </div>
+        ) : showCashEstimate ? (
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[10px] text-text-secondary uppercase tracking-wider">Estimated</span>
+              <p className="text-xl font-bold text-text-primary">
+                {formatCurrency(estimatedBalance)}
+              </p>
+            </div>
+            {actualBalance !== null && balanceDetail?.last_snapshot_date && (
+              <div className="flex items-baseline justify-between">
+                <span className="text-[10px] text-muted uppercase tracking-wider">Actual</span>
+                <p className="text-sm text-text-secondary">
+                  {formatCurrency(actualBalance)}
+                  <span className="text-[10px] text-muted ml-1">
+                    ({formatShortDate(balanceDetail.last_snapshot_date)})
+                  </span>
+                </p>
+              </div>
+            )}
+            {nextPayDate && (
+              <p className="text-[10px] text-text-secondary mt-0.5">
+                Next pay: <span className="text-primary">{formatShortDate(nextPayDate)}</span>
+              </p>
             )}
           </div>
         ) : (

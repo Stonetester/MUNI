@@ -21,6 +21,8 @@ class AccountBalanceDetail(BaseModel):
     actual_balance: Optional[float]
     last_snapshot_date: Optional[date]
     monthly_contribution: float
+    next_pay_date: Optional[date] = None
+    paychecks_since_anchor: int = 0
 
 
 def get_account_or_404(account_id: int, user: User, db: Session) -> Account:
@@ -95,6 +97,8 @@ def get_account_balances(
             actual_balance=data["actual"],
             last_snapshot_date=data["last_snapshot_date"],
             monthly_contribution=data["monthly_contribution"],
+            next_pay_date=data.get("next_pay_date"),
+            paychecks_since_anchor=data.get("paychecks_since_anchor", 0),
         )
         for acc_id, data in balance_data.items()
     ]

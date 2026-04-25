@@ -291,6 +291,127 @@ def _build_compound_account_config(
     return monthly_rate, monthly_contrib
 
 
+def _infer_pay_schedule(user_id: int, db: Session) -> Optional[Dict]:
+    """
+    Examine the last 12 regular (non-bonus) paystubs to detect pay frequency and
+    the typical day-of-month pattern.
+
+    Returns a dict with:
+      - "net_pay": float — median net pay per paycheck
+      - "frequency": str — "semi_monthly" | "biweekly" | "monthly"
+      - "interval_days": int — calendar days between paychecks
+      - "anchor_pay_date": date — most recent pay date in the DB
+      - "pay_days_of_month": list[int] — for semi_monthly, the two DOM anchors (e.g. [1, 15])
+
+    Returns None if fewer than 2 regular paystubs exist.
+    """
+    from app.models.paystub import Paystub
+    import statistics
+
+    stubs = (
+        db.query(Paystub)
+        .filter(
+            Paystub.user_id == user_id,
+            Paystub.pay_type != "bonus",
+            Paystub.net_pay.isnot(None),
+        )
+        .order_by(Paystub.pay_date.desc())
+        .limit(12)
+        .all()
+    )
+
+    if len(stubs) < 2:
+        return None
+
+    pay_dates = sorted(s.pay_date for s in stubs)
+    net_pays = [s.net_pay for s in stubs if s.net_pay]
+    median_net = statistics.median(net_pays) if net_pays else 0.0
+
+    # Compute gaps between consecutive pay dates
+    gaps = [(pay_dates[i + 1] - pay_dates[i]).days for i in range(len(pay_dates) - 1)]
+    median_gap = statistics.median(gaps)
+
+    if median_gap <= 16:
+        frequency = "biweekly"
+        interval_days = 14
+    elif median_gap <= 20:
+        frequency = "semi_monthly"
+        interval_days = 0  # not fixed-interval; use DOM pattern
+    else:
+        frequency = "monthly"
+        interval_days = 30
+
+    # For semi_monthly: extract the two consistent days-of-month
+    pay_days_of_month: List[int] = []
+    if frequency == "semi_monthly":
+        dom_values = sorted({d.day for d in pay_dates})
+        # Cluster: anything ≤ 16 is the "first half" pay, anything > 16 is "second half"
+        first_half = [d for d in dom_values if d <= 16]
+        second_half = [d for d in dom_values if d > 16]
+        dom1 = round(statistics.median(first_half)) if first_half else 1
+        dom2 = round(statistics.median(second_half)) if second_half else 15
+        pay_days_of_month = sorted([dom1, dom2])
+
+    return {
+        "net_pay": round(median_net, 2),
+        "frequency": frequency,
+        "interval_days": interval_days,
+        "anchor_pay_date": pay_dates[-1],  # most recent pay date
+        "pay_days_of_month": pay_days_of_month,
+    }
+
+
+def _pay_dates_between(
+    schedule: Dict,
+    start: date,
+    end: date,
+) -> List[date]:
+    """
+    Return every expected pay date in (start, end] — exclusive of start, inclusive of end.
+    Uses the inferred schedule from _infer_pay_schedule.
+    """
+    results: List[date] = []
+    if schedule["frequency"] == "semi_monthly":
+        dom1, dom2 = schedule["pay_days_of_month"]
+        cursor = date(start.year, start.month, 1)
+        while cursor <= end + relativedelta(months=1):
+            for dom in [dom1, dom2]:
+                import calendar as _cal
+                last_day = _cal.monthrange(cursor.year, cursor.month)[1]
+                actual_dom = min(dom, last_day)
+                d = date(cursor.year, cursor.month, actual_dom)
+                if start < d <= end:
+                    results.append(d)
+            cursor = (cursor + relativedelta(months=1)).replace(day=1)
+    elif schedule["frequency"] == "biweekly":
+        anchor = schedule["anchor_pay_date"]
+        # Walk forward from anchor in 14-day steps
+        d = anchor
+        while d <= end:
+            if d > start:
+                results.append(d)
+            d = d + relativedelta(days=14)
+        # Also walk backward in case anchor is after start
+        d = anchor - relativedelta(days=14)
+        while d > start:
+            if d <= end:
+                results.append(d)
+            d = d - relativedelta(days=14)
+    else:  # monthly
+        anchor = schedule["anchor_pay_date"]
+        dom = anchor.day
+        cursor = date(start.year, start.month, 1)
+        while cursor <= end + relativedelta(months=1):
+            import calendar as _cal
+            last_day = _cal.monthrange(cursor.year, cursor.month)[1]
+            d = date(cursor.year, cursor.month, min(dom, last_day))
+            if start < d <= end:
+                results.append(d)
+            cursor = (cursor + relativedelta(months=1)).replace(day=1)
+
+    return sorted(set(results))
+
+
 def compute_estimated_balances(
     accounts: List[Account],
     db: Session,
@@ -298,15 +419,22 @@ def compute_estimated_balances(
 ) -> Dict[int, Dict[str, object]]:
     """
     For each account, compute an estimated current balance by forward-projecting
-    from the most recent BalanceSnapshot (or Account.balance if no snapshot) to today
-    using the same compound-growth + contribution logic as the forecast engine.
+    from the most recent BalanceSnapshot (or Account.balance if no snapshot) to today.
 
-    Returns {account_id: {"estimated": float, "actual": float|None, "last_snapshot_date": date|None,
-                           "monthly_contribution": float, "anchor_date": date}}.
+    Compound accounts (HYSA, 401k, IRA, etc.) use FV compound-growth + contribution.
+    Cash pool accounts (checking, savings) use paycheck schedule inference:
+      estimated = anchor + (paychecks_landed × net_pay) - prorated_expenses
+    Liabilities return a static balance.
 
-    - "actual" is the most recent BalanceSnapshot balance (None if no snapshot recorded).
-    - "estimated" is the anchor balance grown forward to today.
-    - For non-compound accounts (checking, liabilities) estimated == actual == account.balance.
+    Returns {account_id: {
+        "estimated": float,
+        "actual": float|None,
+        "last_snapshot_date": date|None,
+        "monthly_contribution": float,
+        "anchor_date": date,
+        "next_pay_date": date|None,
+        "paychecks_since_anchor": int,
+    }}.
     """
     today = date.today()
 
@@ -325,14 +453,37 @@ def compute_estimated_balances(
 
     monthly_rate, monthly_contrib = _build_compound_account_config(accounts, db, user_id)
 
+    # Infer pay schedule and historical expense rate once for this user
+    pay_schedule = _infer_pay_schedule(user_id, db)
+
+    # Monthly expense average (negative transactions, last 6 months)
+    six_months_ago = today - relativedelta(months=6)
+    expense_txns = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == user_id,
+            Transaction.date >= six_months_ago,
+            Transaction.date < today,
+            Transaction.amount < 0,
+            Transaction.scenario_id.is_(None),
+        )
+        .all()
+    )
+    total_expenses_6mo = sum(abs(t.amount) for t in expense_txns)
+    avg_monthly_expenses = total_expenses_6mo / 6.0 if total_expenses_6mo else 0.0
+
+    # Compute next pay date after today (used in response)
+    next_pay_date: Optional[date] = None
+    if pay_schedule:
+        future_dates = _pay_dates_between(pay_schedule, today, today + relativedelta(months=2))
+        next_pay_date = future_dates[0] if future_dates else None
+
     results: Dict[int, Dict[str, object]] = {}
     for acc in accounts:
         snap = latest_snapshot.get(acc.id)
 
-        # Actual balance: the most recent real snapshot balance (authoritative)
         actual_balance = float(snap.balance) if snap else None
 
-        # Anchor: start estimating from the snapshot date; if no snapshot, from account creation
         if snap:
             anchor_balance = float(snap.balance)
             anchor_date: date = snap.date
@@ -340,7 +491,37 @@ def compute_estimated_balances(
             anchor_balance = float(acc.balance)
             anchor_date = acc.created_at.date() if acc.created_at else today
 
-        # Only compound accounts get forward-projected
+        # ── Cash pool accounts: project using paycheck cadence ─────────────
+        if acc.account_type in CASH_POOL_TYPES:
+            paychecks_landed = 0
+            if pay_schedule and anchor_date < today:
+                landed = _pay_dates_between(pay_schedule, anchor_date, today)
+                paychecks_landed = len(landed)
+
+            # Days elapsed since anchor
+            days_elapsed = max(0, (today - anchor_date).days)
+            # Prorate expenses: daily rate × days elapsed
+            daily_expense_rate = avg_monthly_expenses / 30.44
+            prorated_expenses = daily_expense_rate * days_elapsed
+
+            paycheck_income = paychecks_landed * (pay_schedule["net_pay"] if pay_schedule else 0.0)
+            estimated = anchor_balance + paycheck_income - prorated_expenses
+
+            results[acc.id] = {
+                "estimated": round(estimated, 2),
+                "actual": actual_balance,
+                "last_snapshot_date": snap.date if snap else None,
+                "monthly_contribution": round(pay_schedule["net_pay"] * (
+                    2 if pay_schedule["frequency"] == "semi_monthly" else
+                    (4.33 / 2 if pay_schedule["frequency"] == "biweekly" else 1)
+                ), 2) if pay_schedule else 0.0,
+                "anchor_date": anchor_date,
+                "next_pay_date": next_pay_date,
+                "paychecks_since_anchor": paychecks_landed,
+            }
+            continue
+
+        # ── Liabilities and other non-compound accounts ─────────────────────
         if acc.account_type not in COMPOUND_TYPES:
             results[acc.id] = {
                 "estimated": actual_balance if actual_balance is not None else float(acc.balance),
@@ -348,13 +529,15 @@ def compute_estimated_balances(
                 "last_snapshot_date": snap.date if snap else None,
                 "monthly_contribution": 0.0,
                 "anchor_date": anchor_date,
+                "next_pay_date": None,
+                "paychecks_since_anchor": 0,
             }
             continue
 
+        # ── Compound accounts: FV formula ────────────────────────────────────
         rate = monthly_rate.get(acc.id, 0.0)
         contrib = monthly_contrib.get(acc.id, 0.0)
 
-        # Count full months from anchor_date to today
         if anchor_date >= today:
             months_elapsed = 0
         else:
@@ -362,11 +545,9 @@ def compute_estimated_balances(
                 (today.year - anchor_date.year) * 12
                 + (today.month - anchor_date.month)
             )
-            # Don't count the partial current month as a full contribution cycle
             if today.day < anchor_date.day:
                 months_elapsed = max(0, months_elapsed - 1)
 
-        # Apply FV formula: B(n) = B(0) * (1+r)^n + C * ((1+r)^n - 1) / r
         balance = anchor_balance
         if months_elapsed > 0:
             if rate > 0:
@@ -381,6 +562,8 @@ def compute_estimated_balances(
             "last_snapshot_date": snap.date if snap else None,
             "monthly_contribution": round(contrib, 2),
             "anchor_date": anchor_date,
+            "next_pay_date": None,
+            "paychecks_since_anchor": 0,
         }
 
     return results
