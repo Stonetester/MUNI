@@ -85,68 +85,81 @@ def get_spending_estimates(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Return weighted-average monthly spend per expense/savings category.
-    Uses the same 50/30/20 weighting as the forecast engine:
-      - 3-month avg × 0.50  (recent behaviour — highest weight)
-      - 6-month avg × 0.30  (medium-term trend)
-      - 12-month avg × 0.20 (seasonal baseline)
-    This produces budget suggestions that react to recent changes while
-    staying anchored to the full year of history.
+    Return a conservative monthly spend estimate per discretionary expense category.
+
+    Uses median monthly spend over 18 months (not average) so outlier high months
+    don't inflate the suggestion. Fixed/unavoidable costs are excluded entirely —
+    they don't need a discretionary budget.
     """
+    import statistics
+
+    # Categories that should never get a suggested budget
+    NO_BUDGET_NAMES = {
+        "tax", "taxes", "medical", "healthcare", "rent", "mortgage",
+        "car expense", "car payment", "auto", "savings transfer",
+    }
+
     today = date.today()
-    period_end = today.replace(day=1)  # exclude current (partial) month
-    start_12 = period_end - relativedelta(months=12)
-    start_6  = period_end - relativedelta(months=6)
-    start_3  = period_end - relativedelta(months=3)
+    period_end = today.replace(day=1)  # exclude current partial month
+    start_18 = period_end - relativedelta(months=18)
 
     categories = (
         db.query(Category)
         .filter(
             Category.user_id == current_user.id,
-            Category.kind.in_(["expense", "savings"]),
+            Category.kind == "expense",
         )
         .all()
     )
 
-    def _sum_for_period(period_start: date) -> dict:
-        rows = (
-            db.query(Transaction.category_id, func.sum(Transaction.amount).label("total"))
-            .filter(
-                Transaction.user_id == current_user.id,
-                Transaction.date >= period_start,
-                Transaction.date < period_end,
-                Transaction.scenario_id.is_(None),
-                Transaction.amount < 0,  # expenses only
-            )
-            .group_by(Transaction.category_id)
-            .all()
+    # Pull all expense transactions in the 18-month window, grouped by month + category
+    rows = (
+        db.query(
+            Transaction.category_id,
+            func.strftime("%Y-%m", Transaction.date).label("month"),
+            func.sum(Transaction.amount).label("total"),
         )
-        return {r.category_id: abs(r.total) for r in rows if r.total}
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.date >= start_18,
+            Transaction.date < period_end,
+            Transaction.scenario_id.is_(None),
+            Transaction.amount < 0,
+        )
+        .group_by(Transaction.category_id, func.strftime("%Y-%m", Transaction.date))
+        .all()
+    )
 
-    sums_12 = _sum_for_period(start_12)
-    sums_6  = _sum_for_period(start_6)
-    sums_3  = _sum_for_period(start_3)
+    # Build {category_id: [monthly_spend, ...]}
+    monthly_by_cat: dict = {}
+    for row in rows:
+        monthly_by_cat.setdefault(row.category_id, []).append(abs(row.total))
 
     result = []
     for cat in categories:
-        avg12 = sums_12.get(cat.id, 0.0) / 12
-        avg6  = sums_6.get(cat.id, 0.0)  / 6
-        avg3  = sums_3.get(cat.id, 0.0)  / 3
+        # Skip fixed/unavoidable categories
+        if cat.kind == "savings" or cat.kind == "transfer":
+            continue
+        if cat.name.lower().strip() in NO_BUDGET_NAMES:
+            continue
 
-        # Weighted blend — same as forecast engine
-        weighted = avg3 * 0.50 + avg6 * 0.30 + avg12 * 0.20
+        monthly_amounts = monthly_by_cat.get(cat.id, [])
+        if not monthly_amounts:
+            continue
 
-        # Fall back to whatever window has data if the full 12 months isn't available
-        if weighted == 0:
-            weighted = avg6 or avg3
+        # Median across months that had spend — conservative and outlier-resistant
+        median = statistics.median(monthly_amounts)
 
-        if weighted > 0:
-            result.append({
-                "category_id": cat.id,
-                "category_name": cat.name,
-                "avg_monthly": round(weighted, 2),
-                "months_sampled": 12,
-            })
+        # Apply a 10% savings-oriented haircut to nudge spend targets downward
+        conservative = round(median * 0.90, 2)
+
+        months_sampled = len(monthly_amounts)
+        result.append({
+            "category_id": cat.id,
+            "category_name": cat.name,
+            "avg_monthly": conservative,
+            "months_sampled": months_sampled,
+        })
 
     result.sort(key=lambda x: -x["avg_monthly"])
     return result
