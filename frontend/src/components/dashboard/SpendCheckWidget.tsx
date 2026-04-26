@@ -204,6 +204,9 @@ export default function SpendCheckWidget() {
         : `${yellowRows.length} categories running hot — slow down`
       : "You're on track — spending looks good this month"
 
+  const totalSpent = rows.reduce((s, r) => s + r.b.actual_amount, 0)
+  const totalBenchmark = rows.reduce((s, r) => s + r.benchmark, 0)
+
   const dotColor = overallStatus === 'red' ? 'bg-red-500' : overallStatus === 'yellow' ? 'bg-yellow-400' : 'bg-green-500'
   const borderColor = overallStatus === 'red' ? 'border-red-700/40' : overallStatus === 'yellow' ? 'border-yellow-600/30' : 'border-green-700/20'
   const bgColor = overallStatus === 'red' ? 'bg-red-900/15' : overallStatus === 'yellow' ? 'bg-yellow-900/10' : 'bg-green-900/10'
@@ -222,7 +225,13 @@ export default function SpendCheckWidget() {
           )}
         </span>
         <span className="text-sm font-medium text-text-primary flex-1">{statusLabel}</span>
-        <span className="text-xs text-muted whitespace-nowrap">{daysLeft}d left</span>
+        <span className="text-sm font-bold text-text-primary whitespace-nowrap">
+          {formatCurrency(totalSpent)}
+          {totalBenchmark > 0 && (
+            <span className="text-xs font-normal text-muted"> / {formatCurrency(totalBenchmark)}</span>
+          )}
+        </span>
+        <span className="text-xs text-muted whitespace-nowrap hidden sm:block">{daysLeft}d left</span>
         {open ? <ChevronUp size={14} className="text-muted flex-shrink-0" /> : <ChevronDown size={14} className="text-muted flex-shrink-0" />}
       </button>
 
