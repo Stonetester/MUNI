@@ -95,8 +95,8 @@ def get_spending_estimates(
 
     # Categories that should never get a suggested budget
     NO_BUDGET_NAMES = {
-        "tax", "taxes", "medical", "healthcare", "rent", "mortgage",
-        "car expense", "car payment", "auto", "savings transfer",
+        "tax", "taxes", "medical", "healthcare", "rent", "rent/utilities",
+        "utilities", "mortgage", "car expense", "car payment", "auto", "savings transfer",
     }
 
     today = date.today()
