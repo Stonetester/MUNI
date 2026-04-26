@@ -346,6 +346,9 @@ export default function DashboardPage() {
   return (
     <AppLayout>
       <div className="flex flex-col gap-4 md:gap-5">
+        {/* Spend Check — top of page */}
+        <SpendCheckWidget />
+
         {/* Net Worth */}
         <NetWorthCard data={data} />
 
@@ -368,9 +371,6 @@ export default function DashboardPage() {
             </div>
           )
         })()}
-
-        {/* Spend Check */}
-        <SpendCheckWidget />
 
         {/* Accounts Grid */}
         <AccountsGrid data={data} />
