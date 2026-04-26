@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 
 // Fixed costs excluded from the discretionary spend signal
-const EXCLUDED_NAMES = ['rent', 'rent/utilities', 'utilities', 'mortgage', 'tax', 'taxes', 'medical', 'healthcare', 'car expense', 'car payment', 'auto', 'savings transfer']
+const EXCLUDED_NAMES = ['rent', 'rent/utilities', 'utilities', 'mortgage', 'tax', 'taxes', 'medical', 'healthcare', 'car expense', 'car payment', 'auto', 'savings transfer', 'student loans', 'student loan', 'debt']
 
 function isExcluded(b: BudgetSummary) {
   if (b.kind === 'savings' || b.kind === 'transfer') return true
