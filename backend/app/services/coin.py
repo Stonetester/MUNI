@@ -1,13 +1,21 @@
 """
 Coin — local finance Q&A service.
-Gathers real data from the DB, builds a context block, sends to Ollama on Mongol.
-Keeps all finance data local — never sends to Claude API or external services.
+
+Architecture:
+- Factual queries (spend totals, transaction lists, balances) are answered
+  directly from the DB with no LLM involved. Numbers are always exact.
+- Interpretation queries (am I overspending? what should I cut?) use the LLM
+  with the DB data as context.
+
+All finance data stays local — never sent to Claude API or external services.
 """
 from __future__ import annotations
 
 import calendar
+import re
 import requests
 from datetime import date, timedelta
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -20,175 +28,271 @@ ASSET_TYPES = {"checking", "savings", "hysa", "brokerage", "ira", "401k", "hsa",
 LIABILITY_TYPES = {"credit_card", "student_loan", "car_loan", "mortgage"}
 COIN_MODEL = "deepseek-r1:8b"
 
+MONTH_NAMES = {
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "may": 5, "june": 6, "july": 7, "august": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4,
+    "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+# ── Date parsing ─────────────────────────────────────────────────────────────
+
+def _parse_month_year(query: str) -> Optional[tuple[int, int]]:
+    """Extract (year, month) from query text if mentioned. Returns None if not found."""
+    q = query.lower()
+    today = date.today()
+
+    if "last month" in q:
+        d = date(today.year, today.month, 1) - timedelta(days=1)
+        return d.year, d.month
+    if "this month" in q:
+        return today.year, today.month
+
+    # "march 2026" or "2026-03" or "03/2026"
+    for name, num in MONTH_NAMES.items():
+        pattern = rf"{name}\s+(\d{{4}})"
+        m = re.search(pattern, q)
+        if m:
+            return int(m.group(1)), num
+        pattern2 = rf"(\d{{4}})\s+{name}"
+        m2 = re.search(pattern2, q)
+        if m2:
+            return int(m2.group(1)), num
+
+    m = re.search(r"(\d{4})-(\d{2})", q)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+
+    return None
+
 
 def _month_range(year: int, month: int):
     last_day = calendar.monthrange(year, month)[1]
     return date(year, month, 1), date(year, month, last_day)
 
 
-def _gather_data(user: User, db: Session) -> dict:
-    """Pull accounts, recent transactions, statements, and spending summary."""
-    today = date.today()
+# ── DB helpers ────────────────────────────────────────────────────────────────
 
-    # Last 30 days of transactions
-    since = today - timedelta(days=30)
-    txns = (
-        db.query(Transaction)
-        .filter(
-            Transaction.user_id == user.id,
-            Transaction.date >= since,
-            Transaction.scenario_id.is_(None),
-        )
-        .order_by(Transaction.date.desc())
-        .all()
-    )
-
-    # Last 3 months spending by category
-    three_months_ago = today - timedelta(days=90)
-    all_txns = (
-        db.query(Transaction)
-        .filter(
-            Transaction.user_id == user.id,
-            Transaction.date >= three_months_ago,
-            Transaction.scenario_id.is_(None),
-        )
-        .all()
-    )
-
+def _get_cats(user: User, db: Session) -> dict[int, Category]:
     cats = db.query(Category).filter(Category.user_id == user.id).all()
-    cats_map = {c.id: c for c in cats}
+    return {c.id: c for c in cats}
 
-    by_category: dict[str, float] = {}
-    total_income = 0.0
-    total_spending = 0.0
-    for t in all_txns:
-        cat = cats_map.get(t.category_id)
-        cat_name = cat.name if cat else "Uncategorized"
-        if t.amount > 0:
-            total_income += t.amount
-        else:
-            total_spending += abs(t.amount)
-            by_category[cat_name] = by_category.get(cat_name, 0.0) + abs(t.amount)
 
-    # Accounts and balances
-    accounts = db.query(Account).filter(Account.user_id == user.id, Account.is_active == True).all()
-    total_assets = sum(a.balance for a in accounts if a.account_type in ASSET_TYPES and a.balance > 0)
-    total_liabilities = sum(abs(a.balance) for a in accounts if a.account_type in LIABILITY_TYPES or a.balance < 0)
+def _find_category(cats_map: dict[int, Category], name: str) -> Optional[int]:
+    """Find category id by name (case-insensitive)."""
+    name_lower = name.lower()
+    for cid, cat in cats_map.items():
+        if cat.name.lower() == name_lower:
+            return cid
+    # fuzzy — partial match
+    for cid, cat in cats_map.items():
+        if name_lower in cat.name.lower() or cat.name.lower() in name_lower:
+            return cid
+    return None
 
-    # Budget status for current month
-    start, end = _month_range(today.year, today.month)
-    this_month_txns = [t for t in all_txns if start <= t.date <= end]
-    this_month_by_cat: dict[str, float] = {}
-    for t in this_month_txns:
+
+def _txns_for_period(user: User, db: Session, start: date, end: date):
+    return (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == user.id,
+            Transaction.date >= start,
+            Transaction.date <= end,
+            Transaction.scenario_id.is_(None),
+        )
+        .order_by(Transaction.date)
+        .all()
+    )
+
+
+# ── Factual query handlers (no LLM) ──────────────────────────────────────────
+
+def _find_category_in_query(q: str, cats_map: dict) -> Optional[int]:
+    """Find which category the user is asking about by matching against real category names."""
+    # Exact match first
+    for cid, cat in cats_map.items():
+        if cat.name.lower() == q or cat.name.lower() in q:
+            return cid
+    # Partial: any word in the category name appears as a whole word in the query
+    for cid, cat in cats_map.items():
+        for word in cat.name.lower().split():
+            if len(word) >= 3 and re.search(rf"\b{re.escape(word)}\b", q):
+                return cid
+    return None
+
+
+def _handle_spending_by_category(user: User, db: Session, query: str, cats_map: dict) -> Optional[str]:
+    """Handle: how much did I spend on X in [month]?"""
+    q = query.lower()
+    if not any(w in q for w in ["spend", "spent", "spending", "cost", "pay", "paid"]):
+        return None
+
+    month_year = _parse_month_year(query)
+    if not month_year:
+        today = date.today()
+        start = today - timedelta(days=30)
+        end = today
+        period_label = "the last 30 days"
+    else:
+        year, month = month_year
+        start, end = _month_range(year, month)
+        period_label = f"{calendar.month_name[month]} {year}"
+
+    txns = _txns_for_period(user, db, start, end)
+
+    # Try to identify a specific category from the query using real category names
+    cat_id = _find_category_in_query(q, cats_map)
+
+    if cat_id:
+        cat_name = cats_map[cat_id].name
+        cat_txns = [t for t in txns if t.category_id == cat_id and t.amount < 0]
+        if not cat_txns:
+            return f"No {cat_name} transactions found in {period_label}."
+        total = sum(abs(t.amount) for t in cat_txns)
+        lines = [f"{cat_name} spending in {period_label}: ${total:,.2f}"]
+        lines.append(f"{len(cat_txns)} transactions:")
+        for t in cat_txns:
+            lines.append(f"  {t.date}  ${abs(t.amount):,.2f}  {t.description}")
+        return "\n".join(lines)
+
+    # No specific category detected — check if the query mentions a word that looks
+    # like a category name but didn't match. Strip stop words and spending verbs to
+    # see if there's a leftover subject word.
+    stop = {"how", "much", "did", "i", "spend", "spent", "on", "in", "my", "the",
+            "what", "was", "were", "for", "last", "this", "month", "year", "total",
+            "spending", "cost", "pay", "paid", "expenses", "expense"}
+    words = [w for w in re.findall(r"\b[a-z]+\b", q) if w not in stop and len(w) >= 3]
+    # Filter out month names and years
+    words = [w for w in words if w not in MONTH_NAMES and not w.isdigit()]
+    if words:
+        # User seemed to ask about something specific but we couldn't match a category
+        available = ", ".join(sorted(c.name for c in cats_map.values()))
+        return (
+            f"Couldn't find a category matching '{' '.join(words)}' in {period_label}.\n"
+            f"Your categories: {available}"
+        )
+
+    # No category in the query — return full breakdown
+    by_cat: dict[str, float] = {}
+    for t in txns:
         if t.amount < 0:
             cat = cats_map.get(t.category_id)
             cat_name = cat.name if cat else "Uncategorized"
-            this_month_by_cat[cat_name] = this_month_by_cat.get(cat_name, 0.0) + abs(t.amount)
+            by_cat[cat_name] = by_cat.get(cat_name, 0.0) + abs(t.amount)
 
-    budget_status = []
-    for cat in cats:
-        if cat.kind not in ("expense", "savings") or not cat.budget_amount:
-            continue
-        actual = this_month_by_cat.get(cat.name, 0.0)
-        budget_status.append({
-            "category": cat.name,
-            "budget": round(cat.budget_amount, 2),
-            "actual": round(actual, 2),
-            "over": actual > cat.budget_amount,
-        })
+    if not by_cat:
+        return f"No spending found in {period_label}."
 
-    # Per-month breakdown by category for last 3 months
-    monthly_by_cat: dict[str, dict[str, float]] = {}
-    for t in all_txns:
-        if t.amount >= 0:
-            continue
-        month_key = t.date.strftime("%Y-%m")
-        cat = cats_map.get(t.category_id)
-        cat_name = cat.name if cat else "Uncategorized"
-        monthly_by_cat.setdefault(month_key, {})
-        monthly_by_cat[month_key][cat_name] = monthly_by_cat[month_key].get(cat_name, 0.0) + abs(t.amount)
-
-    return {
-        "today": today.isoformat(),
-        "accounts": [
-            {"name": a.name, "type": a.account_type, "balance": round(a.balance, 2)}
-            for a in accounts
-        ],
-        "net_worth": round(total_assets - total_liabilities, 2),
-        "total_assets": round(total_assets, 2),
-        "total_liabilities": round(total_liabilities, 2),
-        "monthly_spending_by_category": {
-            month: {cat: round(amt, 2) for cat, amt in sorted(cats.items(), key=lambda x: -x[1])}
-            for month, cats in sorted(monthly_by_cat.items())
-        },
-        "last_90_days_by_category": {
-            k: round(v, 2)
-            for k, v in sorted(by_category.items(), key=lambda x: -x[1])
-        },
-        "total_income_90d": round(total_income, 2),
-        "total_spending_90d": round(total_spending, 2),
-        "this_month_budget_status": budget_status,
-        "recent_transactions": [
-            {
-                "date": t.date.isoformat(),
-                "amount": round(t.amount, 2),
-                "description": t.description,
-                "category": cats_map.get(t.category_id).name if cats_map.get(t.category_id) else "Uncategorized",
-            }
-            for t in txns[:30]
-        ],
-    }
-
-
-def _build_context(data: dict) -> str:
-    lines = [
-        f"Today: {data['today']}",
-        f"Net Worth: ${data['net_worth']:,.2f}  (Assets: ${data['total_assets']:,.2f} / Liabilities: ${data['total_liabilities']:,.2f})",
-        "",
-        "Account Balances:",
-    ]
-    for a in data["accounts"]:
-        lines.append(f"  - {a['name']} ({a['type']}): ${a['balance']:,.2f}")
-
-    lines += ["", "Monthly Spending by Category (last 3 months):"]
-    for month, cats in data["monthly_spending_by_category"].items():
-        lines.append(f"  {month}:")
-        for cat, amt in cats.items():
-            lines.append(f"    - {cat}: ${amt:,.2f}")
-
-    lines += [
-        "",
-        f"Total Income (90d): ${data['total_income_90d']:,.2f}",
-        f"Total Spending (90d): ${data['total_spending_90d']:,.2f}",
-    ]
-
-    if data["this_month_budget_status"]:
-        lines += ["", "This Month Budget Status:"]
-        for b in data["this_month_budget_status"]:
-            status = "OVER" if b["over"] else "ok"
-            lines.append(f"  - {b['category']}: spent ${b['actual']:,.2f} of ${b['budget']:,.2f} [{status}]")
-
-    if data["recent_transactions"]:
-        lines += ["", "Recent Transactions (last 30 days):"]
-        for t in data["recent_transactions"]:
-            lines.append(f"  - {t['date']}  ${t['amount']:,.2f}  {t['description']}  [{t['category']}]")
-
+    total = sum(by_cat.values())
+    lines = [f"Spending breakdown for {period_label} (total: ${total:,.2f}):"]
+    for cat, amt in sorted(by_cat.items(), key=lambda x: -x[1]):
+        lines.append(f"  {cat}: ${amt:,.2f}")
     return "\n".join(lines)
 
 
-def answer_finance_query(user: User, db: Session, query: str) -> str:
-    """Pull real finance data and answer the query using Ollama locally."""
-    data = _gather_data(user, db)
-    context = _build_context(data)
+def _handle_list_transactions(user: User, db: Session, query: str, cats_map: dict) -> Optional[str]:
+    """Handle: list/show my [category] transactions in [month]."""
+    q = query.lower()
+    if not any(w in q for w in ["list", "show", "what are", "give me", "all my"]):
+        return None
 
-    prompt = f"""You are Coin, a personal finance assistant. Answer the user's question using only the financial data below. Be specific with numbers. If the data doesn't contain enough information to answer, say so clearly.
+    month_year = _parse_month_year(query)
+    if not month_year:
+        today = date.today()
+        start = today - timedelta(days=30)
+        end = today
+        period_label = "the last 30 days"
+    else:
+        year, month = month_year
+        start, end = _month_range(year, month)
+        period_label = f"{calendar.month_name[month]} {year}"
 
-FINANCIAL DATA:
+    txns = _txns_for_period(user, db, start, end)
+
+    cat_id = _find_category_in_query(q, cats_map)
+
+    if cat_id:
+        txns = [t for t in txns if t.category_id == cat_id]
+        cat_name = cats_map[cat_id].name
+        label = f"{cat_name} transactions in {period_label}"
+    else:
+        txns = [t for t in txns if t.amount < 0]
+        label = f"transactions in {period_label}"
+
+    if not txns:
+        return f"No {label} found."
+
+    total = sum(abs(t.amount) for t in txns if t.amount < 0)
+    lines = [f"{label} ({len(txns)} total, ${total:,.2f}):"]
+    for t in txns:
+        lines.append(f"  {t.date}  ${abs(t.amount):,.2f}  {t.description}")
+    return "\n".join(lines)
+
+
+def _handle_balance_query(user: User, db: Session, query: str) -> Optional[str]:
+    """Handle: what is my balance / net worth / how much do I have?"""
+    q = query.lower()
+    if not any(w in q for w in ["balance", "net worth", "how much do i have", "account", "total"]):
+        return None
+
+    accounts = db.query(Account).filter(Account.user_id == user.id, Account.is_active == True).all()
+    if not accounts:
+        return "No active accounts found."
+
+    total_assets = sum(a.balance for a in accounts if a.account_type in ASSET_TYPES and a.balance > 0)
+    total_liabilities = sum(abs(a.balance) for a in accounts if a.account_type in LIABILITY_TYPES or a.balance < 0)
+    net_worth = total_assets - total_liabilities
+
+    lines = [
+        f"Net Worth: ${net_worth:,.2f}",
+        f"  Total Assets: ${total_assets:,.2f}",
+        f"  Total Liabilities: ${total_liabilities:,.2f}",
+        "",
+        "Account Balances:",
+    ]
+    for a in accounts:
+        lines.append(f"  {a.name} ({a.account_type}): ${a.balance:,.2f}")
+    return "\n".join(lines)
+
+
+# ── LLM handler for interpretation questions ─────────────────────────────────
+
+def _handle_with_llm(user: User, db: Session, query: str, cats_map: dict) -> str:
+    """For interpretation/advice questions, build context and ask Ollama."""
+    today = date.today()
+    three_months_ago = today - timedelta(days=90)
+    all_txns = _txns_for_period(user, db, three_months_ago, today)
+
+    # Monthly breakdown
+    monthly: dict[str, dict[str, float]] = {}
+    for t in all_txns:
+        if t.amount >= 0:
+            continue
+        mk = t.date.strftime("%Y-%m")
+        cat = cats_map.get(t.category_id)
+        cn = cat.name if cat else "Uncategorized"
+        monthly.setdefault(mk, {})
+        monthly[mk][cn] = monthly[mk].get(cn, 0.0) + abs(t.amount)
+
+    accounts = db.query(Account).filter(Account.user_id == user.id, Account.is_active == True).all()
+    net_worth = sum(a.balance for a in accounts if a.account_type in ASSET_TYPES and a.balance > 0) - \
+                sum(abs(a.balance) for a in accounts if a.account_type in LIABILITY_TYPES or a.balance < 0)
+
+    lines = [f"Today: {today}", f"Net Worth: ${net_worth:,.2f}", "", "Monthly Spending by Category:"]
+    for mk, cats in sorted(monthly.items()):
+        lines.append(f"  {mk}:")
+        for cn, amt in sorted(cats.items(), key=lambda x: -x[1]):
+            lines.append(f"    {cn}: ${amt:,.2f}")
+
+    context = "\n".join(lines)
+
+    prompt = f"""You are Coin, a personal finance assistant. Answer the question using only the data below. Be concise and specific. Plain text only.
+
 {context}
 
-USER QUESTION: {query}
-
-Answer concisely. Use dollar amounts from the data. Plain text only, no markdown."""
+Question: {query}"""
 
     try:
         from app.config import settings
@@ -200,3 +304,25 @@ Answer concisely. Use dollar amounts from the data. Plain text only, no markdown
         return r.json()["response"].strip()
     except Exception as e:
         return f"Coin error contacting Ollama: {e}"
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def answer_finance_query(user: User, db: Session, query: str) -> str:
+    cats_map = _get_cats(user, db)
+
+    # Try factual handlers first — these return exact DB numbers, no LLM
+    result = _handle_balance_query(user, db, query)
+    if result:
+        return result
+
+    result = _handle_list_transactions(user, db, query, cats_map)
+    if result:
+        return result
+
+    result = _handle_spending_by_category(user, db, query, cats_map)
+    if result:
+        return result
+
+    # Fall back to LLM for interpretation/advice questions
+    return _handle_with_llm(user, db, query, cats_map)
