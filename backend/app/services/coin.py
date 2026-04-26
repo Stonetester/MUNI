@@ -97,6 +97,17 @@ def _gather_data(user: User, db: Session) -> dict:
             "over": actual > cat.budget_amount,
         })
 
+    # Per-month breakdown by category for last 3 months
+    monthly_by_cat: dict[str, dict[str, float]] = {}
+    for t in all_txns:
+        if t.amount >= 0:
+            continue
+        month_key = t.date.strftime("%Y-%m")
+        cat = cats_map.get(t.category_id)
+        cat_name = cat.name if cat else "Uncategorized"
+        monthly_by_cat.setdefault(month_key, {})
+        monthly_by_cat[month_key][cat_name] = monthly_by_cat[month_key].get(cat_name, 0.0) + abs(t.amount)
+
     return {
         "today": today.isoformat(),
         "accounts": [
@@ -106,17 +117,9 @@ def _gather_data(user: User, db: Session) -> dict:
         "net_worth": round(total_assets - total_liabilities, 2),
         "total_assets": round(total_assets, 2),
         "total_liabilities": round(total_liabilities, 2),
-        "last_30_days": {
-            "transactions": [
-                {
-                    "date": t.date.isoformat(),
-                    "amount": round(t.amount, 2),
-                    "description": t.description,
-                    "category": cats_map.get(t.category_id).name if cats_map.get(t.category_id) else "Uncategorized",
-                    "account": next((a.name for a in accounts if a.id == t.account_id), "Unknown"),
-                }
-                for t in txns[:50]
-            ],
+        "monthly_spending_by_category": {
+            month: {cat: round(amt, 2) for cat, amt in sorted(cats.items(), key=lambda x: -x[1])}
+            for month, cats in sorted(monthly_by_cat.items())
         },
         "last_90_days_by_category": {
             k: round(v, 2)
@@ -125,6 +128,15 @@ def _gather_data(user: User, db: Session) -> dict:
         "total_income_90d": round(total_income, 2),
         "total_spending_90d": round(total_spending, 2),
         "this_month_budget_status": budget_status,
+        "recent_transactions": [
+            {
+                "date": t.date.isoformat(),
+                "amount": round(t.amount, 2),
+                "description": t.description,
+                "category": cats_map.get(t.category_id).name if cats_map.get(t.category_id) else "Uncategorized",
+            }
+            for t in txns[:30]
+        ],
     }
 
 
@@ -138,9 +150,11 @@ def _build_context(data: dict) -> str:
     for a in data["accounts"]:
         lines.append(f"  - {a['name']} ({a['type']}): ${a['balance']:,.2f}")
 
-    lines += ["", "Spending by Category (last 90 days):"]
-    for cat, amt in data["last_90_days_by_category"].items():
-        lines.append(f"  - {cat}: ${amt:,.2f}")
+    lines += ["", "Monthly Spending by Category (last 3 months):"]
+    for month, cats in data["monthly_spending_by_category"].items():
+        lines.append(f"  {month}:")
+        for cat, amt in cats.items():
+            lines.append(f"    - {cat}: ${amt:,.2f}")
 
     lines += [
         "",
@@ -154,11 +168,10 @@ def _build_context(data: dict) -> str:
             status = "OVER" if b["over"] else "ok"
             lines.append(f"  - {b['category']}: spent ${b['actual']:,.2f} of ${b['budget']:,.2f} [{status}]")
 
-    if data["last_30_days"]["transactions"]:
-        lines += ["", "Recent Transactions (last 30 days, up to 50):"]
-        for t in data["last_30_days"]["transactions"]:
-            sign = "+" if t["amount"] > 0 else ""
-            lines.append(f"  - {t['date']}  {sign}${t['amount']:,.2f}  {t['description']}  [{t['category']}]  {t['account']}")
+    if data["recent_transactions"]:
+        lines += ["", "Recent Transactions (last 30 days):"]
+        for t in data["recent_transactions"]:
+            lines.append(f"  - {t['date']}  ${t['amount']:,.2f}  {t['description']}  [{t['category']}]")
 
     return "\n".join(lines)
 
