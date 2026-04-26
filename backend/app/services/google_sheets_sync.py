@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional
@@ -478,14 +479,28 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
     errors = []
     duplicates: list[dict] = []
 
-    for tab in month_tabs:
+    for tab_idx, tab in enumerate(month_tabs):
+        # Space requests to stay well under the 60 reads/min quota
+        if tab_idx > 0:
+            time.sleep(1.2)
+
         try:
-            result = (
-                service.spreadsheets()
-                .values()
-                .get(spreadsheetId=sheet_id, range=f"'{tab}'")
-                .execute()
-            )
+            # Retry once on 429 with a longer backoff
+            for attempt in range(2):
+                try:
+                    result = (
+                        service.spreadsheets()
+                        .values()
+                        .get(spreadsheetId=sheet_id, range=f"'{tab}'")
+                        .execute()
+                    )
+                    break
+                except Exception as fetch_err:
+                    if attempt == 0 and "429" in str(fetch_err):
+                        logger.warning(f"Rate limited on tab '{tab}', backing off 65s…")
+                        time.sleep(65)
+                    else:
+                        raise
             rows = result.get("values", [])
             if not rows:
                 continue
