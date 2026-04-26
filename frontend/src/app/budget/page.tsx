@@ -387,6 +387,7 @@ export default function BudgetPage() {
                     </Button>
                   </div>
                 ) : (
+                  <>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {expensesBudget.map((b) => (
                       <Card key={b.category_id} className="p-4">
@@ -409,6 +410,7 @@ export default function BudgetPage() {
                       </Card>
                     ))}
                   </div>
+                  </>
                 )}
               </div>
             )}

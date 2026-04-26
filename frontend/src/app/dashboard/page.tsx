@@ -16,6 +16,7 @@ import UpcomingEventsCard from '@/components/dashboard/UpcomingEventsCard'
 import RecentTransactions from '@/components/dashboard/RecentTransactions'
 import AlertsCard from '@/components/dashboard/AlertsCard'
 import SpendingCategoriesWidget from '@/components/dashboard/SpendingCategoriesWidget'
+import SpendCheckWidget from '@/components/dashboard/SpendCheckWidget'
 import StatDetailModal, { BreakdownItem } from '@/components/dashboard/StatDetailModal'
 import { TrendingUp, TrendingDown, DollarSign, CreditCard } from 'lucide-react'
 import { useViewMode } from '@/lib/viewMode'
@@ -47,16 +48,17 @@ function QuickStat({
 }) {
   return (
     <Card
-      className={`flex items-center gap-4 ${onClick ? 'cursor-pointer hover:border-primary/40 transition-colors' : ''}`}
+      className={`flex items-center gap-2 sm:gap-4 ${onClick ? 'cursor-pointer hover:border-primary/40 transition-colors' : ''}`}
       onClick={onClick}
     >
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
-        <Icon size={20} className="text-white" />
+      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
+        <Icon size={16} className="text-white sm:hidden" />
+        <Icon size={20} className="text-white hidden sm:block" />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-xs text-text-secondary">{label}</p>
-        <p className="text-base sm:text-lg font-bold text-text-primary truncate">{formatCurrency(value)}</p>
-        {note && <p className="text-[10px] text-muted truncate">{note}</p>}
+        <p className="text-xs text-text-secondary leading-tight">{label}</p>
+        <p className="text-sm sm:text-base lg:text-lg font-bold text-text-primary break-words">{formatCurrency(value)}</p>
+        {note && <p className="text-[10px] text-muted">{note}</p>}
       </div>
       {onClick && <span className="text-xs text-muted pr-1">↗</span>}
     </Card>
@@ -366,6 +368,9 @@ export default function DashboardPage() {
             </div>
           )
         })()}
+
+        {/* Spend Check */}
+        <SpendCheckWidget />
 
         {/* Accounts Grid */}
         <AccountsGrid data={data} />
