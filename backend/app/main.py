@@ -29,7 +29,7 @@ from app.routers import (
     alerts,
 )
 from app.routers import google_sheets, financial_profile, paystubs, joint
-from app.routers import ai_report, notifications
+from app.routers import ai_report, notifications, coin
 from app.routers import home_buying
 from app.routers import statements
 
@@ -138,6 +138,7 @@ app.include_router(financial_profile.router, prefix=PREFIX)
 app.include_router(paystubs.router, prefix=PREFIX)
 app.include_router(joint.router, prefix=PREFIX)
 app.include_router(ai_report.router, prefix=PREFIX)
+app.include_router(coin.router, prefix=PREFIX)
 app.include_router(notifications.router, prefix=PREFIX)
 app.include_router(home_buying.router, prefix=PREFIX)
 app.include_router(statements.router, prefix=PREFIX)
