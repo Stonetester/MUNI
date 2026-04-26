@@ -234,7 +234,7 @@ def _handle_list_transactions(user: User, db: Session, query: str, cats_map: dic
 def _handle_balance_query(user: User, db: Session, query: str) -> Optional[str]:
     """Handle: what is my balance / net worth / how much do I have?"""
     q = query.lower()
-    if not any(w in q for w in ["balance", "net worth", "how much do i have", "account", "total"]):
+    if not any(w in q for w in ["balance", "net worth", "how much do i have", "account balance", "my accounts"]):
         return None
 
     accounts = db.query(Account).filter(Account.user_id == user.id, Account.is_active == True).all()
