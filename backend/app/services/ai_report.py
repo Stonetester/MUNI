@@ -136,7 +136,7 @@ def _gather_financial_data(user: User, db: Session, year: int, month: int) -> di
             "name": e.name,
             "date": e.start_date.isoformat(),
             "estimated_cost": round(e.total_cost or 0, 2),
-            "notes": e.notes or "",
+            "notes": e.description or "",
         }
         for e in upcoming_events
     ]
