@@ -80,19 +80,30 @@ export default function AiReportPage() {
   const [report, setReport] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [debugInfo, setDebugInfo] = useState<string | null>(null)
+  const [showDebug, setShowDebug] = useState(false)
   const [lastFetchKey, setLastFetchKey] = useState('')
 
   const fetchReport = async () => {
     setLoading(true)
     setError('')
+    setDebugInfo(null)
     try {
       const data = await getAiReport(year, month, provider)
       setReport(data.report)
       setActiveProvider(data.provider)
       setLastFetchKey(`${year}-${month}-${provider}`)
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg || 'Failed to generate report. Check that the backend is running.')
+      const e = err as { response?: { status?: number; data?: unknown }; message?: string; stack?: string }
+      const status = e?.response?.status
+      const detail = (e?.response?.data as { detail?: string })?.detail
+      const msg = detail || e?.message || 'Failed to generate report. Check that the backend is running.'
+      setError(msg)
+      setDebugInfo(JSON.stringify({
+        status,
+        response_data: e?.response?.data,
+        message: e?.message,
+      }, null, 2))
     } finally {
       setLoading(false)
     }
@@ -210,6 +221,24 @@ export default function AiReportPage() {
                 </p>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Debug panel */}
+        {debugInfo && (
+          <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 text-xs">
+            <button
+              onClick={() => setShowDebug(d => !d)}
+              className="w-full flex items-center justify-between px-4 py-2 text-yellow-400 font-medium hover:bg-yellow-500/10 transition-colors rounded-xl"
+            >
+              <span>Debug info</span>
+              <span>{showDebug ? '▲ hide' : '▼ show'}</span>
+            </button>
+            {showDebug && (
+              <pre className="px-4 pb-4 text-yellow-300/80 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
+                {debugInfo}
+              </pre>
+            )}
           </div>
         )}
 

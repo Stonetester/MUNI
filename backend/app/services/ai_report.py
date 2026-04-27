@@ -239,7 +239,7 @@ def _generate_with_claude(api_key: str, system_prompt: str, user_prompt: str) ->
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model="claude-opus-4-6",
+        model="claude-sonnet-4-6",
         max_tokens=1024,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
