@@ -247,6 +247,36 @@ def _generate_with_claude(api_key: str, system_prompt: str, user_prompt: str) ->
     return "".join(block.text for block in response.content if block.type == "text")
 
 
+def _generate_with_ollama(host: str, model: str, system_prompt: str, user_prompt: str) -> str:
+    import urllib.request
+    import json as _json
+
+    payload = _json.dumps({
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }).encode()
+
+    req = urllib.request.Request(
+        f"{host}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = _json.loads(resp.read())
+            return result["message"]["content"]
+    except OSError as e:
+        raise RuntimeError(
+            f"Could not reach Mongol at {host} — it may be asleep or unreachable. "
+            f"Wake it up first, then try again. ({e})"
+        )
+
+
 def _generate_with_openai(api_key: str, system_prompt: str, user_prompt: str) -> str:
     try:
         from openai import OpenAI
@@ -272,7 +302,14 @@ def generate_monthly_report(user: User, db: Session, year: int, month: int, prov
     data = _gather_financial_data(user, db, year, month)
     system_prompt, user_prompt = _build_prompt(data)
 
-    if provider == "openai":
+    if provider == "ollama":
+        host = settings.OLLAMA_HOST or "http://10.0.0.172:11434"
+        model = settings.OLLAMA_REPORT_MODEL or "deepseek-r1:8b"
+        try:
+            return _generate_with_ollama(host, model, system_prompt, user_prompt)
+        except Exception as e:
+            return f"⚠️ **Mongol (Ollama) Error**\n\n{e}"
+    elif provider == "openai":
         if not settings.OPENAI_API_KEY:
             return (
                 "⚠️ **ChatGPT Report Unavailable**\n\n"
