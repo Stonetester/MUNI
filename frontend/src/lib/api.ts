@@ -641,7 +641,7 @@ export async function deleteHomeBuyingGoal(id: number): Promise<void> {
 }
 
 // AI Monthly Report
-export async function getAiReport(year?: number, month?: number, provider: 'claude' | 'openai' = 'claude'): Promise<{ year: number; month: number; report: string; provider: string }> {
+export async function getAiReport(year?: number, month?: number, provider: 'claude' | 'openai' | 'ollama' = 'claude'): Promise<{ year: number; month: number; report: string; provider: string }> {
   if (isDemoModeActive()) {
     const now = new Date()
     return {
