@@ -659,6 +659,15 @@ export async function getAiReport(year?: number, month?: number, provider: 'clau
   return res.data
 }
 
+export async function postAiChat(
+  message: string,
+  history: { role: string; content: string }[],
+  provider: 'claude' | 'openai' | 'ollama' = 'claude',
+): Promise<{ reply: string; provider: string }> {
+  const res = await api.post('/ai-report/chat', { message, history, provider })
+  return res.data
+}
+
 // Notifications
 export async function getNotificationSettings(): Promise<{ notification_email: string | null; weekly_digest_enabled: boolean }> {
   if (isDemoModeActive()) return { notification_email: 'demo@example.com', weekly_digest_enabled: true }

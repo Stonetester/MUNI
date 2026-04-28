@@ -331,3 +331,115 @@ def generate_monthly_report(user: User, db: Session, year: int, month: int, prov
             return _generate_with_claude(settings.ANTHROPIC_API_KEY, system_prompt, user_prompt)
         except Exception as e:
             return f"⚠️ **Claude Error**\n\n{e}"
+
+
+def _build_chat_system_prompt(user: User, db: Session) -> str:
+    today = date.today()
+    data = _gather_financial_data(user, db, today.year, today.month)
+    ctx_lines = [
+        f"You are a personal financial advisor for {data['user'].capitalize()}.",
+        "Answer questions about their finances directly and specifically using the data below.",
+        "Be concise. Use numbers from the data. If something isn't in the data, say so.",
+        "",
+        f"Net Worth: ${data['net_worth']:,.2f} (Assets: ${data['total_assets']:,.2f}, Liabilities: ${data['total_liabilities']:,.2f})",
+        "",
+        "Accounts:",
+    ]
+    for acc in data["accounts"]:
+        ctx_lines.append(f"  - {acc['name']} ({acc['type']}): ${acc['balance']:,.2f}")
+    ctx_lines += [
+        "",
+        f"This month — Income: ${data['this_month']['income']:,.2f}, Spending: ${data['this_month']['spending']:,.2f}, Savings rate: {data['this_month']['savings_rate']}%",
+        "",
+        "Spending by category this month:",
+    ]
+    for cat, amt in data["this_month"]["by_category"].items():
+        ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
+    if data["upcoming_events"]:
+        ctx_lines.append("\nUpcoming events:")
+        for ev in data["upcoming_events"]:
+            ctx_lines.append(f"  - {ev['name']} ({ev['date']}): ${ev['estimated_cost']:,.2f}")
+    return "\n".join(ctx_lines)
+
+
+def _chat_with_claude(api_key: str, system_prompt: str, history: list, message: str) -> str:
+    try:
+        import anthropic
+    except ImportError:
+        raise RuntimeError("The `anthropic` package is not installed.")
+
+    messages = history + [{"role": "user", "content": message}]
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        system=system_prompt,
+        messages=messages,
+    )
+    return "".join(block.text for block in response.content if block.type == "text")
+
+
+def _chat_with_openai(api_key: str, system_prompt: str, history: list, message: str) -> str:
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError("The `openai` package is not installed.")
+
+    messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": message}]
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        max_tokens=1024,
+        messages=messages,
+    )
+    return response.choices[0].message.content or ""
+
+
+def _chat_with_ollama(host: str, model: str, system_prompt: str, history: list, message: str) -> str:
+    import urllib.request
+    import json as _json
+
+    messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": message}]
+    payload = _json.dumps({"model": model, "stream": False, "messages": messages}).encode()
+    req = urllib.request.Request(
+        f"{host}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = _json.loads(resp.read())
+            return result["message"]["content"]
+    except OSError as e:
+        raise RuntimeError(
+            f"Could not reach Mongol at {host} — it may be asleep. Wake it up and try again. ({e})"
+        )
+
+
+def answer_chat_question(user: User, db: Session, message: str, history: list, provider: str = "claude") -> str:
+    from app.config import settings
+
+    system_prompt = _build_chat_system_prompt(user, db)
+
+    if provider == "ollama":
+        host = settings.OLLAMA_HOST or "http://10.0.0.172:11434"
+        model = settings.OLLAMA_REPORT_MODEL or "qwen3:8b"
+        try:
+            return _chat_with_ollama(host, model, system_prompt, history, message)
+        except Exception as e:
+            return f"⚠️ **Mongol Error**\n\n{e}"
+    elif provider == "openai":
+        if not settings.OPENAI_API_KEY:
+            return "⚠️ No OpenAI key set in backend `.env`."
+        try:
+            return _chat_with_openai(settings.OPENAI_API_KEY, system_prompt, history, message)
+        except Exception as e:
+            return f"⚠️ **ChatGPT Error**\n\n{e}"
+    else:
+        if not settings.ANTHROPIC_API_KEY:
+            return "⚠️ No Anthropic key set in backend `.env`."
+        try:
+            return _chat_with_claude(settings.ANTHROPIC_API_KEY, system_prompt, history, message)
+        except Exception as e:
+            return f"⚠️ **Claude Error**\n\n{e}"
