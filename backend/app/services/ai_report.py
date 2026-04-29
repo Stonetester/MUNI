@@ -333,9 +333,47 @@ def generate_monthly_report(user: User, db: Session, year: int, month: int, prov
             return f"⚠️ **Claude Error**\n\n{e}"
 
 
+def _gather_alltime_by_category(user: User, db: Session) -> dict:
+    """Return all-time spending and income totals grouped by category name."""
+    cats = db.query(Category).filter(Category.user_id == user.id).all()
+    cats_map = {c.id: c.name for c in cats}
+
+    all_txns = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == user.id,
+            Transaction.scenario_id.is_(None),
+        )
+        .all()
+    )
+
+    if not all_txns:
+        return {"spending": {}, "income": {}, "earliest": None, "latest": None}
+
+    spending: dict[str, float] = {}
+    income: dict[str, float] = {}
+    dates = [t.date for t in all_txns]
+
+    for t in all_txns:
+        cat_name = cats_map.get(t.category_id, "Uncategorized")
+        if t.amount < 0:
+            spending[cat_name] = spending.get(cat_name, 0.0) + abs(t.amount)
+        else:
+            income[cat_name] = income.get(cat_name, 0.0) + t.amount
+
+    return {
+        "spending": {k: round(v, 2) for k, v in sorted(spending.items(), key=lambda x: -x[1])},
+        "income": {k: round(v, 2) for k, v in sorted(income.items(), key=lambda x: -x[1])},
+        "earliest": min(dates).isoformat(),
+        "latest": max(dates).isoformat(),
+    }
+
+
 def _build_chat_system_prompt(user: User, db: Session) -> str:
     today = date.today()
     data = _gather_financial_data(user, db, today.year, today.month)
+    alltime = _gather_alltime_by_category(user, db)
+
     ctx_lines = [
         f"You are a personal financial advisor for {data['user'].capitalize()}.",
         "Answer questions about their finances directly and specifically using the data below.",
@@ -347,6 +385,7 @@ def _build_chat_system_prompt(user: User, db: Session) -> str:
     ]
     for acc in data["accounts"]:
         ctx_lines.append(f"  - {acc['name']} ({acc['type']}): ${acc['balance']:,.2f}")
+
     ctx_lines += [
         "",
         f"This month — Income: ${data['this_month']['income']:,.2f}, Spending: ${data['this_month']['spending']:,.2f}, Savings rate: {data['this_month']['savings_rate']}%",
@@ -355,6 +394,19 @@ def _build_chat_system_prompt(user: User, db: Session) -> str:
     ]
     for cat, amt in data["this_month"]["by_category"].items():
         ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
+
+    if alltime["earliest"]:
+        ctx_lines += [
+            "",
+            f"All-time spending by category ({alltime['earliest']} to {alltime['latest']}):",
+        ]
+        for cat, amt in alltime["spending"].items():
+            ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
+
+        ctx_lines += ["", "All-time income by category:"]
+        for cat, amt in alltime["income"].items():
+            ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
+
     if data["upcoming_events"]:
         ctx_lines.append("\nUpcoming events:")
         for ev in data["upcoming_events"]:
