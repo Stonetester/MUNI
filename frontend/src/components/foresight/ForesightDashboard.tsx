@@ -41,7 +41,14 @@ interface CalculationDetail {
   dateRange: string
   assumptions: string[]
   warnings: string[]
-  inputs: Array<{ label: string; value: string; note?: string }>
+  inputs: CalculationInput[]
+}
+
+interface CalculationInput {
+  label: string
+  value: string
+  note?: string
+  detail?: CalculationDetail
 }
 
 const tabItems: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
@@ -86,6 +93,10 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
   const analysis = useMemo(() => {
     const now = new Date()
     const currentMonth = now.toISOString().slice(0, 7)
+    const forecastReferenceDate = now.toISOString().slice(0, 10)
+    const forecastSourceStart = new Date(now)
+    forecastSourceStart.setFullYear(forecastSourceStart.getFullYear() - 1)
+    const forecastSourceStartDate = forecastSourceStart.toISOString().slice(0, 10)
     const future = forecast.points.filter((point) => point.month >= currentMonth)
     const first = future[0] ?? forecast.points[0]
     const last = future[future.length - 1] ?? forecast.points[forecast.points.length - 1]
@@ -165,7 +176,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
       currentMonth, first, last, lowest, categories, sortedMonths, months,
       monthlyIncome, monthlySpending, projectedMonthlySavings, totalTargetSavings,
       currentMonthlySavings, annualInvestmentReturn, forecastInvestmentReturn, returnAccounts, holdings,
-      forecastMonths: forecast.months, anomalies,
+      forecastMonths: forecast.months, anomalies, transactions, forecastReferenceDate, forecastSourceStartDate,
     }
   }, [forecast, transactions, holdings, budgetEstimates, intensity])
 
@@ -266,10 +277,117 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
   const transactionRange = analysis.sortedMonths.length
     ? `${formatMonth(analysis.sortedMonths[0])} to ${formatMonth(analysis.sortedMonths[analysis.sortedMonths.length - 1])}`
     : 'No transaction months loaded'
+  const forecastCategories = Object.entries(analysis.first?.by_category ?? {}) as Array<[string, number]>
+  const sourceTransactions = (categoryName: string, sign: 'income' | 'expense') => analysis.transactions
+    .filter((transaction: Transaction) =>
+      transaction.category_name === categoryName
+      && (sign === 'income' ? transaction.amount > 0 : transaction.amount < 0)
+      && !isOneOff(transaction)
+      && transaction.date >= analysis.forecastSourceStartDate
+      && transaction.date < analysis.forecastReferenceDate)
+    .sort((a: Transaction, b: Transaction) => b.date.localeCompare(a.date))
+  const sourceRecordInputs = (records: Transaction[]): CalculationInput[] => records.slice(0, 50).map((transaction) => ({
+    label: transaction.merchant || transaction.description,
+    value: formatCurrency(transactionSpend(transaction)),
+    note: `${transaction.date} · ${transaction.import_source || 'manual entry'}${transaction.account_name ? ` · ${transaction.account_name}` : ''}${transaction.owner ? ` · ${transaction.owner}` : ''}`,
+  }))
+  const categoryOriginDetail = (categoryName: string, amount: number, sign: 'income' | 'expense'): CalculationDetail => {
+    const records = sourceTransactions(categoryName, sign)
+    return {
+      title: `${categoryName} forecast source`,
+      value: formatCurrency(Math.abs(amount)),
+      formula: '50% of trailing 3-month average + 30% of trailing 6-month average + 20% of trailing 12-month average. If this category has no historical average, an active recurring rule may supply the value.',
+      dateRange: `Forecast record for ${formatMonth(analysis.first?.month ?? '')}; backend source window ${analysis.forecastSourceStartDate} to ${analysis.forecastReferenceDate}.`,
+      assumptions: ['One-off purchases and neutral transfers are excluded from recurring forecast averages.', 'Months without a transaction still count in the backend 3-, 6-, and 12-month denominators.'],
+      warnings: [
+        ...(records.length ? [] : ['No matching source transaction is present in the loaded 2,000-record window; this value may come from an active recurring rule or older history.']),
+        ...(records.length > 50 ? [`Showing the 50 most recent of ${records.length} loaded source transactions.`] : []),
+      ],
+      inputs: sourceRecordInputs(records),
+    }
+  }
+  const incomeDetail: CalculationDetail = {
+    title: 'Forecast income',
+    value: formatCurrency(analysis.monthlyIncome),
+    formula: 'Sum of every positive category value in the selected monthly forecast record.',
+    dateRange: `Forecast month ${formatMonth(analysis.first?.month ?? '')}; category source history uses ${transactionRange}.`,
+    assumptions: ['Employer 401(k), savings transfers, and neutral transfers are not spendable income.'],
+    warnings: forecastCategories.some(([, amount]) => amount > 0) ? [] : ['The forecast record does not expose a positive category breakdown.'],
+    inputs: forecastCategories.filter(([, amount]) => amount > 0).map(([name, amount]) => ({
+      label: name,
+      value: formatCurrency(amount),
+      note: 'Tap for weighted-average source records and origin.',
+      detail: categoryOriginDetail(name, amount, 'income'),
+    })),
+  }
+  const expensesDetail: CalculationDetail = {
+    title: 'Forecast expenses',
+    value: formatCurrency(analysis.monthlySpending),
+    formula: 'Sum of the absolute values of every negative category value in the selected monthly forecast record.',
+    dateRange: `Forecast month ${formatMonth(analysis.first?.month ?? '')}; category source history uses ${transactionRange}.`,
+    assumptions: ['Savings transfers, neutral transfers, and marked one-off purchases are excluded from recurring forecast pace.'],
+    warnings: forecastCategories.some(([, amount]) => amount < 0) ? [] : ['The forecast record does not expose a negative category breakdown.'],
+    inputs: forecastCategories.filter(([, amount]) => amount < 0).map(([name, amount]) => ({
+      label: name,
+      value: formatCurrency(Math.abs(amount)),
+      note: 'Tap for weighted-average source records and origin.',
+      detail: categoryOriginDetail(name, amount, 'expense'),
+    })),
+  }
+  const currentSavingsDetail: CalculationDetail = {
+    title: 'Current forecast savings',
+    value: formatCurrency(analysis.currentMonthlySavings),
+    formula: `${formatCurrency(analysis.monthlyIncome)} - ${formatCurrency(analysis.monthlySpending)} = ${formatCurrency(analysis.currentMonthlySavings)}.`,
+    dateRange: `Forecast month ${formatMonth(analysis.first?.month ?? '')}.`,
+    assumptions: ['This is projected monthly cash flow, not the change in every account balance.'],
+    warnings: [],
+    inputs: [
+      { label: 'Forecast income', value: formatCurrency(analysis.monthlyIncome), note: 'Tap for categories and source records.', detail: incomeDetail },
+      { label: 'Forecast expenses', value: formatCurrency(analysis.monthlySpending), note: 'Subtracted; tap for categories and source records.', detail: expensesDetail },
+    ],
+  }
+  const reductionInputs: CalculationInput[] = analysis.categories.filter((category: any) => category.savings > 0).map((category: any) => ({
+    label: category.name,
+    value: formatCurrency(category.savings),
+    note: `${formatCurrency(category.average)} recurring average - ${formatCurrency(category.target)} target`,
+    detail: {
+      title: `${category.name} achievable reduction`,
+      value: formatCurrency(category.savings),
+      formula: 'Recurring loaded-month category average - selected savings-intensity target.',
+      dateRange: transactionRange,
+      assumptions: ['Marked one-off purchases are excluded from the recurring average.', 'Months with no category spending count as $0.'],
+      warnings: [
+        ...(category.months < analysis.sortedMonths.length ? [`Spending was recorded in ${category.months} of ${analysis.sortedMonths.length} loaded months.`] : []),
+        ...(category.sourceTransactions.length > 50 ? [`Showing the 50 most recent of ${category.sourceTransactions.length} source transactions.`] : []),
+      ],
+      inputs: sourceRecordInputs(category.sourceTransactions),
+    },
+  }))
+  const reductionsDetail: CalculationDetail = {
+    title: 'Achievable reductions',
+    value: formatCurrency(analysis.totalTargetSavings),
+    formula: `${reductionInputs.length} adjustable category reductions summed = ${formatCurrency(analysis.totalTargetSavings)}.`,
+    dateRange: transactionRange,
+    assumptions: ['Fixed and temporary categories are excluded.', 'The selected savings intensity controls each adjustable target.'],
+    warnings: reductionInputs.length ? [] : ['No adjustable category reductions were calculated.'],
+    inputs: reductionInputs,
+  }
+  const projectedSavingsDetail: CalculationDetail = {
+    title: 'Projected monthly savings',
+    value: formatCurrency(analysis.projectedMonthlySavings),
+    formula: `${formatCurrency(analysis.currentMonthlySavings)} + ${formatCurrency(analysis.totalTargetSavings)} = ${formatCurrency(analysis.projectedMonthlySavings)}.`,
+    dateRange: `Forecast month ${formatMonth(analysis.first?.month ?? '')}; category targets use ${transactionRange}.`,
+    assumptions: ['Achievable reductions assume spending reaches the selected category targets.'],
+    warnings: [],
+    inputs: [
+      { label: 'Current forecast savings', value: formatCurrency(analysis.currentMonthlySavings), note: 'Tap for income and expense origins.', detail: currentSavingsDetail },
+      { label: 'Achievable reductions', value: formatCurrency(analysis.totalTargetSavings), note: 'Tap for each category target and its source records.', detail: reductionsDetail },
+    ],
+  }
   const savingsRateDetail: CalculationDetail = {
     title: 'Savings rate',
     value: `${savingsRate.toFixed(0)}%`,
-    formula: '(forecast income - forecast expenses + achievable category reductions) / forecast income x 100.',
+    formula: `${formatCurrency(analysis.projectedMonthlySavings)} / ${formatCurrency(analysis.monthlyIncome)} x 100 = ${savingsRate.toFixed(1)}%. Projected monthly savings = ${formatCurrency(analysis.monthlyIncome)} - ${formatCurrency(analysis.monthlySpending)} + ${formatCurrency(analysis.totalTargetSavings)}.`,
     dateRange: `Monthly forecast inputs for ${formatMonth(analysis.first?.month ?? '')}; category targets use ${transactionRange}.`,
     assumptions: ['The selected savings intensity is applied only to adjustable categories.', 'This is a projected rate, not a bank-account balance change.'],
     warnings: [
@@ -277,11 +395,11 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
       ...(analysis.sortedMonths.length < 12 ? [`Only ${analysis.sortedMonths.length} transaction months were loaded for category targets.`] : []),
     ],
     inputs: [
-      { label: 'Forecast income', value: formatCurrency(analysis.monthlyIncome), note: 'Forecast record' },
-      { label: 'Forecast expenses', value: formatCurrency(analysis.monthlySpending), note: 'Positive spending amount' },
-      { label: 'Current forecast savings', value: formatCurrency(analysis.currentMonthlySavings), note: 'income - expenses' },
-      { label: 'Achievable reductions', value: formatCurrency(analysis.totalTargetSavings), note: 'sum of category average minus target' },
-      { label: 'Projected monthly savings', value: formatCurrency(analysis.projectedMonthlySavings), note: 'current forecast savings + reductions' },
+      { label: 'Forecast income', value: formatCurrency(analysis.monthlyIncome), note: 'Denominator; tap for categories and source records.', detail: incomeDetail },
+      { label: 'Forecast expenses', value: formatCurrency(analysis.monthlySpending), note: 'Subtracted; tap for categories and source records.', detail: expensesDetail },
+      { label: 'Current forecast savings', value: formatCurrency(analysis.currentMonthlySavings), note: 'Income - expenses; tap for both inputs.', detail: currentSavingsDetail },
+      { label: 'Achievable reductions', value: formatCurrency(analysis.totalTargetSavings), note: 'Tap for every category target and source transaction.', detail: reductionsDetail },
+      { label: 'Projected monthly savings', value: formatCurrency(analysis.projectedMonthlySavings), note: 'Numerator; tap for its full equation.', detail: projectedSavingsDetail },
     ],
   }
   const lowestCashDetail: CalculationDetail = {
@@ -599,27 +717,57 @@ function SummaryRow({ icon: Icon, text, value, onClick }: { icon: React.ElementT
 }
 
 function CalculationDetailModal({ detail, onClose }: { detail: CalculationDetail; onClose: () => void }) {
+  const [activeDetail, setActiveDetail] = useState(detail)
+  const [history, setHistory] = useState<CalculationDetail[]>([])
+
+  useEffect(() => {
+    setActiveDetail(detail)
+    setHistory([])
+  }, [detail])
+
   useEffect(() => {
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
   }, [onClose])
 
+  const openDetail = (next: CalculationDetail) => {
+    setHistory((items) => [...items, activeDetail])
+    setActiveDetail(next)
+  }
+
+  const goBack = () => {
+    const previous = history[history.length - 1]
+    if (!previous) return
+    setActiveDetail(previous)
+    setHistory((items) => items.slice(0, -1))
+  }
+
   return <div className="fixed inset-0 z-[110] flex items-end justify-center sm:items-center sm:p-4">
     <button aria-label="Close calculation detail" className="absolute inset-0 bg-black/70" onClick={onClose} />
     <div className="relative flex max-h-[92vh] w-full max-w-lg flex-col rounded-t-2xl border border-white/10 bg-surface shadow-2xl sm:rounded-2xl">
       <div className="flex items-start justify-between gap-3 border-b border-white/10 p-4">
-        <div><p className="text-xs font-semibold uppercase tracking-wider text-primary">Calculation detail</p><h2 className="mt-1 text-lg font-bold text-text-primary">{detail.title}</h2><p className="text-2xl font-bold text-info">{detail.value}</p></div>
+        <div className="min-w-0">
+          {history.length > 0 && <button onClick={goBack} className="mb-2 flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-primary"><ArrowLeft size={13} /> Back</button>}
+          <p className="text-xs font-semibold uppercase tracking-wider text-primary">Calculation detail</p>
+          <h2 className="mt-1 text-lg font-bold text-text-primary">{activeDetail.title}</h2>
+          <p className="text-2xl font-bold text-info">{activeDetail.value}</p>
+        </div>
         <button onClick={onClose} className="rounded-lg p-2 text-text-secondary hover:bg-surface-2"><X size={18} /></button>
       </div>
       <div className="overflow-y-auto p-4">
-        <DetailSection title="Exact formula"><p>{detail.formula}</p></DetailSection>
-        <DetailSection title="Relevant date range"><p>{detail.dateRange}</p></DetailSection>
+        <DetailSection title="Exact formula"><p>{activeDetail.formula}</p></DetailSection>
+        <DetailSection title="Relevant date range"><p>{activeDetail.dateRange}</p></DetailSection>
         <DetailSection title="Inputs and total">
-          <div className="divide-y divide-white/10 rounded-xl border border-white/10 px-3">{detail.inputs.map((input, index) => <div key={`${input.label}-${index}`} className="flex items-start justify-between gap-3 py-2.5"><div className="min-w-0"><p className="text-sm text-text-primary">{input.label}</p>{input.note && <p className="text-[11px] leading-4 text-muted">{input.note}</p>}</div><p className="shrink-0 text-sm font-semibold text-info">{input.value}</p></div>)}</div>
+          <div className="divide-y divide-white/10 rounded-xl border border-white/10 px-3">{activeDetail.inputs.map((input, index) => {
+            const content = <><div className="min-w-0 flex-1"><p className="text-sm text-text-primary">{input.label}</p>{input.note && <p className="text-[11px] leading-4 text-muted">{input.note}</p>}</div><p className="shrink-0 text-sm font-semibold text-info">{input.value}</p>{input.detail && <ArrowRight size={14} className="shrink-0 text-muted" />}</>
+            return input.detail
+              ? <button key={`${input.label}-${index}`} onClick={() => openDetail(input.detail!)} className="flex w-full items-start justify-between gap-3 py-2.5 text-left hover:bg-white/[0.02]">{content}</button>
+              : <div key={`${input.label}-${index}`} className="flex items-start justify-between gap-3 py-2.5">{content}</div>
+          })}</div>
         </DetailSection>
-        <DetailSection title="Assumptions">{detail.assumptions.map((item) => <p key={item}>• {item}</p>)}</DetailSection>
-        {detail.warnings.length > 0 && <DetailSection title="Data quality"><div className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-warning">{detail.warnings.map((item) => <p key={item}>• {item}</p>)}</div></DetailSection>}
+        <DetailSection title="Assumptions">{activeDetail.assumptions.map((item) => <p key={item}>• {item}</p>)}</DetailSection>
+        {activeDetail.warnings.length > 0 && <DetailSection title="Data quality"><div className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-warning">{activeDetail.warnings.map((item) => <p key={item}>• {item}</p>)}</div></DetailSection>}
       </div>
     </div>
   </div>
