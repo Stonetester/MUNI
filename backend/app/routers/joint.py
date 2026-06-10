@@ -20,7 +20,7 @@ router = APIRouter(prefix="/joint", tags=["joint"])
 
 @router.get("/transactions")
 def joint_transactions(
-    limit: int = Query(default=50, le=500),
+    limit: int = Query(default=50, le=2000),
     offset: int = Query(default=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
