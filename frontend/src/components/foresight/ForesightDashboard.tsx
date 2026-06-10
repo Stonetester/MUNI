@@ -121,7 +121,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
 
     const categories = (computedCategories.length ? computedCategories : fallbackCategories)
       .map((category) => {
-        const adjustable = !/rent|mortgage|loan|insurance|tax/i.test(category.name)
+        const adjustable = !/rent|mortgage|loan|insurance|tax|wedding/i.test(category.name)
         const target = adjustable
           ? Math.max(1, Math.round(category.average * intensityFactors[intensity]))
           : category.average
@@ -454,7 +454,7 @@ function Plan({ analysis, intensity, setIntensity, onCalculation, onPoint }: { a
     value: `${formatCurrency(addedOnly ? analysis.totalTargetSavings : analysis.projectedMonthlySavings)}/mo`,
     formula: addedOnly ? 'Sum of each adjustable category average - target.' : 'Forecast income + forecast expenses + total achievable category reductions.',
     dateRange: analysis.sortedMonths.length ? `${formatMonth(analysis.sortedMonths[0])} to ${formatMonth(analysis.sortedMonths[analysis.sortedMonths.length - 1])}` : 'No transaction months loaded',
-    assumptions: [`${intensity} intensity uses a ${Math.round((1 - intensityFactors[intensity]) * 100)}% reduction for adjustable categories.`, 'Rent, mortgage, loan, insurance, and tax categories are treated as fixed.'],
+    assumptions: [`${intensity} intensity uses a ${Math.round((1 - intensityFactors[intensity]) * 100)}% reduction for adjustable categories.`, 'Rent, mortgage, loan, insurance, tax, and Wedding categories are treated as fixed or temporary.'],
     warnings: analysis.sortedMonths.length < 12 ? [`Only ${analysis.sortedMonths.length} months were loaded.`] : [],
     inputs: analysis.categories.filter((category: any) => category.savings > 0).map((category: any) => ({
       label: category.name, value: formatCurrency(category.savings), note: `${formatCurrency(category.average)} average - ${formatCurrency(category.target)} target`,
