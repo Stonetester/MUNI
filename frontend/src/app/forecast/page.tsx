@@ -10,6 +10,7 @@ import {
   getForecast,
   getHoldings,
   getJointForecast,
+  getJointTransactions,
   getTransactions,
 } from '@/lib/api'
 import { ForecastResponse, InvestmentHolding, Transaction } from '@/lib/types'
@@ -28,7 +29,7 @@ export default function ForecastPage() {
     try {
       const [forecastData, transactionData, holdingData, estimates] = await Promise.all([
         mode === 'joint' ? getJointForecast(24, 24) : getForecast(undefined, 24, 24),
-        getTransactions({ limit: 500 }),
+        mode === 'joint' ? getJointTransactions(2000) : getTransactions({ limit: 2000 }),
         getHoldings().catch(() => []),
         getBudgetEstimates().catch(() => []),
       ])

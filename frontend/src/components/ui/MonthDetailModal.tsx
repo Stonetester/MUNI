@@ -35,7 +35,7 @@ export default function MonthDetailModal({ point, onClose }: MonthDetailModalPro
     .sort(([, a], [, b]) => b - a)
 
   const maxAbs = Math.max(...Object.values(byCategory).map(Math.abs), 1)
-  const net = point.income - point.expenses
+  const net = point.income + point.expenses
   const accountBreakdown = [...(point.net_worth_breakdown ?? [])]
     .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
   const assets = accountBreakdown
@@ -75,7 +75,7 @@ export default function MonthDetailModal({ point, onClose }: MonthDetailModalPro
               <TrendingDown size={14} />
               <span className="text-xs text-text-secondary">Spending</span>
             </div>
-            <p className="text-base font-bold text-red-400">{formatCurrency(point.expenses)}</p>
+            <p className="text-base font-bold text-red-400">{formatCurrency(Math.abs(point.expenses))}</p>
           </div>
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-1.5">

@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, CircleDollarSign,
-  LineChart as LineChartIcon, PiggyBank, ReceiptText, RotateCcw, Sparkles, Target,
+  Info, LineChart as LineChartIcon, PiggyBank, ReceiptText, RotateCcw, Sparkles, Target,
   TrendingDown, TrendingUp, Utensils, WalletCards,
+  X,
 } from 'lucide-react'
 import {
   Area, AreaChart, CartesianGrid, Line, LineChart, ReferenceLine,
@@ -30,6 +31,16 @@ interface Props {
   transactions: Transaction[]
   holdings: InvestmentHolding[]
   budgetEstimates: BudgetEstimate[]
+}
+
+interface CalculationDetail {
+  title: string
+  value: string
+  formula: string
+  dateRange: string
+  assumptions: string[]
+  warnings: string[]
+  inputs: Array<{ label: string; value: string; note?: string }>
 }
 
 const tabItems: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
@@ -64,6 +75,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
   const [intensity, setIntensity] = useState<Intensity>('steady')
   const [detailCategory, setDetailCategory] = useState<string | null>(null)
   const [selectedPoint, setSelectedPoint] = useState<ForecastPoint | null>(null)
+  const [calculation, setCalculation] = useState<CalculationDetail | null>(null)
   const [dismissed, setDismissed] = useState<number[]>([])
 
   const analysis = useMemo(() => {
@@ -90,6 +102,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
       recent: estimate.avg_monthly,
       prior: estimate.avg_monthly,
       months: estimate.months_sampled,
+      sourceTransactions: [] as Transaction[],
     }))
 
     const categoryNames = Array.from(new Set(sortedMonths.flatMap((key) => Array.from(months.get(key)?.keys() ?? []))))
@@ -101,7 +114,9 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
       const average = values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1)
       const recent = recentValues.reduce((sum, value) => sum + value, 0) / Math.max(recentValues.length, 1)
       const prior = priorValues.reduce((sum, value) => sum + value, 0) / Math.max(priorValues.length, 1)
-      return { name, average, recent, prior, months: values.filter(Boolean).length }
+      const sourceTransactions = transactions.filter((transaction) =>
+        transaction.category_name === name && transaction.amount < 0 && sortedMonths.includes(monthKey(transaction.date)))
+      return { name, average, recent, prior, months: values.filter(Boolean).length, sourceTransactions }
     }).filter((category) => category.average > 0)
 
     const categories = (computedCategories.length ? computedCategories : fallbackCategories)
@@ -123,11 +138,13 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
     const totalTargetSavings = categories.reduce((sum, category) => sum + category.savings, 0)
     const monthlyIncome = first?.income ?? 0
     const monthlySpending = first?.expenses ?? 0
-    const projectedMonthlySavings = Math.max(0, monthlyIncome - monthlySpending + totalTargetSavings)
-    const annualInvestmentReturn = holdings.reduce((sum, holding) =>
-      sum + holding.current_value * (holding.assumed_annual_return / 100), 0)
-    const forecastInvestmentReturn = forecast.account_forecasts.reduce((sum, account) =>
-      sum + Math.max(0, account.ending_balance - account.starting_balance - account.monthly_contribution * forecast.months), 0)
+    const currentMonthlySavings = monthlyIncome + monthlySpending
+    const projectedMonthlySavings = currentMonthlySavings + totalTargetSavings
+    const returnAccounts = forecast.account_forecasts.filter((account) => account.annual_return_pct !== 0)
+    const annualInvestmentReturn = returnAccounts.reduce((sum, account) =>
+      sum + account.starting_balance * (account.annual_return_pct / 100), 0)
+    const forecastInvestmentReturn = returnAccounts.reduce((sum, account) =>
+      sum + account.ending_balance - account.starting_balance - account.monthly_contribution * forecast.months, 0)
 
     const anomalies = [...transactions]
       .filter((transaction) => transaction.amount < 0 && transactionSpend(transaction) >= 150 && !/rent|mortgage|loan|transfer|payment/i.test(transaction.category_name ?? ''))
@@ -137,7 +154,8 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
     return {
       currentMonth, first, last, lowest, categories, sortedMonths, months,
       monthlyIncome, monthlySpending, projectedMonthlySavings, totalTargetSavings,
-      annualInvestmentReturn, forecastInvestmentReturn, anomalies,
+      currentMonthlySavings, annualInvestmentReturn, forecastInvestmentReturn, returnAccounts, holdings,
+      forecastMonths: forecast.months, anomalies,
     }
   }, [forecast, transactions, holdings, budgetEstimates, intensity])
 
@@ -204,28 +222,95 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
           savingsRate={savingsRate}
           topCategory={topCategory}
           onPoint={setSelectedPoint}
+          onCalculation={setCalculation}
           onTrend={(name: string) => { setDetailCategory(name); setTab('trends') }}
           onPlan={() => setTab('plan')}
         />
       ) : tab === 'trends' ? (
         <Trends categories={analysis.categories} onSelect={setDetailCategory} />
       ) : tab === 'plan' ? (
-        <Plan analysis={analysis} intensity={intensity} setIntensity={setIntensity} />
+        <Plan analysis={analysis} intensity={intensity} setIntensity={setIntensity} onCalculation={setCalculation} onPoint={setSelectedPoint} />
       ) : (
         <Review anomalies={analysis.anomalies.filter((item) => !dismissed.includes(item.id))} dismiss={(id) => setDismissed((items) => [...items, id])} />
       )}
 
       {selectedPoint && <MonthDetailModal point={selectedPoint} onClose={() => setSelectedPoint(null)} />}
+      {calculation && <CalculationDetailModal detail={calculation} onClose={() => setCalculation(null)} />}
     </div>
   )
 }
 
-function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint, onTrend, onPlan }: any) {
+function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint, onTrend, onPlan, onCalculation }: any) {
   const [visibleRange, setVisibleRange] = useState({ start: 0, end: trajectoryData.length })
   const pinch = useRef<{ distance: number; start: number; end: number } | null>(null)
   const chart = useRef<HTMLDivElement | null>(null)
   const visibleData = trajectoryData.slice(visibleRange.start, visibleRange.end)
   const isZoomed = visibleRange.start > 0 || visibleRange.end < trajectoryData.length
+  const forecastRange = `${formatMonth(analysis.first?.month ?? '')} to ${formatMonth(analysis.last?.month ?? '')}`
+  const transactionRange = analysis.sortedMonths.length
+    ? `${formatMonth(analysis.sortedMonths[0])} to ${formatMonth(analysis.sortedMonths[analysis.sortedMonths.length - 1])}`
+    : 'No transaction months loaded'
+  const savingsRateDetail: CalculationDetail = {
+    title: 'Savings rate',
+    value: `${savingsRate.toFixed(0)}%`,
+    formula: '(forecast income + forecast expenses + achievable category reductions) / forecast income x 100. Forecast expenses are stored as negative values.',
+    dateRange: `Monthly forecast inputs for ${formatMonth(analysis.first?.month ?? '')}; category targets use ${transactionRange}.`,
+    assumptions: ['The selected savings intensity is applied only to adjustable categories.', 'This is a projected rate, not a bank-account balance change.'],
+    warnings: [
+      ...(analysis.monthlyIncome <= 0 ? ['No positive forecast income is available, so the rate is shown as 0%.'] : []),
+      ...(analysis.sortedMonths.length < 12 ? [`Only ${analysis.sortedMonths.length} transaction months were loaded for category targets.`] : []),
+    ],
+    inputs: [
+      { label: 'Forecast income', value: formatCurrency(analysis.monthlyIncome), note: 'Forecast record' },
+      { label: 'Forecast expenses', value: formatCurrency(Math.abs(analysis.monthlySpending)), note: 'Subtracted because forecast expenses are negative' },
+      { label: 'Current forecast savings', value: formatCurrency(analysis.currentMonthlySavings), note: 'income + expenses' },
+      { label: 'Achievable reductions', value: formatCurrency(analysis.totalTargetSavings), note: 'sum of category average minus target' },
+      { label: 'Projected monthly savings', value: formatCurrency(analysis.projectedMonthlySavings), note: 'current forecast savings + reductions' },
+    ],
+  }
+  const lowestCashDetail: CalculationDetail = {
+    title: 'Lowest cash',
+    value: formatCurrency(analysis.lowest?.cash ?? 0),
+    formula: 'Minimum cash value among the future monthly forecast records.',
+    dateRange: forecastRange,
+    assumptions: ['Cash is the forecast cash pool after projected income, expenses, and life-event impacts.', 'Investment and savings balances are excluded from cash.'],
+    warnings: ['Cash is estimated from historical averages and may differ from actual balances.', ...(analysis.lowest?.cash < 0 ? ['Projected cash falls below $0.'] : [])],
+    inputs: (analysis.first ? [analysis.first, analysis.lowest, analysis.last] : []).filter(Boolean).map((point: ForecastPoint) => ({
+      label: formatMonth(point.month), value: formatCurrency(point.cash), note: point === analysis.lowest ? 'Lowest forecast record' : 'Range reference',
+    })),
+  }
+  const annualReturnDetail: CalculationDetail = {
+    title: 'Estimated annual return',
+    value: formatCurrency(analysis.annualInvestmentReturn),
+    formula: 'Sum of each growth account starting balance x its annual return assumption.',
+    dateRange: `One-year estimate using starting balances for ${formatMonth(analysis.first?.month ?? '')}.`,
+    assumptions: ['Rates come from configured holdings, profile settings, or forecast account-type defaults.', 'Contributions and market volatility are excluded.'],
+    warnings: [
+      'Forecast records do not expose the date of each starting balance; stale account snapshots may affect this estimate.',
+      ...(analysis.returnAccounts.length ? [] : ['No accounts with a non-zero return assumption were found.']),
+    ],
+    inputs: analysis.returnAccounts.map((account: any) => {
+      const matching = analysis.holdings.filter((holding: InvestmentHolding) => holding.account_id === account.account_id)
+      return {
+        label: account.account_name,
+        value: formatCurrency(account.starting_balance * account.annual_return_pct / 100),
+        note: `${formatCurrency(account.starting_balance)} x ${account.annual_return_pct.toFixed(2)}%${matching.length ? `; ${matching.length} holding record(s)` : '; estimated/default rate'}`,
+      }
+    }),
+  }
+  const forecastReturnDetail: CalculationDetail = {
+    title: 'Forecast return',
+    value: formatCurrency(analysis.forecastInvestmentReturn),
+    formula: 'Sum of growth-account ending balance - starting balance - (monthly contribution x forecast months).',
+    dateRange: forecastRange,
+    assumptions: ['Only accounts with a non-zero forecast return rate are included.', 'The forecast compounds monthly at the listed annual rate.'],
+    warnings: ['This is modeled growth, not a guaranteed return.', 'Forecast records do not expose the date of each starting balance.', ...(analysis.returnAccounts.length ? [] : ['No growth accounts were found.'])],
+    inputs: analysis.returnAccounts.map((account: any) => ({
+      label: account.account_name,
+      value: formatCurrency(account.ending_balance - account.starting_balance - account.monthly_contribution * analysis.forecastMonths),
+      note: `${formatCurrency(account.ending_balance)} - ${formatCurrency(account.starting_balance)} - (${formatCurrency(account.monthly_contribution)} x ${analysis.forecastMonths})`,
+    })),
+  }
 
   useEffect(() => {
     setVisibleRange({ start: 0, end: trajectoryData.length })
@@ -307,17 +392,17 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
       )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Metric icon={PiggyBank} label="Savings rate" value={`${savingsRate.toFixed(0)}%`} tone="green" />
-        <Metric icon={WalletCards} label="Lowest cash" value={formatCurrency(analysis.lowest?.cash ?? 0)} tone="red" />
-        <Metric icon={CircleDollarSign} label="Est. annual return" value={formatCurrency(analysis.annualInvestmentReturn)} tone="blue" />
-        <Metric icon={TrendingUp} label="Forecast return" value={formatCurrency(analysis.forecastInvestmentReturn)} tone="purple" />
+        <Metric icon={PiggyBank} label="Savings rate" value={`${savingsRate.toFixed(0)}%`} tone="green" onClick={() => onCalculation(savingsRateDetail)} />
+        <Metric icon={WalletCards} label="Lowest cash" value={formatCurrency(analysis.lowest?.cash ?? 0)} tone="red" onClick={() => onCalculation(lowestCashDetail)} />
+        <Metric icon={CircleDollarSign} label="Est. annual return" value={formatCurrency(analysis.annualInvestmentReturn)} tone="blue" onClick={() => onCalculation(annualReturnDetail)} />
+        <Metric icon={TrendingUp} label="Forecast return" value={formatCurrency(analysis.forecastInvestmentReturn)} tone="purple" onClick={() => onCalculation(forecastReturnDetail)} />
       </div>
 
       <Card title="Coin summary">
         <div className="divide-y divide-white/10">
           <SummaryRow icon={Utensils} text={`${topCategory?.name ?? 'Spending'} is your best achievable cut`} value={`+${formatCurrency(topCategory?.savings ?? 0)}/mo`} onClick={() => topCategory && onTrend(topCategory.name)} />
-          <SummaryRow icon={CalendarDays} text={`${formatMonth(analysis.lowest?.month ?? '')} is your lowest cash month`} value={formatCurrency(analysis.lowest?.cash ?? 0)} />
-          <SummaryRow icon={TrendingUp} text="Estimated investment return over forecast" value={formatCurrency(analysis.forecastInvestmentReturn)} />
+          <SummaryRow icon={CalendarDays} text={`${formatMonth(analysis.lowest?.month ?? '')} is your lowest cash month`} value={formatCurrency(analysis.lowest?.cash ?? 0)} onClick={() => onCalculation(lowestCashDetail)} />
+          <SummaryRow icon={TrendingUp} text="Estimated investment return over forecast" value={formatCurrency(analysis.forecastInvestmentReturn)} onClick={() => onCalculation(forecastReturnDetail)} />
         </div>
       </Card>
 
@@ -378,7 +463,27 @@ function Trends({ categories, onSelect }: { categories: any[]; onSelect: (name: 
   )
 }
 
-function Plan({ analysis, intensity, setIntensity }: { analysis: any; intensity: Intensity; setIntensity: (value: Intensity) => void }) {
+function Plan({ analysis, intensity, setIntensity, onCalculation, onPoint }: { analysis: any; intensity: Intensity; setIntensity: (value: Intensity) => void; onCalculation: (detail: CalculationDetail) => void; onPoint: (point: ForecastPoint) => void }) {
+  const planDetail = (addedOnly: boolean): CalculationDetail => ({
+    title: addedOnly ? 'Added vs current' : 'Target savings',
+    value: `${formatCurrency(addedOnly ? analysis.totalTargetSavings : analysis.projectedMonthlySavings)}/mo`,
+    formula: addedOnly ? 'Sum of each adjustable category average - target.' : 'Forecast income + forecast expenses + total achievable category reductions.',
+    dateRange: analysis.sortedMonths.length ? `${formatMonth(analysis.sortedMonths[0])} to ${formatMonth(analysis.sortedMonths[analysis.sortedMonths.length - 1])}` : 'No transaction months loaded',
+    assumptions: [`${intensity} intensity uses a ${Math.round((1 - intensityFactors[intensity]) * 100)}% reduction for adjustable categories.`, 'Rent, mortgage, loan, insurance, and tax categories are treated as fixed.'],
+    warnings: analysis.sortedMonths.length < 12 ? [`Only ${analysis.sortedMonths.length} months were loaded.`] : [],
+    inputs: analysis.categories.filter((category: any) => category.savings > 0).map((category: any) => ({
+      label: category.name, value: formatCurrency(category.savings), note: `${formatCurrency(category.average)} average - ${formatCurrency(category.target)} target`,
+    })),
+  })
+  const annualDetail: CalculationDetail = {
+    title: 'Annual investment return',
+    value: formatCurrency(analysis.annualInvestmentReturn),
+    formula: 'Sum of each growth account starting balance x annual return assumption.',
+    dateRange: `Starting balances for ${formatMonth(analysis.first?.month ?? '')}`,
+    assumptions: ['Uses forecast engine account return assumptions.'],
+    warnings: ['Estimated return; not guaranteed.'],
+    inputs: analysis.returnAccounts.map((account: any) => ({ label: account.account_name, value: formatCurrency(account.starting_balance * account.annual_return_pct / 100), note: `${formatCurrency(account.starting_balance)} x ${account.annual_return_pct.toFixed(2)}%` })),
+  }
   return (
     <>
       <Card title="Savings intensity">
@@ -390,20 +495,32 @@ function Plan({ analysis, intensity, setIntensity }: { analysis: any; intensity:
       </Card>
       <Card className="border-primary/40 bg-primary/5">
         <div className="grid grid-cols-2 gap-4">
-          <Metric icon={PiggyBank} label="Target savings" value={`${formatCurrency(analysis.projectedMonthlySavings)}/mo`} tone="green" />
-          <Metric icon={WalletCards} label="Added vs current" value={`${formatCurrency(analysis.totalTargetSavings)}/mo`} tone="blue" />
-          <Metric icon={TrendingUp} label="Projected net worth" value={formatCurrency(analysis.last?.net_worth ?? 0)} tone="purple" />
-          <Metric icon={CircleDollarSign} label="Annual investment return" value={formatCurrency(analysis.annualInvestmentReturn)} tone="green" />
+          <Metric icon={PiggyBank} label="Target savings" value={`${formatCurrency(analysis.projectedMonthlySavings)}/mo`} tone="green" onClick={() => onCalculation(planDetail(false))} />
+          <Metric icon={WalletCards} label="Added vs current" value={`${formatCurrency(analysis.totalTargetSavings)}/mo`} tone="blue" onClick={() => onCalculation(planDetail(true))} />
+          <Metric icon={TrendingUp} label="Projected net worth" value={formatCurrency(analysis.last?.net_worth ?? 0)} tone="purple" onClick={() => analysis.last && onPoint(analysis.last)} />
+          <Metric icon={CircleDollarSign} label="Annual investment return" value={formatCurrency(analysis.annualInvestmentReturn)} tone="green" onClick={() => onCalculation(annualDetail)} />
         </div>
       </Card>
       <Card title="Monthly spending goals">
         <div className="divide-y divide-white/10">
           {analysis.categories.filter((category: any) => category.adjustable).slice(0, 8).map((category: any) => (
-            <div key={category.name} className="py-3">
+            <button key={category.name} onClick={() => onCalculation({
+              title: `${category.name} monthly target`,
+              value: formatCurrency(category.target),
+              formula: `Loaded-month category average x ${intensityFactors[intensity]} rounded to the nearest dollar.`,
+              dateRange: analysis.sortedMonths.length ? `${formatMonth(analysis.sortedMonths[0])} to ${formatMonth(analysis.sortedMonths[analysis.sortedMonths.length - 1])}` : 'No transaction months loaded',
+              assumptions: [`${intensity} savings intensity`, 'Months with no category spending count as $0.'],
+              warnings: [
+                ...(category.months < analysis.sortedMonths.length ? [`Spending was recorded in ${category.months} of ${analysis.sortedMonths.length} loaded months.`] : []),
+                ...(category.sourceTransactions.length > 30 ? [`Showing the 30 most recent of ${category.sourceTransactions.length} source transactions.`] : []),
+                ...(category.sourceTransactions.length ? [] : ['No source transactions were loaded; this target uses the budget-estimate fallback.']),
+              ],
+              inputs: category.sourceTransactions.slice(0, 30).map((transaction: Transaction) => ({ label: transaction.merchant || transaction.description, value: formatCurrency(transactionSpend(transaction)), note: `${transaction.date}${transaction.import_source ? ` · ${transaction.import_source}` : ''}${transaction.owner ? ` · ${transaction.owner}` : ''}` })),
+            })} className="w-full py-3 text-left">
               <div className="mb-2 flex items-center justify-between gap-3"><p className="truncate text-sm font-medium text-text-primary">{category.name}</p><p className="text-sm text-primary">Stay below {formatCurrency(category.target)}</p></div>
               <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, (category.target / Math.max(category.average, 1)) * 100)}%` }} /></div>
               <p className="mt-1 text-xs text-muted">Current average {formatCurrency(category.average)} · achievable reduction {formatCurrency(category.savings)}/mo</p>
-            </div>
+            </button>
           ))}
         </div>
       </Card>
@@ -414,6 +531,10 @@ function Plan({ analysis, intensity, setIntensity }: { analysis: any; intensity:
 function Review({ anomalies, dismiss }: { anomalies: Transaction[]; dismiss: (id: number) => void }) {
   return (
     <>
+      <Card className="border-warning/30 bg-warning/5">
+        <p className="text-xs font-semibold uppercase tracking-wider text-warning">Why these were selected</p>
+        <p className="mt-2 text-sm leading-6 text-text-secondary">Each row is a source transaction of at least $150. Categories matching rent, mortgage, loan, transfer, or payment are excluded. Done hides the suggestion for this screen; it does not remove the transaction or change the forecast.</p>
+      </Card>
       <Card title="Review queue">
         <p className="mb-3 text-xs text-muted">Confirm unusual purchases so one-off spending does not distort your trends and targets.</p>
         {anomalies.length ? <div className="divide-y divide-white/10">{anomalies.map((item) => (
@@ -434,15 +555,59 @@ function CategoryDetail({ name, data, category, onBack }: { name: string; data: 
         <div className="h-72"><ResponsiveContainer width="100%" height="100%"><LineChart data={data}><CartesianGrid stroke="#2d3748" strokeDasharray="3 3" vertical={false} /><XAxis dataKey="month" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} tickFormatter={(v) => `$${v}`} axisLine={false} tickLine={false} width={45} /><Tooltip formatter={(value: number) => formatCurrency(value)} contentStyle={{ background: '#1a1f2e', border: '1px solid #2d3748', borderRadius: 12 }} /><ReferenceLine y={category?.target ?? 0} stroke="#22c55e" strokeDasharray="5 5" label={{ value: 'Target', fill: '#22c55e', fontSize: 10 }} /><Line type="monotone" dataKey="amount" stroke="#3b82f6" strokeWidth={3} dot={{ fill: '#3b82f6' }} /></LineChart></ResponsiveContainer></div>
       </Card>
       <Card className="border-purple-400/30 bg-purple-400/5"><div className="flex gap-3"><Sparkles className="text-purple-300" /><div><p className="font-semibold text-purple-300">Foresight explanation</p><p className="mt-1 text-sm leading-6 text-text-secondary">{name} is averaging {formatCurrency(category?.average ?? 0)} per month. A target of {formatCurrency(category?.target ?? 0)} is below your current pace without assuming a drastic lifestyle change, adding about {formatCurrency(category?.savings ?? 0)} to monthly savings.</p></div></div></Card>
+      <Card title="Calculation trace">
+        <p className="text-sm text-text-secondary">Average = sum of the monthly category totals below / {data.length || 1} loaded months. Target = average x the selected savings-intensity factor, rounded to the nearest dollar. Savings = average - target.</p>
+        <div className="mt-3 divide-y divide-white/10">{data.map((item) => <div key={item.month} className="flex justify-between py-2 text-sm"><span className="text-text-secondary">{item.month}</span><span className="text-text-primary">{formatCurrency(item.amount)}</span></div>)}</div>
+        <details className="mt-3 rounded-xl border border-white/10 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-text-primary">Source transactions ({category?.sourceTransactions?.length ?? 0})</summary>
+          <div className="mt-2 max-h-72 divide-y divide-white/10 overflow-y-auto">
+            {(category?.sourceTransactions ?? []).map((transaction: Transaction) => <div key={transaction.id} className="flex items-start justify-between gap-3 py-2 text-xs"><div className="min-w-0"><p className="truncate text-text-primary">{transaction.merchant || transaction.description}</p><p className="text-muted">{transaction.date}{transaction.import_source ? ` · ${transaction.import_source}` : ''}{transaction.owner ? ` · ${transaction.owner}` : ''}</p></div><span className="shrink-0 text-text-secondary">{formatCurrency(transactionSpend(transaction))}</span></div>)}
+          </div>
+        </details>
+      </Card>
     </>
   )
 }
 
-function Metric({ icon: Icon, label, value, tone }: { icon: React.ElementType; label: string; value: string; tone: 'green' | 'red' | 'blue' | 'purple' }) {
+function Metric({ icon: Icon, label, value, tone, onClick }: { icon: React.ElementType; label: string; value: string; tone: 'green' | 'red' | 'blue' | 'purple'; onClick?: () => void }) {
   const colors = { green: 'text-primary', red: 'text-danger', blue: 'text-info', purple: 'text-purple-300' }
-  return <div className="rounded-xl border border-white/10 bg-surface p-3"><Icon size={17} className={colors[tone]} /><p className="mt-2 text-xs text-text-secondary">{label}</p><p className={cn('mt-0.5 break-words text-lg font-bold', colors[tone])}>{value}</p></div>
+  const content = <><div className="flex items-start justify-between"><Icon size={17} className={colors[tone]} />{onClick && <Info size={14} className="text-muted" />}</div><p className="mt-2 text-xs text-text-secondary">{label}</p><p className={cn('mt-0.5 break-words text-lg font-bold', colors[tone])}>{value}</p></>
+  return onClick
+    ? <button onClick={onClick} className="rounded-xl border border-white/10 bg-surface p-3 text-left hover:border-white/20 hover:bg-surface-2">{content}</button>
+    : <div className="rounded-xl border border-white/10 bg-surface p-3">{content}</div>
 }
 
 function SummaryRow({ icon: Icon, text, value, onClick }: { icon: React.ElementType; text: string; value: string; onClick?: () => void }) {
   return <button onClick={onClick} disabled={!onClick} className="flex w-full items-center gap-3 py-3 text-left"><Icon size={17} className="text-primary" /><span className="min-w-0 flex-1 text-sm text-text-primary">{text}</span><span className="text-sm font-semibold text-info">{value}</span>{onClick && <ArrowRight size={14} className="text-muted" />}</button>
+}
+
+function CalculationDetailModal({ detail, onClose }: { detail: CalculationDetail; onClose: () => void }) {
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [onClose])
+
+  return <div className="fixed inset-0 z-[110] flex items-end justify-center sm:items-center sm:p-4">
+    <button aria-label="Close calculation detail" className="absolute inset-0 bg-black/70" onClick={onClose} />
+    <div className="relative flex max-h-[92vh] w-full max-w-lg flex-col rounded-t-2xl border border-white/10 bg-surface shadow-2xl sm:rounded-2xl">
+      <div className="flex items-start justify-between gap-3 border-b border-white/10 p-4">
+        <div><p className="text-xs font-semibold uppercase tracking-wider text-primary">Calculation detail</p><h2 className="mt-1 text-lg font-bold text-text-primary">{detail.title}</h2><p className="text-2xl font-bold text-info">{detail.value}</p></div>
+        <button onClick={onClose} className="rounded-lg p-2 text-text-secondary hover:bg-surface-2"><X size={18} /></button>
+      </div>
+      <div className="overflow-y-auto p-4">
+        <DetailSection title="Exact formula"><p>{detail.formula}</p></DetailSection>
+        <DetailSection title="Relevant date range"><p>{detail.dateRange}</p></DetailSection>
+        <DetailSection title="Inputs and total">
+          <div className="divide-y divide-white/10 rounded-xl border border-white/10 px-3">{detail.inputs.map((input, index) => <div key={`${input.label}-${index}`} className="flex items-start justify-between gap-3 py-2.5"><div className="min-w-0"><p className="text-sm text-text-primary">{input.label}</p>{input.note && <p className="text-[11px] leading-4 text-muted">{input.note}</p>}</div><p className="shrink-0 text-sm font-semibold text-info">{input.value}</p></div>)}</div>
+        </DetailSection>
+        <DetailSection title="Assumptions">{detail.assumptions.map((item) => <p key={item}>• {item}</p>)}</DetailSection>
+        {detail.warnings.length > 0 && <DetailSection title="Data quality"><div className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-warning">{detail.warnings.map((item) => <p key={item}>• {item}</p>)}</div></DetailSection>}
+      </div>
+    </div>
+  </div>
+}
+
+function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="mb-4 text-sm leading-6 text-text-secondary"><h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-text-primary">{title}</h3>{children}</section>
 }
