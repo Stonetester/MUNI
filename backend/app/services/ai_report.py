@@ -16,6 +16,7 @@ from app.models.category import Category
 from app.models.life_event import LifeEvent
 from app.models.transaction import Transaction
 from app.models.user import User
+from app.services.transaction_math import counts_as_expense, counts_as_income
 
 
 ASSET_TYPES = {"checking", "savings", "hysa", "brokerage", "ira", "401k", "hsa", "other"}
@@ -83,13 +84,13 @@ def _gather_financial_data(user: User, db: Session, year: int, month: int) -> di
         spending = 0.0
         by_category = {}
         for t in transactions:
-            if t.amount > 0:
+            if counts_as_income(t):
                 income += t.amount
-            else:
+            elif counts_as_expense(t):
                 spending += abs(t.amount)
-            cat = cats_map.get(t.category_id)
-            cat_name = cat.name if cat else "Uncategorized"
-            by_category[cat_name] = by_category.get(cat_name, 0.0) + abs(t.amount)
+                cat = cats_map.get(t.category_id)
+                cat_name = cat.name if cat else "Uncategorized"
+                by_category[cat_name] = by_category.get(cat_name, 0.0) + abs(t.amount)
         return {
             "income": round(income, 2),
             "spending": round(spending, 2),
@@ -356,9 +357,9 @@ def _gather_alltime_by_category(user: User, db: Session) -> dict:
 
     for t in all_txns:
         cat_name = cats_map.get(t.category_id, "Uncategorized")
-        if t.amount < 0:
+        if counts_as_expense(t):
             spending[cat_name] = spending.get(cat_name, 0.0) + abs(t.amount)
-        else:
+        elif counts_as_income(t):
             income[cat_name] = income.get(cat_name, 0.0) + t.amount
 
     return {

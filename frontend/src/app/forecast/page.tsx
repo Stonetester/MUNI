@@ -12,6 +12,8 @@ import {
   getJointForecast,
   getJointTransactions,
   getTransactions,
+  markJointTransactionOneOff,
+  updateTransaction,
 } from '@/lib/api'
 import { ForecastResponse, InvestmentHolding, Transaction } from '@/lib/types'
 import { useViewMode } from '@/lib/viewMode'
@@ -47,6 +49,19 @@ export default function ForecastPage() {
 
   useEffect(() => { load() }, [load])
 
+  const markOneOff = async (transaction: Transaction) => {
+    if (mode === 'joint') {
+      await markJointTransactionOneOff(transaction.id)
+    } else {
+      const marker = '[one-off]'
+      const notes = transaction.notes?.trim()
+      await updateTransaction(transaction.id, {
+        notes: notes ? `${notes} ${marker}` : marker,
+      })
+    }
+    await load()
+  }
+
   return (
     <AppLayout>
       {loading ? (
@@ -57,6 +72,7 @@ export default function ForecastPage() {
           transactions={transactions}
           holdings={holdings}
           budgetEstimates={budgetEstimates}
+          onMarkOneOff={markOneOff}
         />
       ) : (
         <div className="py-16 text-center text-text-secondary">

@@ -35,7 +35,7 @@ export default function MonthDetailModal({ point, onClose }: MonthDetailModalPro
     .sort(([, a], [, b]) => b - a)
 
   const maxAbs = Math.max(...Object.values(byCategory).map(Math.abs), 1)
-  const net = point.income + point.expenses
+  const net = point.net
   const accountBreakdown = [...(point.net_worth_breakdown ?? [])]
     .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
   const assets = accountBreakdown

@@ -320,11 +320,10 @@ export default function InsightsPage() {
         income: 0, expenses: 0, net: 0, byCategory: {},
       }
     }
-    // Build a set of savings-kind category names so we can exclude them from expenses.
-    // Savings transfers (e.g. HYSA contributions) are not true expenses — treating them
-    // as expenses inflates spending and deflates the savings rate metric.
-    const savingsCatNames = new Set(
-      categories.filter(c => c.kind === 'savings').map(c => c.name)
+    // Savings and account transfers are not true expenses. Treating them as
+    // expenses inflates spending and deflates the savings rate metric.
+    const nonCashFlowCatNames = new Set(
+      categories.filter(c => c.kind === 'savings' || c.kind === 'transfer').map(c => c.name)
     )
 
     for (const t of transactions) {
@@ -334,8 +333,8 @@ export default function InsightsPage() {
       const catName = t.category_name || 'Uncategorized'
       if (t.amount > 0) {
         b.income += t.amount
-      } else if (!savingsCatNames.has(catName)) {
-        // Only count as expense if it's not a savings transfer
+      } else if (!nonCashFlowCatNames.has(catName)) {
+        // Savings and account transfers are not true expenses.
         const abs = Math.abs(t.amount)
         b.expenses += abs
         b.byCategory[catName] = (b.byCategory[catName] || 0) + abs

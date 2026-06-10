@@ -2,7 +2,7 @@ from typing import Optional
 from calendar import monthrange
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.auth import get_current_user
@@ -14,6 +14,7 @@ from app.models.category import Category
 from app.models.life_event import LifeEvent
 from app.schemas.transaction import TransactionOut, TransactionPage
 from app.schemas.alert import AlertItem
+from app.services.transaction_math import ONE_OFF_MARKER, counts_as_expense, counts_as_income
 
 router = APIRouter(prefix="/joint", tags=["joint"])
 
@@ -40,6 +41,25 @@ def joint_transactions(
         result.append(t_dict)
 
     return {"items": result, "total": total, "skip": offset, "limit": limit}
+
+
+@router.post("/transactions/{transaction_id}/one-off", response_model=TransactionOut)
+def mark_joint_transaction_one_off(
+    transaction_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark a household transaction as non-recurring without changing its actual cash impact."""
+    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    notes = transaction.notes.strip() if transaction.notes else ""
+    if ONE_OFF_MARKER not in notes.lower():
+        transaction.notes = f"{notes} {ONE_OFF_MARKER}".strip()
+        db.commit()
+        db.refresh(transaction)
+    return transaction
 
 
 @router.get("/accounts")
@@ -78,8 +98,8 @@ def joint_summary(
         Transaction.scenario_id.is_(None)
     ).all()
 
-    income = sum(t.amount for t in month_txns if t.amount > 0)
-    spending = sum(abs(t.amount) for t in month_txns if t.amount < 0)
+    income = sum(t.amount for t in month_txns if counts_as_income(t))
+    spending = sum(abs(t.amount) for t in month_txns if counts_as_expense(t))
 
     return {
         "net_worth": assets - liabilities,

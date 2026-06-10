@@ -168,6 +168,11 @@ export async function updateTransaction(id: number, data: Partial<Transaction>):
   return res.data
 }
 
+export async function markJointTransactionOneOff(id: number): Promise<Transaction> {
+  const res: AxiosResponse<Transaction> = await api.post(`/joint/transactions/${id}/one-off`)
+  return res.data
+}
+
 export async function deleteTransaction(id: number): Promise<void> {
   if (isDemoModeActive()) return
   await api.delete(`/transactions/${id}`)

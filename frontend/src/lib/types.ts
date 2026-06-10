@@ -125,8 +125,8 @@ export interface Scenario {
 export interface ForecastPoint {
   month: string          // "YYYY-MM"
   income: number
-  expenses: number       // backend uses "expenses" not "spending"
-  net: number
+  expenses: number       // positive spending magnitude
+  net: number            // income - expenses
   cash: number           // backend uses "cash" not "net_cash"
   net_worth: number
   savings_total: number
@@ -169,7 +169,7 @@ export interface ForecastResponse {
   starting_net_worth: number
   ending_net_worth: number
   total_income: number
-  total_expenses: number
+  total_expenses: number // positive spending magnitude
   account_forecasts: AccountForecast[]
 }
 

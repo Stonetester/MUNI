@@ -6,7 +6,7 @@ For each future month:
    from actual transactions (Google Sheets, paystubs, CSV imports).
    Income categories (positive avg) and expense categories (negative avg) both included.
 2. Life events: spread total_cost across monthly_breakdown entries
-3. Roll forward cash: prev_cash + projected_income + projected_expenses + event_impacts
+3. Roll forward cash: prev_cash + projected_income - projected_expenses + event_impacts
 4. Net worth: cash pool + compound-grown investment accounts - liabilities
 5. Compound interest: investment accounts (401k, IRA, brokerage, HYSA) grow monthly
    using blended return from InvestmentHolding records or FinancialProfile APY
@@ -31,6 +31,7 @@ from app.models.life_event import LifeEvent
 from app.models.transaction import Transaction
 from app.models.user import User
 from app.schemas.forecast import AccountForecast, ForecastPoint, ForecastResponse, NetWorthBreakdownItem
+from app.services.transaction_math import counts_in_recurring_forecast
 
 # Account type sets
 ASSET_TYPES = {
@@ -154,6 +155,8 @@ def _get_historical_category_averages(
     sums_3: Dict[Optional[int], float] = defaultdict(float)
 
     for txn in transactions:
+        if not counts_in_recurring_forecast(txn):
+            continue
         sums_12[txn.category_id] += txn.amount
         if txn.date >= six_months_ago:
             sums_6[txn.category_id] += txn.amount
@@ -646,6 +649,12 @@ def run_forecast(
     cash_pool_ids = {a.id for a in accounts if a.account_type in CASH_POOL_TYPES}
     compound_ids = {a.id for a in accounts if a.account_type in COMPOUND_TYPES}
     liability_ids = {a.id for a in accounts if a.account_type in LIABILITY_TYPES}
+    static_asset_ids = {
+        a.id for a in accounts
+        if a.account_type in ASSET_TYPES
+        and a.id not in cash_pool_ids
+        and a.id not in compound_ids
+    }
 
     # Starting net worth
     starting_assets = sum(
@@ -809,12 +818,13 @@ def run_forecast(
                 account_balance_history[acc.id].append(round(account_balances[acc.id], 2))
 
         # ── Net worth ─────────────────────────────────────────────────────────
-        # = liquid cash pool + compound investment balances - liabilities
+        # = liquid cash pool + compound and static asset balances - liabilities
         compound_total = sum(running_compound.values())
+        static_asset_total = sum(account_balances[acc_id] for acc_id in static_asset_ids)
         liability_total = sum(
             abs(account_balances[acc_id]) for acc_id in liability_ids
         )
-        current_net_worth = running_cash + compound_total - liability_total
+        current_net_worth = running_cash + compound_total + static_asset_total - liability_total
 
         # savings_total = sum of savings-type compound balances (for savings_total field)
         current_savings_total = sum(
@@ -828,13 +838,16 @@ def run_forecast(
         high_cash = running_cash + abs(month_expenses) * variance_pct
 
         total_income += month_income
-        total_expenses += month_expenses
+        total_expenses += abs(month_expenses)
 
+        # ForecastPoint uses positive expense magnitudes across historical and
+        # projected months. Keep signed expenses internal for cash roll-forward.
+        expense_total = abs(month_expenses)
         points.append(
             ForecastPoint(
                 month=month_str,
                 income=round(month_income, 2),
-                expenses=round(month_expenses, 2),
+                expenses=round(expense_total, 2),
                 net=round(net, 2),
                 cash=round(running_cash, 2),
                 net_worth=round(current_net_worth, 2),
@@ -967,6 +980,12 @@ def run_joint_forecast(
     cash_pool_ids = {a.id for a in all_accounts if a.account_type in CASH_POOL_TYPES}
     compound_ids = {a.id for a in all_accounts if a.account_type in COMPOUND_TYPES}
     liability_ids = {a.id for a in all_accounts if a.account_type in LIABILITY_TYPES}
+    static_asset_ids = {
+        a.id for a in all_accounts
+        if a.account_type in ASSET_TYPES
+        and a.id not in cash_pool_ids
+        and a.id not in compound_ids
+    }
 
     starting_assets = sum(
         account_balances[a.id] for a in all_accounts
@@ -1054,8 +1073,9 @@ def run_joint_forecast(
                 account_balance_history[a.id].append(round(account_balances[a.id], 2))
 
         compound_total = sum(running_compound.values())
+        static_asset_total = sum(account_balances[acc_id] for acc_id in static_asset_ids)
         liability_total = sum(abs(account_balances[acc_id]) for acc_id in liability_ids)
-        current_net_worth = running_cash + compound_total - liability_total
+        current_net_worth = running_cash + compound_total + static_asset_total - liability_total
 
         current_savings_total = sum(
             running_compound[acc_id]
@@ -1067,13 +1087,16 @@ def run_joint_forecast(
         high_cash = running_cash + abs(month_expenses) * variance_pct
 
         total_income += month_income
-        total_expenses += month_expenses
+        total_expenses += abs(month_expenses)
 
+        # ForecastPoint uses positive expense magnitudes across historical and
+        # projected months. Keep signed expenses internal for cash roll-forward.
+        expense_total = abs(month_expenses)
         points.append(
             ForecastPoint(
                 month=month_str,
                 income=round(month_income, 2),
-                expenses=round(month_expenses, 2),
+                expenses=round(expense_total, 2),
                 net=round(net, 2),
                 cash=round(running_cash, 2),
                 net_worth=round(current_net_worth, 2),

@@ -407,6 +407,13 @@ def test_forecast(tokens):
             p = data["points"][0]
             record("Forecast", "Forecast point has net_worth field", "net_worth" in p, "", None)
             record("Forecast", "Forecast point has income/expenses", "income" in p and "expenses" in p, "", None)
+            math_ok = all(
+                point["expenses"] >= 0
+                and abs(point["net"] - (point["income"] - point["expenses"])) < 0.02
+                for point in data["points"]
+            )
+            record("Forecast", "Forecast net equals income minus positive expenses", math_ok, "", None)
+            record("Forecast", "Forecast total expenses is positive", data.get("total_expenses", -1) >= 0, "", None)
     else:
         record("Forecast", "GET /forecast returns data", False, detail(r), t)
 

@@ -21,6 +21,7 @@ from app.schemas.dashboard import (
 from app.schemas.forecast import ForecastPoint
 from app.schemas.transaction import TransactionOut
 from app.services.forecasting import run_forecast
+from app.services.transaction_math import counts_as_expense, counts_as_income
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -31,25 +32,15 @@ ASSET_TYPES = {
 LIABILITY_TYPES = {"credit_card", "student_loan", "car_loan", "mortgage"}
 
 
-def _is_employer_401k(txn: Transaction) -> bool:
-    """Employer 401k contributions flow into the 401k account — exclude from spendable income."""
-    return bool(
-        txn.import_source and txn.import_source.startswith("paystub:")
-        and txn.description and "Employer 401k" in txn.description
-    )
-
-
 def _month_summary(transactions: List[Transaction], categories_map: dict) -> MonthSummary:
     income = 0.0
     spending = 0.0
     by_category: Dict[str, float] = {}
 
     for txn in transactions:
-        if _is_employer_401k(txn):
-            continue  # posted to 401k account — not spendable income
-        if txn.amount > 0:
+        if counts_as_income(txn):
             income += txn.amount
-        else:
+        elif counts_as_expense(txn):
             spending += abs(txn.amount)
             cat_name = categories_map.get(txn.category_id, "Uncategorized") if txn.category_id else "Uncategorized"
             by_category[cat_name] = by_category.get(cat_name, 0.0) + abs(txn.amount)
@@ -156,12 +147,12 @@ def get_dashboard(
     # income and real expenses appear in the Monthly Cash Flow chart.
     if forecast.points:
         p0 = forecast.points[0]
-        actual_income_amt = sum(t.amount for t in this_month_txns if t.amount > 0 and not _is_employer_401k(t))
-        actual_expense_amt = sum(abs(t.amount) for t in this_month_txns if t.amount < 0)
+        actual_income_amt = sum(t.amount for t in this_month_txns if counts_as_income(t))
+        actual_expense_amt = sum(abs(t.amount) for t in this_month_txns if counts_as_expense(t))
         # Build by_category using names so the detail modal can display them
         actual_by_cat: Dict[str, float] = {}
         for txn in this_month_txns:
-            if txn.amount == 0:
+            if not counts_as_income(txn) and not counts_as_expense(txn):
                 continue
             cat_name = categories_map.get(txn.category_id, "Uncategorized") if txn.category_id else "Uncategorized"
             actual_by_cat[cat_name] = actual_by_cat.get(cat_name, 0.0) + txn.amount
@@ -203,11 +194,11 @@ def get_dashboard(
             )
             .all()
         )
-        pm_income = sum(t.amount for t in pm_txns if t.amount > 0 and not _is_employer_401k(t))
-        pm_expenses = sum(abs(t.amount) for t in pm_txns if t.amount < 0)
+        pm_income = sum(t.amount for t in pm_txns if counts_as_income(t))
+        pm_expenses = sum(abs(t.amount) for t in pm_txns if counts_as_expense(t))
         pm_by_cat: Dict[str, float] = {}
         for txn in pm_txns:
-            if txn.amount == 0:
+            if not counts_as_income(txn) and not counts_as_expense(txn):
                 continue
             cat_name = categories_map.get(txn.category_id, "Uncategorized") if txn.category_id else "Uncategorized"
             pm_by_cat[cat_name] = pm_by_cat.get(cat_name, 0.0) + txn.amount

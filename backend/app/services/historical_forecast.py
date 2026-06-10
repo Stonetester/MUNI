@@ -10,26 +10,7 @@ from app.models.balance_snapshot import BalanceSnapshot
 from app.models.transaction import Transaction
 from app.schemas.forecast import ForecastPoint, NetWorthBreakdownItem
 from app.services.forecasting import LIABILITY_TYPES
-
-
-def _counts_as_income(transaction: Transaction) -> bool:
-    return (
-        transaction.amount > 0
-        and (not transaction.category or transaction.category.kind not in {"savings", "transfer"})
-        and not (
-            transaction.import_source
-            and transaction.import_source.startswith("paystub:")
-            and transaction.description
-            and "Employer 401k" in transaction.description
-        )
-    )
-
-
-def _counts_as_expense(transaction: Transaction) -> bool:
-    return (
-        transaction.amount < 0
-        and (not transaction.category or transaction.category.kind not in {"savings", "transfer"})
-    )
+from app.services.transaction_math import counts_as_expense, counts_as_income
 
 
 def build_historical_forecast_points(
@@ -78,9 +59,9 @@ def build_historical_forecast_points(
     monthly_expenses: dict[str, float] = defaultdict(float)
     for transaction in transactions:
         month = transaction.date.strftime("%Y-%m")
-        if _counts_as_income(transaction):
+        if counts_as_income(transaction):
             monthly_income[month] += transaction.amount
-        elif _counts_as_expense(transaction):
+        elif counts_as_expense(transaction):
             monthly_expenses[month] += abs(transaction.amount)
 
     historical_points: list[ForecastPoint] = []

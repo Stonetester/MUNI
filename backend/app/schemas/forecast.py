@@ -16,8 +16,8 @@ class NetWorthBreakdownItem(BaseModel):
 class ForecastPoint(BaseModel):
     month: str  # YYYY-MM
     income: float
-    expenses: float
-    net: float
+    expenses: float  # positive magnitude
+    net: float  # income - expenses
     cash: float
     net_worth: float
     savings_total: float
@@ -49,5 +49,5 @@ class ForecastResponse(BaseModel):
     starting_net_worth: float
     ending_net_worth: float
     total_income: float
-    total_expenses: float
+    total_expenses: float  # positive magnitude
     account_forecasts: List[AccountForecast] = []

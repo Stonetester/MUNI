@@ -27,6 +27,7 @@ from app.models.account import Account
 from app.models.category import Category
 from app.models.transaction import Transaction
 from app.models.user import User
+from app.services.transaction_math import counts_as_expense, counts_as_income
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +95,11 @@ def _gather_week_data(user: User, db: Session):
         for c in db.query(Category).filter(Category.user_id == user.id).all()
     }
 
-    income = sum(t.amount for t in txns if t.amount > 0)
-    spending = sum(abs(t.amount) for t in txns if t.amount < 0)
+    income = sum(t.amount for t in txns if counts_as_income(t))
+    spending = sum(abs(t.amount) for t in txns if counts_as_expense(t))
     by_cat: dict[str, float] = {}
     for t in txns:
-        if t.amount < 0:
+        if counts_as_expense(t):
             name = cats_map.get(t.category_id, "Uncategorized")
             by_cat[name] = by_cat.get(name, 0.0) + abs(t.amount)
 
@@ -127,7 +128,7 @@ def _gather_week_data(user: User, db: Session):
     )
     month_spend_by_cat: dict[int, float] = {}
     for t in month_txns:
-        if t.amount < 0 and t.category_id:
+        if counts_as_expense(t) and t.category_id:
             month_spend_by_cat[t.category_id] = month_spend_by_cat.get(t.category_id, 0.0) + abs(t.amount)
 
     over_budget = []

@@ -31,6 +31,7 @@ interface Props {
   transactions: Transaction[]
   holdings: InvestmentHolding[]
   budgetEstimates: BudgetEstimate[]
+  onMarkOneOff: (transaction: Transaction) => Promise<void>
 }
 
 interface CalculationDetail {
@@ -70,7 +71,11 @@ function transactionSpend(transaction: Transaction) {
   return Math.abs(transaction.amount)
 }
 
-export default function ForesightDashboard({ forecast, transactions, holdings, budgetEstimates }: Props) {
+function isOneOff(transaction: Transaction) {
+  return transaction.notes?.toLowerCase().includes('[one-off]') ?? false
+}
+
+export default function ForesightDashboard({ forecast, transactions, holdings, budgetEstimates, onMarkOneOff }: Props) {
   const [tab, setTab] = useState<Tab>('overview')
   const [intensity, setIntensity] = useState<Intensity>('steady')
   const [detailCategory, setDetailCategory] = useState<string | null>(null)
@@ -88,7 +93,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
 
     const months = new Map<string, Map<string, number>>()
     transactions.forEach((transaction) => {
-      if (!transaction.category_name || transaction.amount >= 0) return
+      if (!transaction.category_name || transaction.amount >= 0 || isOneOff(transaction)) return
       const key = monthKey(transaction.date)
       const categoryMap = months.get(key) ?? new Map<string, number>()
       categoryMap.set(transaction.category_name, (categoryMap.get(transaction.category_name) ?? 0) + transactionSpend(transaction))
@@ -115,7 +120,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
       const recent = recentValues.reduce((sum, value) => sum + value, 0) / Math.max(recentValues.length, 1)
       const prior = priorValues.reduce((sum, value) => sum + value, 0) / Math.max(priorValues.length, 1)
       const sourceTransactions = transactions.filter((transaction) =>
-        transaction.category_name === name && transaction.amount < 0 && sortedMonths.includes(monthKey(transaction.date)))
+        transaction.category_name === name && transaction.amount < 0 && !isOneOff(transaction) && sortedMonths.includes(monthKey(transaction.date)))
       return { name, average, recent, prior, months: values.filter(Boolean).length, sourceTransactions }
     }).filter((category) => category.average > 0)
 
@@ -128,6 +133,11 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
         return {
           ...category,
           adjustable,
+          currentSpend: transactions
+            .filter((transaction) => transaction.category_name === category.name
+              && transaction.amount < 0
+              && monthKey(transaction.date) === currentMonth)
+            .reduce((sum, transaction) => sum + transactionSpend(transaction), 0),
           changePct: category.prior ? ((category.recent - category.prior) / category.prior) * 100 : 0,
           target,
           savings: adjustable ? Math.max(0, category.average - target) : 0,
@@ -137,8 +147,8 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
 
     const totalTargetSavings = categories.reduce((sum, category) => sum + category.savings, 0)
     const monthlyIncome = first?.income ?? 0
-    const monthlySpending = first?.expenses ?? 0
-    const currentMonthlySavings = monthlyIncome + monthlySpending
+    const monthlySpending = Math.abs(first?.expenses ?? 0)
+    const currentMonthlySavings = monthlyIncome - monthlySpending
     const projectedMonthlySavings = currentMonthlySavings + totalTargetSavings
     const returnAccounts = forecast.account_forecasts.filter((account) => account.annual_return_pct !== 0)
     const annualInvestmentReturn = returnAccounts.reduce((sum, account) =>
@@ -147,7 +157,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
       sum + account.ending_balance - account.starting_balance - account.monthly_contribution * forecast.months, 0)
 
     const anomalies = [...transactions]
-      .filter((transaction) => transaction.amount < 0 && transactionSpend(transaction) >= 150 && !/rent|mortgage|loan|transfer|payment/i.test(transaction.category_name ?? ''))
+      .filter((transaction) => transaction.amount < 0 && !isOneOff(transaction) && transactionSpend(transaction) >= 150 && !/rent|mortgage|loan|transfer|payment/i.test(transaction.category_name ?? ''))
       .sort((a, b) => transactionSpend(b) - transactionSpend(a))
       .slice(0, 4)
 
@@ -231,7 +241,13 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
       ) : tab === 'plan' ? (
         <Plan analysis={analysis} intensity={intensity} setIntensity={setIntensity} onCalculation={setCalculation} onPoint={setSelectedPoint} />
       ) : (
-        <Review anomalies={analysis.anomalies.filter((item) => !dismissed.includes(item.id))} dismiss={(id) => setDismissed((items) => [...items, id])} />
+        <Review
+          anomalies={analysis.anomalies.filter((item) => !dismissed.includes(item.id))}
+          markOneOff={async (transaction) => {
+            await onMarkOneOff(transaction)
+            setDismissed((items) => [...items, transaction.id])
+          }}
+        />
       )}
 
       {selectedPoint && <MonthDetailModal point={selectedPoint} onClose={() => setSelectedPoint(null)} />}
@@ -253,7 +269,7 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
   const savingsRateDetail: CalculationDetail = {
     title: 'Savings rate',
     value: `${savingsRate.toFixed(0)}%`,
-    formula: '(forecast income + forecast expenses + achievable category reductions) / forecast income x 100. Forecast expenses are stored as negative values.',
+    formula: '(forecast income - forecast expenses + achievable category reductions) / forecast income x 100.',
     dateRange: `Monthly forecast inputs for ${formatMonth(analysis.first?.month ?? '')}; category targets use ${transactionRange}.`,
     assumptions: ['The selected savings intensity is applied only to adjustable categories.', 'This is a projected rate, not a bank-account balance change.'],
     warnings: [
@@ -262,8 +278,8 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
     ],
     inputs: [
       { label: 'Forecast income', value: formatCurrency(analysis.monthlyIncome), note: 'Forecast record' },
-      { label: 'Forecast expenses', value: formatCurrency(Math.abs(analysis.monthlySpending)), note: 'Subtracted because forecast expenses are negative' },
-      { label: 'Current forecast savings', value: formatCurrency(analysis.currentMonthlySavings), note: 'income + expenses' },
+      { label: 'Forecast expenses', value: formatCurrency(analysis.monthlySpending), note: 'Positive spending amount' },
+      { label: 'Current forecast savings', value: formatCurrency(analysis.currentMonthlySavings), note: 'income - expenses' },
       { label: 'Achievable reductions', value: formatCurrency(analysis.totalTargetSavings), note: 'sum of category average minus target' },
       { label: 'Projected monthly savings', value: formatCurrency(analysis.projectedMonthlySavings), note: 'current forecast savings + reductions' },
     ],
@@ -452,7 +468,7 @@ function Plan({ analysis, intensity, setIntensity, onCalculation, onPoint }: { a
   const planDetail = (addedOnly: boolean): CalculationDetail => ({
     title: addedOnly ? 'Added vs current' : 'Target savings',
     value: `${formatCurrency(addedOnly ? analysis.totalTargetSavings : analysis.projectedMonthlySavings)}/mo`,
-    formula: addedOnly ? 'Sum of each adjustable category average - target.' : 'Forecast income + forecast expenses + total achievable category reductions.',
+    formula: addedOnly ? 'Sum of each adjustable category average - target.' : 'Forecast income - forecast expenses + total achievable category reductions.',
     dateRange: analysis.sortedMonths.length ? `${formatMonth(analysis.sortedMonths[0])} to ${formatMonth(analysis.sortedMonths[analysis.sortedMonths.length - 1])}` : 'No transaction months loaded',
     assumptions: [`${intensity} intensity uses a ${Math.round((1 - intensityFactors[intensity]) * 100)}% reduction for adjustable categories.`, 'Rent, mortgage, loan, insurance, tax, and Wedding categories are treated as fixed or temporary.'],
     warnings: analysis.sortedMonths.length < 12 ? [`Only ${analysis.sortedMonths.length} months were loaded.`] : [],
@@ -503,8 +519,8 @@ function Plan({ analysis, intensity, setIntensity, onCalculation, onPoint }: { a
               inputs: category.sourceTransactions.slice(0, 30).map((transaction: Transaction) => ({ label: transaction.merchant || transaction.description, value: formatCurrency(transactionSpend(transaction)), note: `${transaction.date}${transaction.import_source ? ` · ${transaction.import_source}` : ''}${transaction.owner ? ` · ${transaction.owner}` : ''}` })),
             })} className="w-full py-3 text-left">
               <div className="mb-2 flex items-center justify-between gap-3"><p className="truncate text-sm font-medium text-text-primary">{category.name}</p><p className="text-sm text-primary">Stay below {formatCurrency(category.target)}</p></div>
-              <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, (category.target / Math.max(category.average, 1)) * 100)}%` }} /></div>
-              <p className="mt-1 text-xs text-muted">Current average {formatCurrency(category.average)} · achievable reduction {formatCurrency(category.savings)}/mo</p>
+              <div className="h-2 overflow-hidden rounded-full bg-white/10"><div className={cn('h-full rounded-full', category.currentSpend > category.target ? 'bg-danger' : 'bg-primary')} style={{ width: `${Math.min(100, (category.currentSpend / Math.max(category.target, 1)) * 100)}%` }} /></div>
+              <p className="mt-1 text-xs text-muted">Spent {formatCurrency(category.currentSpend)} this month · recurring average {formatCurrency(category.average)}</p>
             </button>
           ))}
         </div>
@@ -513,20 +529,36 @@ function Plan({ analysis, intensity, setIntensity, onCalculation, onPoint }: { a
   )
 }
 
-function Review({ anomalies, dismiss }: { anomalies: Transaction[]; dismiss: (id: number) => void }) {
+function Review({ anomalies, markOneOff }: { anomalies: Transaction[]; markOneOff: (transaction: Transaction) => Promise<void> }) {
+  const [saving, setSaving] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const mark = async (transaction: Transaction) => {
+    setSaving(transaction.id)
+    setError(null)
+    try {
+      await markOneOff(transaction)
+    } catch {
+      setError('Could not mark that transaction. Try again after refreshing Foresight.')
+    } finally {
+      setSaving(null)
+    }
+  }
+
   return (
     <>
       <Card className="border-warning/30 bg-warning/5">
         <p className="text-xs font-semibold uppercase tracking-wider text-warning">Why these were selected</p>
-        <p className="mt-2 text-sm leading-6 text-text-secondary">Each row is a source transaction of at least $150. Categories matching rent, mortgage, loan, transfer, or payment are excluded. Done hides the suggestion for this screen; it does not remove the transaction or change the forecast.</p>
+        <p className="mt-2 text-sm leading-6 text-text-secondary">Each row is a source transaction of at least $150. Marking it one-off keeps its real cash impact in the month it happened, but removes it from recurring trend averages and future spending targets.</p>
       </Card>
       <Card title="Review queue">
         <p className="mb-3 text-xs text-muted">Confirm unusual purchases so one-off spending does not distort your trends and targets.</p>
         {anomalies.length ? <div className="divide-y divide-white/10">{anomalies.map((item) => (
-          <div key={item.id} className="flex items-center gap-3 py-3"><ReceiptText size={19} className="text-warning" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-text-primary">{item.merchant || item.description}</p><p className="text-xs text-muted">{item.category_name || 'Uncategorized'} · {item.date}</p></div><p className="text-sm font-semibold text-warning">{formatCurrency(transactionSpend(item))}</p><button onClick={() => dismiss(item.id)} className="rounded-lg border border-white/10 px-2 py-1 text-xs text-text-secondary hover:text-primary">Done</button></div>
+          <div key={item.id} className="flex items-center gap-3 py-3"><ReceiptText size={19} className="text-warning" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-text-primary">{item.merchant || item.description}</p><p className="text-xs text-muted">{item.category_name || 'Uncategorized'} · {item.date}</p></div><p className="text-sm font-semibold text-warning">{formatCurrency(transactionSpend(item))}</p><button disabled={saving === item.id} onClick={() => mark(item)} className="rounded-lg border border-white/10 px-2 py-1 text-xs text-text-secondary hover:text-primary disabled:opacity-50">{saving === item.id ? 'Saving...' : 'Mark one-off'}</button></div>
         ))}</div> : <div className="py-8 text-center"><CheckCircle2 className="mx-auto mb-2 text-primary" /><p className="text-sm text-text-secondary">Review queue is clear.</p></div>}
+        {error && <p className="mt-3 text-xs text-danger">{error}</p>}
       </Card>
-      <Card className="border-primary/30 bg-primary/5"><div className="flex gap-3"><CheckCircle2 className="text-primary" /><div><p className="font-semibold text-primary">Forecast confidence improves with review</p><p className="mt-1 text-sm text-text-secondary">Marking one-time purchases keeps recurring spending goals realistic.</p></div></div></Card>
+      <Card className="border-primary/30 bg-primary/5"><div className="flex gap-3"><CheckCircle2 className="text-primary" /><div><p className="font-semibold text-primary">Forecast confidence improves with review</p><p className="mt-1 text-sm text-text-secondary">One-off purchases remain in actual monthly spending but no longer inflate recurring goals.</p></div></div></Card>
     </>
   )
 }

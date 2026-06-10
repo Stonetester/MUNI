@@ -23,6 +23,7 @@ from app.models.account import Account
 from app.models.category import Category
 from app.models.transaction import Transaction
 from app.models.user import User
+from app.services.transaction_math import counts_as_expense
 
 ASSET_TYPES = {"checking", "savings", "hysa", "brokerage", "ira", "401k", "hsa", "other"}
 LIABILITY_TYPES = {"credit_card", "student_loan", "car_loan", "mortgage"}
@@ -147,7 +148,7 @@ def _handle_spending_by_category(user: User, db: Session, query: str, cats_map: 
 
     if cat_id:
         cat_name = cats_map[cat_id].name
-        cat_txns = [t for t in txns if t.category_id == cat_id and t.amount < 0]
+        cat_txns = [t for t in txns if t.category_id == cat_id and counts_as_expense(t)]
         if not cat_txns:
             return f"No {cat_name} transactions found in {period_label}."
         total = sum(abs(t.amount) for t in cat_txns)
@@ -177,7 +178,7 @@ def _handle_spending_by_category(user: User, db: Session, query: str, cats_map: 
     # No category in the query — return full breakdown
     by_cat: dict[str, float] = {}
     for t in txns:
-        if t.amount < 0:
+        if counts_as_expense(t):
             cat = cats_map.get(t.category_id)
             cat_name = cat.name if cat else "Uncategorized"
             by_cat[cat_name] = by_cat.get(cat_name, 0.0) + abs(t.amount)
@@ -218,13 +219,13 @@ def _handle_list_transactions(user: User, db: Session, query: str, cats_map: dic
         cat_name = cats_map[cat_id].name
         label = f"{cat_name} transactions in {period_label}"
     else:
-        txns = [t for t in txns if t.amount < 0]
+        txns = [t for t in txns if counts_as_expense(t)]
         label = f"transactions in {period_label}"
 
     if not txns:
         return f"No {label} found."
 
-    total = sum(abs(t.amount) for t in txns if t.amount < 0)
+    total = sum(abs(t.amount) for t in txns if counts_as_expense(t))
     lines = [f"{label} ({len(txns)} total, ${total:,.2f}):"]
     for t in txns:
         lines.append(f"  {t.date}  ${abs(t.amount):,.2f}  {t.description}")
@@ -268,7 +269,7 @@ def _handle_with_llm(user: User, db: Session, query: str, cats_map: dict) -> str
     # Monthly breakdown
     monthly: dict[str, dict[str, float]] = {}
     for t in all_txns:
-        if t.amount >= 0:
+        if not counts_as_expense(t):
             continue
         mk = t.date.strftime("%Y-%m")
         cat = cats_map.get(t.category_id)

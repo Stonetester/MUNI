@@ -47,11 +47,13 @@ function DayModal({
   date,
   transactions,
   colorMap,
+  nonCashFlowNames,
   onClose,
 }: {
   date: string
   transactions: Transaction[]
   colorMap: Record<string, string>
+  nonCashFlowNames: Set<string>
   onClose: () => void
 }) {
   useEffect(() => {
@@ -63,8 +65,8 @@ function DayModal({
   const dateObj = new Date(date + 'T00:00:00')
   const label = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 
-  const expenses = transactions.filter((t) => t.amount < 0)
-  const income = transactions.filter((t) => t.amount > 0)
+  const expenses = transactions.filter((t) => t.amount < 0 && !nonCashFlowNames.has(t.category_name || ''))
+  const income = transactions.filter((t) => t.amount > 0 && !nonCashFlowNames.has(t.category_name || ''))
   const totalSpent = expenses.reduce((s, t) => s + Math.abs(t.amount), 0)
   const totalIncome = income.reduce((s, t) => s + t.amount, 0)
 
@@ -145,6 +147,9 @@ export default function CalendarPage() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
 
   const colorMap = Object.fromEntries(categories.map((c) => [c.name, c.color]))
+  const nonCashFlowNames = new Set(
+    categories.filter((c) => c.kind === 'savings' || c.kind === 'transfer').map((c) => c.name)
+  )
 
   const fromDate = `${year}-${String(month).padStart(2, '0')}-01`
   const lastDay = new Date(year, month, 0).getDate()
@@ -216,7 +221,7 @@ export default function CalendarPage() {
   function getPieSegments(dayTxns: Transaction[]) {
     const catTotals: Record<string, { color: string; value: number }> = {}
     for (const t of dayTxns) {
-      if (t.amount >= 0) continue // only expenses
+      if (t.amount >= 0 || nonCashFlowNames.has(t.category_name || '')) continue
       const name = t.category_name || 'Other'
       const color = colorMap[name] || '#94a3b8'
       if (!catTotals[name]) catTotals[name] = { color, value: 0 }
@@ -226,15 +231,23 @@ export default function CalendarPage() {
   }
 
   function getDayIncome(dayTxns: Transaction[]) {
-    return dayTxns.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0)
+    return dayTxns
+      .filter((t) => t.amount > 0 && !nonCashFlowNames.has(t.category_name || ''))
+      .reduce((s, t) => s + t.amount, 0)
   }
 
   const selectedTxns = selectedDay ? (byDay[selectedDay] || []) : []
 
   // Monthly summary
-  const totalSpent = transactions.filter((t) => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0)
-  const totalIncome = transactions.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0)
-  const daysWithSpending = Object.keys(byDay).filter((d) => byDay[d].some((t) => t.amount < 0)).length
+  const totalSpent = transactions
+    .filter((t) => t.amount < 0 && !nonCashFlowNames.has(t.category_name || ''))
+    .reduce((s, t) => s + Math.abs(t.amount), 0)
+  const totalIncome = transactions
+    .filter((t) => t.amount > 0 && !nonCashFlowNames.has(t.category_name || ''))
+    .reduce((s, t) => s + t.amount, 0)
+  const daysWithSpending = Object.keys(byDay).filter((d) =>
+    byDay[d].some((t) => t.amount < 0 && !nonCashFlowNames.has(t.category_name || ''))
+  ).length
 
   return (
     <AppLayout>
@@ -295,7 +308,9 @@ export default function CalendarPage() {
                 const dayTxns = byDay[key] || []
                 const segments = getPieSegments(dayTxns)
                 const hasSpending = segments.length > 0
-                const dayTotal = dayTxns.filter((t) => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0)
+                const dayTotal = dayTxns
+                  .filter((t) => t.amount < 0 && !nonCashFlowNames.has(t.category_name || ''))
+                  .reduce((s, t) => s + Math.abs(t.amount), 0)
                 const dayIncome = getDayIncome(dayTxns)
                 const hasTxns = dayTxns.length > 0
 
@@ -365,6 +380,7 @@ export default function CalendarPage() {
           date={selectedDay}
           transactions={selectedTxns}
           colorMap={colorMap}
+          nonCashFlowNames={nonCashFlowNames}
           onClose={() => setSelectedDay(null)}
         />
       )}
