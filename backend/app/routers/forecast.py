@@ -24,17 +24,11 @@ def get_forecast(
     result = run_forecast(user=current_user, db=db, scenario_id=scenario_id, months=months)
 
     if past_months > 0:
-        starting_cash = (
-            result.points[0].cash - result.points[0].net
-            if result.points
-            else result.starting_net_worth
-        )
         historical_points = build_historical_forecast_points(
             db=db,
             user_ids=[current_user.id],
+            account_ids=[account.account_id for account in result.account_forecasts],
             past_months=past_months,
-            starting_net_worth=result.starting_net_worth,
-            starting_cash=starting_cash,
         )
         result.points = historical_points + result.points
 

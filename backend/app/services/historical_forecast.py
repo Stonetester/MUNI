@@ -5,13 +5,17 @@ from typing import Iterable
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
+from app.models.account import Account
+from app.models.balance_snapshot import BalanceSnapshot
 from app.models.transaction import Transaction
-from app.schemas.forecast import ForecastPoint
+from app.schemas.forecast import ForecastPoint, NetWorthBreakdownItem
+from app.services.forecasting import LIABILITY_TYPES
 
 
 def _counts_as_income(transaction: Transaction) -> bool:
     return (
         transaction.amount > 0
+        and (not transaction.category or transaction.category.kind not in {"savings", "transfer"})
         and not (
             transaction.import_source
             and transaction.import_source.startswith("paystub:")
@@ -21,23 +25,43 @@ def _counts_as_income(transaction: Transaction) -> bool:
     )
 
 
+def _counts_as_expense(transaction: Transaction) -> bool:
+    return (
+        transaction.amount < 0
+        and (not transaction.category or transaction.category.kind not in {"savings", "transfer"})
+    )
+
+
 def build_historical_forecast_points(
     db: Session,
     user_ids: Iterable[int],
+    account_ids: Iterable[int],
     past_months: int,
-    starting_net_worth: float,
-    starting_cash: float,
 ) -> list[ForecastPoint]:
-    """Backcast historical balances from actual monthly cash flow.
-
-    Exact historical net worth requires complete account snapshots. Most users have
-    much deeper transaction history than snapshot history, so anchor the curve to
-    today's real balances and walk backward through actual income and expenses.
-    """
+    """Build historical net worth from recorded month-end account snapshots."""
     today = date.today()
     current_month_start = today.replace(day=1)
     first_month_start = current_month_start - relativedelta(months=past_months)
     user_ids = list(user_ids)
+    account_ids = list(account_ids)
+    accounts = (
+        db.query(Account)
+        .filter(Account.id.in_(account_ids), Account.is_active == True)
+        .order_by(Account.name)
+        .all()
+    )
+    snapshots = (
+        db.query(BalanceSnapshot)
+        .filter(
+            BalanceSnapshot.account_id.in_(account_ids),
+            BalanceSnapshot.date < current_month_start,
+        )
+        .order_by(BalanceSnapshot.account_id, BalanceSnapshot.date)
+        .all()
+    )
+    snapshots_by_account: dict[int, list[BalanceSnapshot]] = defaultdict(list)
+    for snapshot in snapshots:
+        snapshots_by_account[snapshot.account_id].append(snapshot)
 
     transactions = (
         db.query(Transaction)
@@ -56,35 +80,66 @@ def build_historical_forecast_points(
         month = transaction.date.strftime("%Y-%m")
         if _counts_as_income(transaction):
             monthly_income[month] += transaction.amount
-        elif transaction.amount < 0:
+        elif _counts_as_expense(transaction):
             monthly_expenses[month] += abs(transaction.amount)
 
-    current_month = current_month_start.strftime("%Y-%m")
-    current_month_net = monthly_income[current_month] - monthly_expenses[current_month]
-    running_net_worth = starting_net_worth - current_month_net
-    running_cash = starting_cash - current_month_net
-    reverse_points: list[ForecastPoint] = []
-
-    for i in range(1, past_months + 1):
+    historical_points: list[ForecastPoint] = []
+    for i in range(past_months, 0, -1):
         month_start = current_month_start - relativedelta(months=i)
+        month_end = current_month_start - relativedelta(months=i - 1, days=1)
         month = month_start.strftime("%Y-%m")
         income = monthly_income[month]
         expenses = monthly_expenses[month]
         net = income - expenses
+        breakdown: list[NetWorthBreakdownItem] = []
+        assets = 0.0
+        liabilities = 0.0
+        recorded_count = 0
 
-        reverse_points.append(ForecastPoint(
+        for account in accounts:
+            eligible = [
+                snapshot
+                for snapshot in snapshots_by_account.get(account.id, [])
+                if snapshot.date <= month_end
+            ]
+            snapshot = eligible[-1] if eligible else None
+            balance = float(snapshot.balance) if snapshot else 0.0
+            is_liability = account.account_type in LIABILITY_TYPES or balance < 0
+            if snapshot:
+                recorded_count += 1
+                if is_liability:
+                    liabilities += abs(balance)
+                elif balance > 0:
+                    assets += balance
+            breakdown.append(NetWorthBreakdownItem(
+                account_id=account.id,
+                account_name=account.name,
+                account_type=account.account_type,
+                balance=round(balance, 2),
+                is_liability=is_liability,
+                source="recorded snapshot" if snapshot else "no balance recorded",
+                as_of=snapshot.date.isoformat() if snapshot else None,
+            ))
+
+        net_worth = assets - liabilities
+        historical_points.append(ForecastPoint(
             month=month,
             income=income,
             expenses=expenses,
             net=net,
-            cash=running_cash,
-            net_worth=running_net_worth,
+            cash=0.0,
+            net_worth=round(net_worth, 2),
             savings_total=0.0,
-            low_cash=running_cash,
-            high_cash=running_cash,
+            low_cash=0.0,
+            high_cash=0.0,
             event_impact=0.0,
+            net_worth_breakdown=breakdown,
+            calculation_method="recorded_snapshots",
+            calculation_note=(
+                f"Assets minus liabilities using the latest recorded balance on or before "
+                f"{month_end.isoformat()}. Coverage: {recorded_count} of {len(accounts)} accounts; "
+                "accounts without a recorded balance count as $0."
+            ),
         ))
-        running_net_worth -= net
-        running_cash -= net
 
-    return list(reversed(reverse_points))
+    return historical_points

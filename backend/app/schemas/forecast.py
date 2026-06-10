@@ -1,6 +1,16 @@
 from typing import List, Optional, Dict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class NetWorthBreakdownItem(BaseModel):
+    account_id: int
+    account_name: str
+    account_type: str
+    balance: float
+    is_liability: bool = False
+    source: str
+    as_of: Optional[str] = None
 
 
 class ForecastPoint(BaseModel):
@@ -15,6 +25,9 @@ class ForecastPoint(BaseModel):
     high_cash: float  # +variance on expenses
     event_impact: float
     by_category: Optional[Dict[str, float]] = None
+    net_worth_breakdown: List[NetWorthBreakdownItem] = Field(default_factory=list)
+    calculation_method: str = "forecast"
+    calculation_note: Optional[str] = None
 
 
 class AccountForecast(BaseModel):

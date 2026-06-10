@@ -134,6 +134,19 @@ export interface ForecastPoint {
   high_cash: number
   event_impact: number
   by_category?: Record<string, number>
+  net_worth_breakdown?: NetWorthBreakdownItem[]
+  calculation_method?: 'recorded_snapshots' | 'forecast_projection' | string
+  calculation_note?: string
+}
+
+export interface NetWorthBreakdownItem {
+  account_id: number
+  account_name: string
+  account_type: string
+  balance: number
+  is_liability: boolean
+  source: string
+  as_of?: string
 }
 
 // Per-account balance projection

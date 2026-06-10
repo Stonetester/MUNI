@@ -30,7 +30,7 @@ from app.models.category import Category
 from app.models.life_event import LifeEvent
 from app.models.transaction import Transaction
 from app.models.user import User
-from app.schemas.forecast import AccountForecast, ForecastPoint, ForecastResponse
+from app.schemas.forecast import AccountForecast, ForecastPoint, ForecastResponse, NetWorthBreakdownItem
 
 # Account type sets
 ASSET_TYPES = {
@@ -81,6 +81,25 @@ def _latest_snapshot_balances(account_ids: List[int], db: Session) -> Dict[int, 
         if snap.account_id not in result:
             result[snap.account_id] = float(snap.balance)
     return result
+
+
+def _projected_net_worth_breakdown(
+    accounts: List[Account],
+    account_balance_history: Dict[int, List[float]],
+) -> List[NetWorthBreakdownItem]:
+    return [
+        NetWorthBreakdownItem(
+            account_id=account.id,
+            account_name=account.name,
+            account_type=account.account_type,
+            balance=account_balance_history[account.id][-1],
+            is_liability=account.account_type in LIABILITY_TYPES
+            or account_balance_history[account.id][-1] < 0,
+            source="forecast projection",
+        )
+        for account in accounts
+        if account.id in account_balance_history and account_balance_history[account.id]
+    ]
 
 
 def _rule_applies_to_month(rule: RecurringRule, month_start: date, month_end: date) -> bool:
@@ -824,6 +843,9 @@ def run_forecast(
                 high_cash=round(high_cash, 2),
                 event_impact=round(event_impact, 2),
                 by_category=by_category,
+                net_worth_breakdown=_projected_net_worth_breakdown(accounts, account_balance_history),
+                calculation_method="forecast_projection",
+                calculation_note="Projected account balances: cash flow plus configured contributions and growth, with liabilities subtracted.",
             )
         )
 
@@ -1060,6 +1082,9 @@ def run_joint_forecast(
                 high_cash=round(high_cash, 2),
                 event_impact=round(event_impact, 2),
                 by_category=by_category,
+                net_worth_breakdown=_projected_net_worth_breakdown(all_accounts, account_balance_history),
+                calculation_method="forecast_projection",
+                calculation_note="Projected account balances: cash flow plus configured contributions and growth, with liabilities subtracted.",
             )
         )
 

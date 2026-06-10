@@ -36,6 +36,15 @@ export default function MonthDetailModal({ point, onClose }: MonthDetailModalPro
 
   const maxAbs = Math.max(...Object.values(byCategory).map(Math.abs), 1)
   const net = point.income - point.expenses
+  const accountBreakdown = [...(point.net_worth_breakdown ?? [])]
+    .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
+  const assets = accountBreakdown
+    .filter((account) => !account.is_liability && account.source !== 'no balance recorded')
+    .reduce((sum, account) => sum + Math.max(0, account.balance), 0)
+  const liabilities = accountBreakdown
+    .filter((account) => account.is_liability && account.source !== 'no balance recorded')
+    .reduce((sum, account) => sum + Math.abs(account.balance), 0)
+  const missingAccounts = accountBreakdown.filter((account) => account.source === 'no balance recorded')
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -83,6 +92,55 @@ export default function MonthDetailModal({ point, onClose }: MonthDetailModalPro
             <div className="flex items-center justify-between p-3 rounded-xl bg-yellow-400/10 border border-yellow-400/20">
               <span className="text-sm text-yellow-300">Life event impact</span>
               <span className="text-sm font-semibold text-yellow-300">{formatCurrency(point.event_impact)}</span>
+            </div>
+          )}
+
+          {accountBreakdown.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <div>
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">What MUNI used</p>
+                <p className="mt-1 text-xs leading-5 text-muted">{point.calculation_note}</p>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-lg bg-surface-2 p-2">
+                  <p className="text-[10px] text-muted">Assets</p>
+                  <p className="text-sm font-bold text-primary">{formatCurrency(assets)}</p>
+                </div>
+                <div className="rounded-lg bg-surface-2 p-2">
+                  <p className="text-[10px] text-muted">Liabilities</p>
+                  <p className="text-sm font-bold text-danger">-{formatCurrency(liabilities)}</p>
+                </div>
+                <div className="rounded-lg bg-surface-2 p-2">
+                  <p className="text-[10px] text-muted">Net worth</p>
+                  <p className="text-sm font-bold text-info">{formatCurrency(point.net_worth)}</p>
+                </div>
+              </div>
+              <div className="divide-y divide-white/10 rounded-xl border border-white/10 px-3">
+                {accountBreakdown.map((account) => (
+                  <div key={account.account_id} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-text-primary">{account.account_name}</p>
+                      <p className="text-[10px] text-muted">
+                        {account.source}{account.as_of ? ` as of ${account.as_of}` : ''}
+                      </p>
+                    </div>
+                    <p className={`shrink-0 text-sm font-semibold ${
+                      account.source === 'no balance recorded'
+                        ? 'text-muted'
+                        : account.is_liability ? 'text-danger' : 'text-text-primary'
+                    }`}>
+                      {account.source === 'no balance recorded'
+                        ? 'Not recorded'
+                        : `${account.is_liability ? '-' : ''}${formatCurrency(Math.abs(account.balance))}`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {missingAccounts.length > 0 && (
+                <p className="text-xs leading-5 text-warning">
+                  {missingAccounts.length} account{missingAccounts.length === 1 ? '' : 's'} had no balance recorded by this month and count as $0.
+                </p>
+              )}
             </div>
           )}
 
@@ -137,7 +195,7 @@ export default function MonthDetailModal({ point, onClose }: MonthDetailModalPro
           {/* Extra forecast fields */}
           <div className="mt-2 grid grid-cols-2 gap-3 pt-3 border-t border-[#2d3748]">
             <div className="bg-surface-2 rounded-xl p-3">
-              <p className="text-xs text-text-secondary">Projected Net Worth</p>
+              <p className="text-xs text-text-secondary">Net Worth</p>
               <p className="text-sm font-bold text-info mt-1">{formatCurrency(point.net_worth)}</p>
             </div>
             <div className="bg-surface-2 rounded-xl p-3">

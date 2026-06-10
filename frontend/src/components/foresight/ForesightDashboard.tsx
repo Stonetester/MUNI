@@ -291,7 +291,7 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
               <CartesianGrid stroke="#2d3748" strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="month" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} tickFormatter={(v) => `$${Math.round(v / 1000)}k`} axisLine={false} tickLine={false} width={48} />
-              <Tooltip formatter={(value: number) => formatCurrency(value)} contentStyle={{ background: '#1a1f2e', border: '1px solid #2d3748', borderRadius: 12 }} />
+              <Tooltip content={<NetWorthTooltip />} />
               <Area type="monotone" dataKey="netWorth" stroke="#3b82f6" strokeWidth={3} fill="url(#foresightArea)" />
             </AreaChart>
           </ResponsiveContainer>
@@ -323,6 +323,37 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
 
       <button onClick={onPlan} className="rounded-xl bg-primary px-4 py-3 font-semibold text-white hover:bg-primary/90">Build my achievable savings plan</button>
     </>
+  )
+}
+
+function NetWorthTooltip({ active, payload }: any) {
+  const point = payload?.[0]?.payload?.raw as ForecastPoint | undefined
+  if (!active || !point) return null
+
+  const accounts = [...(point.net_worth_breakdown ?? [])]
+    .filter((account) => account.source !== 'no balance recorded')
+    .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
+    .slice(0, 4)
+
+  return (
+    <div className="max-w-64 rounded-xl border border-white/10 bg-[#1a1f2e] p-3 shadow-xl">
+      <p className="text-xs text-muted">{formatMonth(point.month)}</p>
+      <p className="mt-0.5 text-lg font-bold text-info">{formatCurrency(point.net_worth)}</p>
+      <p className="mb-2 text-[11px] text-text-secondary">
+        {point.calculation_method === 'recorded_snapshots' ? 'Recorded account balances' : 'Forecast account balances'}
+      </p>
+      <div className="space-y-1 border-t border-white/10 pt-2">
+        {accounts.map((account) => (
+          <div key={account.account_id} className="flex items-center justify-between gap-4 text-xs">
+            <span className="truncate text-text-secondary">{account.account_name}</span>
+            <span className={account.is_liability ? 'text-danger' : 'text-text-primary'}>
+              {account.is_liability ? '-' : ''}{formatCurrency(Math.abs(account.balance))}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-[10px] text-muted">Tap the month for the full calculation.</p>
+    </div>
   )
 }
 
