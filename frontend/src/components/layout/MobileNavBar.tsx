@@ -35,7 +35,7 @@ const mainItems = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
   { label: 'Transactions', icon: ArrowUpDown, href: '/transactions' },
   { label: 'Accounts', icon: Wallet, href: '/accounts' },
-  { label: 'Forecast', icon: TrendingUp, href: '/forecast' },
+  { label: 'Foresight', icon: TrendingUp, href: '/forecast' },
 ]
 
 const moreItems = [
