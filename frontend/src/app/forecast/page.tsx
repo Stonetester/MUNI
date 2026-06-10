@@ -27,7 +27,7 @@ export default function ForecastPage() {
     setLoading(true)
     try {
       const [forecastData, transactionData, holdingData, estimates] = await Promise.all([
-        mode === 'joint' ? getJointForecast(24, 12) : getForecast(undefined, 24, 12),
+        mode === 'joint' ? getJointForecast(24, 24) : getForecast(undefined, 24, 24),
         getTransactions({ limit: 500 }),
         getHoldings().catch(() => []),
         getBudgetEstimates().catch(() => []),

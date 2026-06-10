@@ -217,44 +217,24 @@ def joint_forecast(
 ):
     """Combined household forecast."""
     from app.services.forecasting import run_joint_forecast
-    from app.schemas.forecast import ForecastPoint
-    from dateutil.relativedelta import relativedelta
+    from app.services.historical_forecast import build_historical_forecast_points
 
     result = run_joint_forecast(db=db, months=months)
 
     if past_months > 0:
-        today = date.today()
-        historical_points: list[ForecastPoint] = []
         users = db.query(User).all()
-
-        for i in range(past_months, 0, -1):
-            ms = (today.replace(day=1) - relativedelta(months=i))
-            me = (ms + relativedelta(months=1)) - relativedelta(days=1)
-            month_key = ms.strftime("%Y-%m")
-
-            income = 0.0
-            expenses = 0.0
-            for u in users:
-                txns = db.query(Transaction).filter(
-                    Transaction.user_id == u.id,
-                    Transaction.date >= ms,
-                    Transaction.date <= me,
-                    Transaction.scenario_id.is_(None),
-                ).all()
-                income += sum(
-                    t.amount for t in txns
-                    if t.amount > 0
-                    and not (t.import_source and t.import_source.startswith("paystub:")
-                             and t.description and "Employer 401k" in t.description)
-                )
-                expenses += sum(abs(t.amount) for t in txns if t.amount < 0)
-
-            historical_points.append(ForecastPoint(
-                month=month_key, income=income, expenses=expenses,
-                net=income - expenses, cash=0.0, net_worth=0.0,
-                savings_total=0.0, low_cash=0.0, high_cash=0.0, event_impact=0.0,
-            ))
-
+        starting_cash = (
+            result.points[0].cash - result.points[0].net
+            if result.points
+            else result.starting_net_worth
+        )
+        historical_points = build_historical_forecast_points(
+            db=db,
+            user_ids=[user.id for user in users],
+            past_months=past_months,
+            starting_net_worth=result.starting_net_worth,
+            starting_cash=starting_cash,
+        )
         result.points = historical_points + result.points
 
     return result

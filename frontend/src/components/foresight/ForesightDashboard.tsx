@@ -1,9 +1,9 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, CircleDollarSign,
-  LineChart as LineChartIcon, PiggyBank, ReceiptText, Sparkles, Target,
+  LineChart as LineChartIcon, PiggyBank, ReceiptText, RotateCcw, Sparkles, Target,
   TrendingDown, TrendingUp, Utensils, WalletCards,
 } from 'lucide-react'
 import {
@@ -221,16 +221,72 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
 }
 
 function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint, onTrend, onPlan }: any) {
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: trajectoryData.length })
+  const pinch = useRef<{ distance: number; start: number; end: number } | null>(null)
+  const chart = useRef<HTMLDivElement | null>(null)
+  const visibleData = trajectoryData.slice(visibleRange.start, visibleRange.end)
+  const isZoomed = visibleRange.start > 0 || visibleRange.end < trajectoryData.length
+
+  useEffect(() => {
+    setVisibleRange({ start: 0, end: trajectoryData.length })
+  }, [trajectoryData.length])
+
+  const touchDistance = (touches: React.TouchList) => (
+    Math.abs(touches[0].clientX - touches[1].clientX)
+  )
+
+  const onTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2) return
+    pinch.current = {
+      distance: touchDistance(event.touches),
+      start: visibleRange.start,
+      end: visibleRange.end,
+    }
+  }
+
+  const onTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 2 || !pinch.current || !chart.current) return
+    event.preventDefault()
+
+    const scale = touchDistance(event.touches) / Math.max(pinch.current.distance, 1)
+    const originalLength = pinch.current.end - pinch.current.start
+    const nextLength = Math.max(4, Math.min(trajectoryData.length, Math.round(originalLength / scale)))
+    const bounds = chart.current.getBoundingClientRect()
+    const midpoint = (event.touches[0].clientX + event.touches[1].clientX) / 2
+    const midpointRatio = Math.max(0, Math.min(1, (midpoint - bounds.left) / Math.max(bounds.width, 1)))
+    const center = pinch.current.start + originalLength * midpointRatio
+    const start = Math.max(0, Math.min(trajectoryData.length - nextLength, Math.round(center - nextLength * midpointRatio)))
+
+    setVisibleRange({ start, end: start + nextLength })
+  }
+
   return (
     <>
       <Card className="overflow-hidden p-0">
-        <div className="border-b border-white/10 p-4">
-          <p className="text-sm text-text-secondary">At your current pace, net worth reaches</p>
-          <p className="mt-1 text-2xl font-bold text-info">{formatCurrency(analysis.last?.net_worth ?? 0)} <span className="text-sm font-normal text-text-secondary">by {formatMonth(analysis.last?.month ?? '')}</span></p>
+        <div className="flex items-start justify-between gap-3 border-b border-white/10 p-4">
+          <div>
+            <p className="text-sm text-text-secondary">At your current pace, net worth reaches</p>
+            <p className="mt-1 text-2xl font-bold text-info">{formatCurrency(analysis.last?.net_worth ?? 0)} <span className="text-sm font-normal text-text-secondary">by {formatMonth(analysis.last?.month ?? '')}</span></p>
+          </div>
+          <button
+            type="button"
+            disabled={!isZoomed}
+            onClick={() => setVisibleRange({ start: 0, end: trajectoryData.length })}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-2 text-xs text-text-secondary disabled:cursor-default disabled:opacity-40"
+          >
+            <RotateCcw size={14} /> Reset view
+          </button>
         </div>
-        <div className="h-72 p-2 sm:p-4">
+        <div
+          ref={chart}
+          className="h-72 p-2 sm:p-4"
+          style={{ touchAction: 'pan-y' }}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={() => { pinch.current = null }}
+        >
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={trajectoryData} onClick={(event: any) => event?.activePayload?.[0]?.payload?.raw && onPoint(event.activePayload[0].payload.raw)}>
+            <AreaChart data={visibleData} onClick={(event: any) => event?.activePayload?.[0]?.payload?.raw && onPoint(event.activePayload[0].payload.raw)}>
               <defs><linearGradient id="foresightArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#3b82f6" stopOpacity=".35" /><stop offset="1" stopColor="#3b82f6" stopOpacity=".02" /></linearGradient></defs>
               <CartesianGrid stroke="#2d3748" strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="month" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
