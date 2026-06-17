@@ -49,3 +49,13 @@ def get_institutions(
     ).all()
     institutions = sorted({a.institution.strip() for a in accounts if a.institution and a.institution.strip()})
     return InstitutionsResponse(institutions=institutions)
+
+
+@router.get("/brief", response_model=CoinResponse)
+def coin_brief(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Daily spending brief: current-month summary + one savings insight."""
+    from app.services.coin import brief_for_user
+    return CoinResponse(answer=brief_for_user(current_user, db))

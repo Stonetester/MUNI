@@ -327,3 +327,89 @@ def answer_finance_query(user: User, db: Session, query: str) -> str:
 
     # Fall back to LLM for interpretation/advice questions
     return _handle_with_llm(user, db, query, cats_map)
+
+
+# ── Daily brief (deterministic routing, no NL parser) ──────────────────
+
+def brief_for_user(user: User, db: Session) -> str:
+    """Daily spending brief for the current month + one concrete savings insight.
+
+    Deterministic — does NOT go through the NL query parser. Builds an exact
+    current-month category breakdown from the DB, then asks the LLM for ONE
+    specific, dollar-quantified cutback suggestion. Numbers are always exact.
+    """
+    cats_map = _get_cats(user, db)
+    today = date.today()
+    mstart, mend = _month_range(today.year, today.month)
+    month_label = f"{calendar.month_name[today.month]} {today.year}"
+
+    # This month, exact totals by category
+    txns = _txns_for_period(user, db, mstart, today)
+    by_cat: dict[str, float] = {}
+    for t in txns:
+        if not counts_as_expense(t):
+            continue
+        cat = cats_map.get(t.category_id)
+        cn = cat.name if cat else "Uncategorized"
+        by_cat[cn] = by_cat.get(cn, 0.0) + abs(t.amount)
+
+    if not by_cat:
+        return f"Coin — {month_label}: no spending recorded yet this month."
+
+    total = sum(by_cat.values())
+    ranked = sorted(by_cat.items(), key=lambda x: -x[1])
+
+    # Build the header (exact numbers, always shown even if LLM fails)
+    top_lines = [f"  {cn}: ${amt:,.0f}" for cn, amt in ranked[:6]]
+    header = (
+        f"💰 Coin — {month_label} so far\n"
+        f"Total spent: ${total:,.0f}\n"
+        f"Top categories:\n" + "\n".join(top_lines)
+    )
+
+    # Discretionary (cuttable) categories — fixed bills like rent/utilities/loans
+    # are not realistic cutbacks, so steer the insight toward flexible spending.
+    FIXED = {"rent/utilities", "rent", "utilities", "housing", "mortgage", "internet",
+             "electricity", "student loans", "debt", "required", "tax", "retirement",
+             "savings transfer", "emergency fund", "wedding fund", "salary", "bonus"}
+    discretionary = [(cn, amt) for cn, amt in ranked if cn.lower() not in FIXED]
+
+    # Context for the LLM insight: this-month discretionary spend only (exact numbers)
+    ctx_lines = [
+        f"Month: {month_label} (partial — 1st through {today}, the month is not over)",
+        f"Total spent so far: ${total:,.2f}",
+        "",
+        "Flexible/discretionary spending this month (these are the cuttable ones):",
+    ]
+    for cn, amt in discretionary[:10]:
+        ctx_lines.append(f"  {cn}: ${amt:,.2f}")
+    context = "\n".join(ctx_lines)
+
+    prompt = (
+        "You are Coin, a friendly personal finance assistant. Using ONLY the data below, "
+        "write ONE short insight (2-3 sentences, plain text, no markdown). Pick the single "
+        "discretionary category that is highest THIS month and suggest a concrete, realistic "
+        "dollar amount to cut from it for the rest of the month. This is a partial month, so do "
+        "NOT congratulate the person for 'reducing' or 'saving' on anything — there is no prior "
+        "comparison. Just name the category, its current amount, and a specific cutback target. "
+        "Be specific, warm, and brief.\n\n"
+        f"{context}\n\nInsight:"
+    )
+
+    insight = ""
+    try:
+        from app.config import settings
+        r = requests.post(
+            f"{settings.OLLAMA_HOST}/api/generate",
+            json={"model": COIN_MODEL, "prompt": prompt, "stream": False},
+            timeout=120,
+        )
+        insight = r.json().get("response", "").strip()
+        # deepseek-r1 emits <think> blocks — strip them
+        insight = re.sub(r"<think>.*?</think>", "", insight, flags=re.DOTALL).strip()
+    except Exception as e:
+        insight = f"(insight unavailable: {e})"
+
+    if insight:
+        return f"{header}\n\n💡 {insight}"
+    return header
