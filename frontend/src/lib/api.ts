@@ -668,17 +668,59 @@ export async function postAiChat(
   message: string,
   history: { role: string; content: string }[],
   provider: 'claude' | 'openai' | 'ollama' = 'ollama',
-  opts: { model?: string; escalate?: boolean; joint?: boolean } = {},
-): Promise<{ reply: string; provider: string; model_used: string }> {
+  opts: { model?: string; escalate?: boolean; joint?: boolean; sessionId?: number | null } = {},
+): Promise<{ reply: string; provider: string; model_used: string; session_id: number; session_title: string }> {
   if (isDemoModeActive()) {
     return {
       reply: `**Coast FI** is the point where the money you've already invested will grow — with no further contributions — to your full retirement target by the time you retire. _This is a demo response._`,
       provider,
       model_used: opts.escalate ? 'claude' : 'qwen3:14b',
+      session_id: opts.sessionId ?? 1,
+      session_title: 'Demo chat',
     }
   }
-  const res = await api.post('/ai-report/chat', { message, history, provider, model: opts.model, escalate: opts.escalate, joint: opts.joint })
+  const res = await api.post('/ai-report/chat', { message, history, provider, model: opts.model, escalate: opts.escalate, joint: opts.joint, session_id: opts.sessionId ?? null })
   return res.data
+}
+
+// ── Saved chat sessions ──
+export interface ChatSessionSummary {
+  id: number
+  title: string
+  model_used: string | null
+  is_joint: boolean
+  message_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ChatSessionDetail {
+  id: number
+  title: string
+  model_used: string | null
+  is_joint: boolean
+  created_at: string
+  updated_at: string
+  messages: { role: 'user' | 'assistant'; content: string; model_used: string | null }[]
+}
+
+export async function listChatSessions(): Promise<ChatSessionSummary[]> {
+  if (isDemoModeActive()) return []
+  const res = await api.get('/ai-report/sessions')
+  return res.data
+}
+
+export async function getChatSession(id: number): Promise<ChatSessionDetail> {
+  const res = await api.get(`/ai-report/sessions/${id}`)
+  return res.data
+}
+
+export async function deleteChatSession(id: number): Promise<void> {
+  await api.delete(`/ai-report/sessions/${id}`)
+}
+
+export async function renameChatSession(id: number, title: string): Promise<void> {
+  await api.patch(`/ai-report/sessions/${id}`, { title })
 }
 
 // Notifications

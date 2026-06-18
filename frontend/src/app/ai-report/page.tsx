@@ -4,9 +4,9 @@ import { useState, useEffect, useRef } from 'react'
 import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
-import { getAiReport, postAiChat } from '@/lib/api'
+import { getAiReport, postAiChat, listChatSessions, getChatSession, deleteChatSession, ChatSessionSummary } from '@/lib/api'
 import { useViewMode } from '@/lib/viewMode'
-import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap, Users, User } from 'lucide-react'
+import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap, Users, User, History, Plus, Trash2, X } from 'lucide-react'
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -114,6 +114,38 @@ export default function AiReportPage() {
   const [chatLoading, setChatLoading] = useState(false)
   const chatBottomRef = useRef<HTMLDivElement>(null)
 
+  // Saved chat sessions
+  const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
+  const [currentSessionId, setCurrentSessionId] = useState<number | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
+
+  const loadSessions = async () => {
+    try { setSessions(await listChatSessions()) } catch { /* non-fatal */ }
+  }
+
+  const newChat = () => {
+    setChatHistory([])
+    setCurrentSessionId(null)
+    setShowHistory(false)
+  }
+
+  const openSession = async (id: number) => {
+    try {
+      const s = await getChatSession(id)
+      setChatHistory(s.messages.map(m => ({ role: m.role, content: m.content, modelUsed: m.model_used ?? undefined })))
+      setCurrentSessionId(s.id)
+      setShowHistory(false)
+    } catch { /* ignore */ }
+  }
+
+  const removeSession = async (id: number) => {
+    try {
+      await deleteChatSession(id)
+      setSessions(prev => prev.filter(s => s.id !== id))
+      if (id === currentSessionId) newChat()
+    } catch { /* ignore */ }
+  }
+
   const fetchReport = async () => {
     setReportLoading(true)
     setReportError('')
@@ -142,8 +174,10 @@ export default function AiReportPage() {
     setChatInput('')
     setChatLoading(true)
     try {
-      const data = await postAiChat(msg, newHistory.slice(0, -1), chatProvider, { escalate, joint: isJoint })
+      const data = await postAiChat(msg, newHistory.slice(0, -1), chatProvider, { escalate, joint: isJoint, sessionId: currentSessionId })
       setChatHistory([...newHistory, { role: 'assistant', content: data.reply, modelUsed: data.model_used }])
+      setCurrentSessionId(data.session_id)
+      loadSessions()
     } catch (err: unknown) {
       const e = err as { message?: string }
       setChatHistory([...newHistory, { role: 'assistant', content: `⚠️ Error: ${e?.message || 'Request failed'}` }])
@@ -153,6 +187,12 @@ export default function AiReportPage() {
   }
 
   // Report is NOT auto-generated — it runs only when the user clicks Generate.
+
+  // Load saved sessions the first time the chat tab is opened.
+  useEffect(() => {
+    if (tab === 'chat') loadSessions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -307,6 +347,58 @@ export default function AiReportPage() {
         {/* ── CHAT TAB ── */}
         {tab === 'chat' && (
           <div className="flex flex-col gap-3">
+            {/* History / New chat toolbar */}
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={() => { setShowHistory(v => !v); if (!showHistory) loadSessions() }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  showHistory ? 'bg-violet-500/20 text-violet-400 border-violet-500/30' : 'text-text-secondary hover:text-text-primary border-border hover:bg-surface-2'
+                }`}
+              >
+                <History size={14} /> Past chats{sessions.length ? ` (${sessions.length})` : ''}
+              </button>
+              <button
+                onClick={newChat}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors"
+              >
+                <Plus size={14} /> New chat
+              </button>
+            </div>
+
+            {/* Collapsible history panel */}
+            {showHistory && (
+              <div className="rounded-xl border border-border bg-surface-2 overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+                  <span className="text-xs font-semibold text-text-primary">Past chat sessions</span>
+                  <button onClick={() => setShowHistory(false)} className="text-text-secondary hover:text-text-primary"><X size={14} /></button>
+                </div>
+                {sessions.length === 0 ? (
+                  <p className="px-3 py-6 text-center text-xs text-text-secondary">No saved chats yet. Start a conversation and it&apos;ll appear here.</p>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto divide-y divide-border">
+                    {sessions.map(s => (
+                      <div key={s.id} className={`flex items-center gap-2 px-3 py-2.5 hover:bg-surface-1 transition-colors ${s.id === currentSessionId ? 'bg-violet-500/5' : ''}`}>
+                        <button onClick={() => openSession(s.id)} className="flex-1 min-w-0 text-left">
+                          <p className="text-sm text-text-primary truncate">{s.title}</p>
+                          <p className="text-[10px] text-text-secondary flex items-center gap-1.5 mt-0.5">
+                            <span>{new Date(s.updated_at).toLocaleDateString()}</span>
+                            <span>· {s.message_count} msg</span>
+                            {s.is_joint
+                              ? <span className="inline-flex items-center gap-0.5 text-blue-400"><Users size={9} /> household</span>
+                              : <span className="inline-flex items-center gap-0.5"><User size={9} /> you</span>}
+                            {s.model_used && <span className="truncate">· {s.model_used.includes('claude') ? 'Claude' : s.model_used}</span>}
+                          </p>
+                        </button>
+                        <button onClick={() => removeSession(s.id)} title="Delete" className="shrink-0 p-1.5 rounded-lg text-text-secondary hover:text-danger hover:bg-danger/10 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Message history */}
             <div className="flex flex-col gap-3 min-h-[300px]">
               {chatHistory.length === 0 && (
