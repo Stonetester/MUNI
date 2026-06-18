@@ -137,3 +137,32 @@ def delete_account(
     account = get_account_or_404(account_id, current_user, db)
     db.delete(account)
     db.commit()
+
+
+@router.get("/returns")
+def get_returns(
+    joint: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Measured annualized return per investment account, from balance snapshots."""
+    from app.services.returns import all_account_returns
+
+    if joint:
+        user_ids = [u.id for u in db.query(User).all()]
+    else:
+        user_ids = [current_user.id]
+    return all_account_returns(user_ids, db)
+
+
+@router.get("/{account_id}/return")
+def get_account_return(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Measured annualized return for a single account."""
+    from app.services.returns import account_return
+
+    get_account_or_404(account_id, current_user, db)  # ownership check
+    return account_return(account_id, db)
