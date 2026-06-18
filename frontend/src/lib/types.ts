@@ -285,6 +285,7 @@ export interface FinancialProfile {
   hysa_apy?: number
   hysa_monthly_contribution?: number
   ira_monthly_contribution?: number
+  monthly_retirement_spend?: number
   hidden_sections?: string
   updated_at?: string
 }

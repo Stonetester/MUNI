@@ -427,6 +427,65 @@ def _gather_monthly_history(users: list[User], db: Session, months: int = 18) ->
     return result  # newest-first
 
 
+# Categories that exist NOW but won't be part of ongoing retirement spending.
+_NON_RETIREMENT_CATS = ("wedding", "student loan", "student loans")
+
+
+def _estimate_retirement_spend(users: list[User], db: Session) -> tuple[float, str]:
+    """Best estimate of ongoing monthly spend in retirement (today's $).
+
+    - Averages spending over the last completed months (excludes the current partial month).
+    - Excludes categories that disappear before retirement (wedding, student loans).
+    - Smooths one-off purchases: instead of letting a single lump inflate one month, it spreads
+      the total one-off spend evenly across the window — so "life happens" is represented as a
+      steady buffer rather than a spike. Returns (monthly_spend, human-readable basis)."""
+    from app.services.transaction_math import is_one_off
+
+    user_ids = [u.id for u in users]
+    cats_map = {c.id: c.name for c in db.query(Category).filter(Category.user_id.in_(user_ids)).all()}
+    today = date.today()
+    current_key = today.strftime("%Y-%m")
+
+    txns = (
+        db.query(Transaction)
+        .filter(Transaction.user_id.in_(user_ids), Transaction.scenario_id.is_(None))
+        .all()
+    )
+
+    # Per completed month: recurring spend (excl. one-offs and non-retirement cats).
+    recurring: dict[str, float] = {}
+    oneoff_total = 0.0
+    for t in txns:
+        if not counts_as_expense(t):
+            continue
+        key = t.date.strftime("%Y-%m")
+        if key == current_key:  # skip the partial current month
+            continue
+        cat = (cats_map.get(t.category_id, "") or "").lower()
+        if any(nr in cat for nr in _NON_RETIREMENT_CATS):
+            continue  # wedding / student loans — gone in retirement
+        amt = abs(t.amount)
+        if is_one_off(t):
+            oneoff_total += amt
+        else:
+            recurring[key] = recurring.get(key, 0.0) + amt
+
+    months = sorted(recurring.keys(), reverse=True)[:6]
+    if not months:
+        return 6000.0, "default ($6,000; not enough history)"
+
+    recurring_avg = sum(recurring[m] for m in months) / len(months)
+    # Spread one-offs across the FULL completed-month window so a lump doesn't inflate one month.
+    window = max(len(recurring), 1)
+    oneoff_buffer = oneoff_total / window
+    monthly = recurring_avg + oneoff_buffer
+    basis = (
+        f"recurring avg of last {len(months)} completed months (excl. wedding & student loans) "
+        f"+ ${oneoff_buffer:,.0f}/mo smoothed one-off buffer"
+    )
+    return monthly, basis
+
+
 def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
     """Compute the same Coast FI / FIRE figures the Coast FI tab shows, from real accounts.
 
@@ -437,20 +496,31 @@ def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
     accounts = db.query(Account).filter(Account.user_id.in_(user_ids)).all()
     invested = sum(a.balance for a in accounts if a.account_type in _GROWTH_TYPES and a.balance > 0)
 
-    # Representative monthly spend = average of the last completed months (EXCLUDING the
-    # current, partial month). Using a single month — especially the current partial one —
-    # badly distorts the FIRE number (e.g. a low June made it look like Coast FI was already hit).
-    today = date.today()
-    current_key = today.strftime("%Y-%m")
-    history = _gather_monthly_history(users, db, months=13)  # 12 completed + current
-    completed = [h for h in history if h["month"] != current_key and h["spending"] > 0]
-    sample = completed[:6] if len(completed) >= 3 else completed  # last 6 completed months
-    if sample:
-        monthly_spend = sum(h["spending"] for h in sample) / len(sample)
-        spend_basis = f"average of the last {len(sample)} completed months"
+    # Retirement-spend basis. If the user(s) set an explicit value in their Financial Profile,
+    # use it (joint = sum of partners' set values, falling back to the estimate per partner who
+    # hasn't set one). Otherwise use the smart estimate (recurring avg excl. wedding/loans +
+    # smoothed one-off buffer) — NOT a raw single month, which badly distorts the FIRE number.
+    from app.models.financial_profile import FinancialProfile
+
+    profiles = {
+        p.user_id: p for p in
+        db.query(FinancialProfile).filter(FinancialProfile.user_id.in_(user_ids)).all()
+    }
+    any_override = any(
+        profiles.get(u.id) and profiles[u.id].monthly_retirement_spend is not None for u in users
+    )
+    if any_override:
+        monthly_spend = 0.0
+        for u in users:
+            p = profiles.get(u.id)
+            if p and p.monthly_retirement_spend is not None:
+                monthly_spend += p.monthly_retirement_spend
+            else:
+                est, _ = _estimate_retirement_spend([u], db)
+                monthly_spend += est
+        spend_basis = "your set retirement spend" + (" (household sum)" if joint else "")
     else:
-        monthly_spend = 6000.0
-        spend_basis = "default ($6,000; not enough history)"
+        monthly_spend, spend_basis = _estimate_retirement_spend(users, db)
 
     years = _COAST_DEFAULTS["retire_age"] - _COAST_DEFAULTS["age"]
     nominal, inflation, swr = _COAST_DEFAULTS["return"], _COAST_DEFAULTS["inflation"], _COAST_DEFAULTS["swr"]
