@@ -668,7 +668,7 @@ export async function postAiChat(
   message: string,
   history: { role: string; content: string }[],
   provider: 'claude' | 'openai' | 'ollama' = 'ollama',
-  opts: { model?: string; escalate?: boolean } = {},
+  opts: { model?: string; escalate?: boolean; joint?: boolean } = {},
 ): Promise<{ reply: string; provider: string; model_used: string }> {
   if (isDemoModeActive()) {
     return {
@@ -677,7 +677,7 @@ export async function postAiChat(
       model_used: opts.escalate ? 'claude' : 'qwen3:14b',
     }
   }
-  const res = await api.post('/ai-report/chat', { message, history, provider, model: opts.model, escalate: opts.escalate })
+  const res = await api.post('/ai-report/chat', { message, history, provider, model: opts.model, escalate: opts.escalate, joint: opts.joint })
   return res.data
 }
 
