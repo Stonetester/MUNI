@@ -700,8 +700,14 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
                 ret = f", assumed return {h.assumed_annual_return}%" if h.assumed_annual_return else ""
                 wt = f", {h.weight_percent:.0f}% of account" if h.weight_percent else ""
                 name = h.fund_name or h.ticker
+                # Some statements (John Hancock, Fidelity) list fund NAMES, not real
+                # tickers — we store a slug. Only show the ticker when it looks real
+                # (i.e. it isn't just a slug of the name) so the chat reads cleanly.
+                slug_like = (h.fund_name and h.ticker and
+                             h.ticker not in (h.fund_name or "") and len(h.ticker) > 6)
+                label = name if slug_like else f"{h.ticker} — {name}"
                 ctx_lines.append(
-                    f"    - {h.ticker} — {name}: ${h.current_value:,.2f}{wt}{ret}"
+                    f"    - {label}: ${h.current_value:,.2f}{wt}{ret}"
                 )
 
     returns = all_account_returns(user_ids, db)

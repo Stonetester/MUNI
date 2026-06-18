@@ -34,6 +34,8 @@ class ParsedStatement:
     account_number_hint: Optional[str]  # last 4 digits if found
     holdings: list = None             # list[ParsedHolding] — funds/stocks in the account
     personal_rate_of_return: Optional[float] = None  # stated PRR for the period, if any (Fidelity)
+    period_contributions: Optional[float] = None     # money added THIS period (deposits + employer);
+                                                     # netted out of returns so deposits aren't "gains"
 
     def __post_init__(self):
         if self.holdings is None:
@@ -46,6 +48,42 @@ def _parse_money(raw: str) -> Optional[float]:
         return float(cleaned)
     except ValueError:
         return None
+
+
+def _sum_period_contributions(text: str, institution: str) -> Optional[float]:
+    """Money the account holder/employer ADDED this statement period.
+
+    Netting this out of the balance change is what turns a garbage "2700%/yr"
+    (mostly deposits) into a real investment return. We take the PERIOD column
+    (the first number after each label), not YTD/inception.
+    """
+    total = 0.0
+    found = False
+
+    if institution == "Schwab":
+        # 'Deposits 375.00 675.00'  -> period = first number
+        m = re.search(r"\bDeposits\s+([\d,]+\.\d{2})", text)
+        if m:
+            total += _parse_money(m.group(1)) or 0.0
+            found = True
+
+    elif institution == "Fidelity":
+        for label in (r"Your Contributions", r"Employer Contributions"):
+            m = re.search(label + r"\s+\$([\d,]+\.\d{2})", text)
+            if m:
+                total += _parse_money(m.group(1)) or 0.0
+                found = True
+
+    elif institution == "John Hancock":
+        # Each line: '<LABEL> <period> <ytd> <inception>' -> period = first number.
+        for label in (r"EE ELECTIVE DEFERRAL", r"SAFE HARBOR NON-ELECTIVE CONTR",
+                      r"ER PROFIT SHARING", r"Transfers into the plan"):
+            m = re.search(label + r"\s+([\d,]+\.\d{2})", text)
+            if m:
+                total += _parse_money(m.group(1)) or 0.0
+                found = True
+
+    return round(total, 2) if found else None
 
 
 def _extract_text(pdf_path: str) -> str:
@@ -197,6 +235,7 @@ def _parse_john_hancock(text: str) -> Optional[ParsedStatement]:
         ending_balance=balance,
         account_number_hint=None,
         holdings=_john_hancock_holdings(text),
+        period_contributions=_sum_period_contributions(text, "John Hancock"),
     )
 
 
@@ -226,19 +265,26 @@ def _john_hancock_holdings(text: str) -> list:
     block = text[start.end(): start.end() + (end.start() if end else 6000)]
 
     holdings = []
-    # name (letters/spaces/.&) then 8 numeric columns; allow $ on unit values; commas in values.
+    # name then 8 numeric columns; allow $ on unit values; commas in values.
+    # The cur%/ongoing% columns may carry a literal '%' (e.g. '20.30%'); fund names may
+    # start with a digit ('500 Index Fund'); both happen on the two biggest holdings.
     pat = re.compile(
-        r"^([A-Za-z][A-Za-z0-9 .&'/-]+?)\s+"
-        r"(\d{1,3}\.\d{2})\s+(\d{1,3}\.\d{2})\s+"           # cur%, ongoing%
+        r"^([A-Za-z0-9][A-Za-z0-9 .&'/-]+?)\s+"
+        r"(\d{1,3}\.\d{2})%?\s+(\d{1,3}\.\d{2})%?\s+"       # cur%, ongoing% (optional %)
         r"([\d.]+)\s+([\d.]+)\s+"                            # units1, units2
         r"\$?([\d,.]+)\s+\$?([\d,.]+)\s+"                    # unitval1, unitval2
-        r"([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$",            # val1, val2 (current = last)
+        r"\$?([\d,]+\.\d{2})\s+\$?([\d,]+\.\d{2})\s*$",      # val1, val2 (current = last; $ optional)
         re.MULTILINE,
     )
     seen = set()
     for m in pat.finditer(block):
         name = m.group(1).strip()
-        if name.lower().startswith(("growth", "aggressive", "total")):
+        low = name.lower()
+        # Skip the allocation-strategy subtotals and the grand-total row, but NOT real
+        # funds whose names happen to start with these words (e.g. "Total Stock Market
+        # Index Fund"). Those bare strategy rows have no numeric columns after them and
+        # so won't match `pat` anyway; the explicit guards here are the exact subtotals.
+        if low in ("growth", "aggressive growth", "total account value", "total account"):
             continue
         cur_pct = float(m.group(2))
         cur_val = _parse_money(m.group(9))
@@ -329,6 +375,7 @@ def _parse_schwab(text: str) -> Optional[ParsedStatement]:
         ending_balance=balance,
         account_number_hint=acct_hint,
         holdings=_schwab_holdings(text),
+        period_contributions=_sum_period_contributions(text, "Schwab"),
     )
 
 
@@ -363,6 +410,17 @@ def _schwab_holdings(text: str) -> list:
             fund_name=desc.replace("...", "").strip(),
             value=_parse_money(val),
             weight_percent=float(pct),
+        ))
+
+    # Cash sweep row has no symbol — e.g. 'CHARLESSCHWABBANK 472.93 12%'. Capture it as
+    # CASH so the holdings total reconciles with the account balance.
+    cash = re.search(r"^([A-Z][A-Z &]+BANK)\s+([\d,]+\.\d{2})\s+(\d{1,3})%\s*$", block, re.MULTILINE)
+    if cash:
+        holdings.append(ParsedHolding(
+            ticker="CASH",
+            fund_name="Cash & Bank Sweep",
+            value=_parse_money(cash.group(2)),
+            weight_percent=float(cash.group(3)),
         ))
     return holdings
 
@@ -412,6 +470,7 @@ def _parse_fidelity(text: str) -> Optional[ParsedStatement]:
         account_number_hint=None,
         holdings=_fidelity_holdings(text),
         personal_rate_of_return=prr,
+        period_contributions=_sum_period_contributions(text, "Fidelity"),
     )
 
 

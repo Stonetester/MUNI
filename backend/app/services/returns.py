@@ -87,9 +87,26 @@ def account_return(account_id: int, db: Session) -> dict:
         base["period_end"] = last.date.isoformat()
         return base
 
-    monthly_contrib = _estimated_monthly_contribution(account_id, db)
     months = days / 30.44
-    net_contributions = monthly_contrib * months
+
+    # Prefer REAL per-statement contributions (parsed from the statements). Sum the
+    # contributions recorded on every snapshot AFTER the first (the first snapshot's
+    # own contribution happened before our measurement window starts).
+    recorded = [s.contributions for s in snaps[1:] if s.contributions is not None]
+    have_real = len(recorded) > 0 and len(recorded) >= (len(snaps) - 1) * 0.5  # majority covered
+    if have_real:
+        net_contributions = sum(recorded)
+        contrib_basis = f"netted ${net_contributions:,.0f} of real statement contributions"
+        low_confidence = False
+    else:
+        monthly_contrib = _estimated_monthly_contribution(account_id, db)
+        net_contributions = monthly_contrib * months
+        if monthly_contrib > 0:
+            contrib_basis = f"netted ~${net_contributions:,.0f} est. contributions (${monthly_contrib:,.0f}/mo)"
+            low_confidence = True
+        else:
+            contrib_basis = "GROSS — no contribution data, so this OVERSTATES return if you deposited money"
+            low_confidence = True
 
     gain = last.balance - first.balance - net_contributions
     avg_capital = first.balance + 0.5 * net_contributions
@@ -99,18 +116,27 @@ def account_return(account_id: int, db: Session) -> dict:
     if simple is not None and (1 + simple) > 0:
         annualized = (1 + simple) ** (365.0 / days) - 1
 
-    if monthly_contrib > 0:
-        basis = (
-            f"{len(snaps)} statements {first.date.isoformat()}→{last.date.isoformat()}; "
-            f"netted out ~${net_contributions:,.0f} of contributions "
-            f"(${monthly_contrib:,.0f}/mo est.)"
+    # Guard against publishing a garbage number. If we had to ESTIMATE contributions
+    # and the result is implausibly large (>50%/yr), the growth is almost entirely
+    # un-tracked deposits (classic for a HYSA you're funding). Report it as
+    # unmeasurable instead of "2700%/yr".
+    if annualized is not None and low_confidence and annualized > 0.50:
+        base["period_start"] = first.date.isoformat()
+        base["period_end"] = last.date.isoformat()
+        base["start_balance"] = round(first.balance, 2)
+        base["end_balance"] = round(last.balance, 2)
+        base["basis"] = (
+            "can't measure a real return — this account grew mostly from deposits we can't "
+            "see in the statements (set the monthly contribution on its holdings, or it's a "
+            "savings account whose 'return' is just its APY)"
         )
-    else:
-        basis = (
-            f"{len(snaps)} statements {first.date.isoformat()}→{last.date.isoformat()}; "
-            f"GROSS (no contribution estimate — set monthly contribution on holdings "
-            f"for a truer figure)"
-        )
+        return base
+
+    basis = (
+        f"{len(snaps)} statements {first.date.isoformat()}→{last.date.isoformat()}; {contrib_basis}"
+        + ("  [LOW CONFIDENCE — contributions estimated, treat as rough]" if low_confidence else "")
+    )
+    base["low_confidence"] = low_confidence
 
     base.update({
         "annualized_pct": round(annualized * 100, 1) if annualized is not None else None,
