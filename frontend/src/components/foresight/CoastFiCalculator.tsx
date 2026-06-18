@@ -5,7 +5,7 @@ import {
   Area, AreaChart, CartesianGrid, Line, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { Check, CircleDollarSign, Flag, Info, RotateCcw, Sparkles, Sun, Target, TrendingUp } from 'lucide-react'
+import { Check, CircleDollarSign, Flag, Info, RotateCcw, Sparkles, Sun, Target, TrendingUp, Wallet } from 'lucide-react'
 import Card from '@/components/ui/Card'
 import { ForecastResponse, InvestmentHolding } from '@/lib/types'
 import { getFinancialProfile, updateFinancialProfile } from '@/lib/api'
@@ -183,11 +183,18 @@ export default function CoastFiCalculator({
 
     const yearsToCoast = coastFiYear !== null ? coastFiYear - thisYear : null
 
+    // "Retirement salary" (today's $): target = the income the fully-funded portfolio pays
+    // (= your retirement spend); funded-so-far = what today's invested balance pays at the SWR.
+    const targetAnnualSalary = annualRetirementSpendToday
+    const fundedAnnualSalary = inputs.currentInvested * swr
+    const salaryPctFunded = targetAnnualSalary > 0 ? (fundedAnnualSalary / targetAnnualSalary) * 100 : 0
+
     return {
       years, nominal, inflation, fireNumber, coastFiNumber, alreadyCoastFi,
       coastFiYear, yearsToCoast, fireYear: thisYear + years,
       projection,
       annualRetirementSpendToday, annualRetirementSpendFuture, thisYear,
+      targetAnnualSalary, fundedAnnualSalary, salaryPctFunded,
     }
   }, [inputs])
 
@@ -284,6 +291,61 @@ export default function CoastFiCalculator({
             {result.alreadyCoastFi
               ? `You're already Coast FI. Investing nothing more, your pile is projected to reach the FIRE number by ${result.fireYear}.`
               : `Contributing ${formatCurrency(inputs.monthlyContribution)}/mo, you reach Coast FI in ${result.yearsToCoast ?? '—'} ${result.yearsToCoast === 1 ? 'year' : 'years'}${result.coastFiYear ? ` (${result.coastFiYear})` : ''}.`}
+          </p>
+        </div>
+      </Card>
+
+      {/* Retirement salary */}
+      <Card title="Your retirement salary">
+        <p className="mb-3 text-xs text-muted">
+          What your retirement actually pays you, in today&apos;s dollars — the income side of the numbers above.
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <Metric icon={Wallet} tone="green" label="Target salary (when fully funded)"
+            value={`${formatCurrency(result.targetAnnualSalary)}/yr`}
+            onClick={() => onDetail({
+              title: 'Target retirement salary',
+              value: `${formatCurrency(result.targetAnnualSalary)}/yr`,
+              formula: `Your retirement spend is the income your fully-funded portfolio pays: ${formatCurrency(inputs.monthlyRetirementSpend)}/mo × 12 = ${formatCurrency(result.targetAnnualSalary)}/yr (${formatCurrency(result.targetAnnualSalary / 12)}/mo). At the ${inputs.safeWithdrawalRate}% safe withdrawal rate, the ${formatCurrency(result.fireNumber)} FIRE number is sized to pay exactly this, inflation-adjusted, for life.`,
+              notes: [
+                'This is in today’s dollars — the FIRE number is the inflated lump sum that funds it.',
+                'Change "Monthly retirement spend" above to change this salary.',
+              ],
+              inputs: [
+                { label: 'Monthly retirement spend', value: formatCurrency(inputs.monthlyRetirementSpend) },
+                { label: 'Target annual salary', value: `${formatCurrency(result.targetAnnualSalary)}/yr` },
+                { label: 'Target monthly salary', value: `${formatCurrency(result.targetAnnualSalary / 12)}/mo` },
+              ],
+            })} />
+          <Metric icon={CircleDollarSign} tone="blue" label="Funded so far (current pile × 4%)"
+            value={`${formatCurrency(result.fundedAnnualSalary)}/yr`}
+            onClick={() => onDetail({
+              title: 'Retirement salary funded so far',
+              value: `${formatCurrency(result.fundedAnnualSalary)}/yr`,
+              formula: `Your invested ${formatCurrency(inputs.currentInvested)} × ${inputs.safeWithdrawalRate}% safe withdrawal rate = ${formatCurrency(result.fundedAnnualSalary)}/yr (${formatCurrency(result.fundedAnnualSalary / 12)}/mo) — what your current portfolio could safely pay if you retired today. That's ${result.salaryPctFunded.toFixed(0)}% of your ${formatCurrency(result.targetAnnualSalary)}/yr target.`,
+              notes: [
+                'This grows toward the target salary as your investments compound and you keep contributing.',
+                'It is NOT today’s income — it is the retirement paycheck your current balance would support.',
+              ],
+              inputs: [
+                { label: 'Invested today', value: formatCurrency(inputs.currentInvested) },
+                { label: 'Safe withdrawal rate', value: `${inputs.safeWithdrawalRate}%` },
+                { label: 'Funded annual salary', value: `${formatCurrency(result.fundedAnnualSalary)}/yr` },
+              ],
+            })} />
+        </div>
+        <div className="mt-3">
+          <div className="mb-1 flex items-center justify-between text-xs text-text-secondary">
+            <span>Retirement salary funded</span>
+            <span className="font-semibold text-primary">{result.salaryPctFunded.toFixed(0)}%</span>
+          </div>
+          <div className="h-2.5 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-info" style={{ width: `${Math.min(100, result.salaryPctFunded)}%` }} />
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            Your investments could pay <span className="text-info font-medium">{formatCurrency(result.fundedAnnualSalary / 12)}/mo</span> today
+            vs your <span className="text-primary font-medium">{formatCurrency(result.targetAnnualSalary / 12)}/mo</span> target —
+            keep contributing and compounding closes the gap by {result.fireYear}.
           </p>
         </div>
       </Card>

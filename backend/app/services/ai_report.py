@@ -528,6 +528,12 @@ def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
     annual_future = annual_today * ((1 + inflation) ** years)
     fire_number = annual_future / swr if swr else 0.0
     coast_fi_number = fire_number / ((1 + nominal) ** years) if years >= 0 else fire_number
+
+    # "Retirement salary" = the income side of the same numbers, in today's dollars.
+    #  - TARGET salary: what the fully-funded portfolio pays = your retirement spend (annual).
+    #  - FUNDED-SO-FAR salary: what today's invested balance throws off at the SWR right now.
+    target_annual_salary = annual_today
+    funded_annual_salary = invested * swr
     return {
         "invested": round(invested, 2),
         "monthly_spend": round(monthly_spend, 2),
@@ -537,6 +543,12 @@ def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
         "coast_fi_number": round(coast_fi_number, 2),
         "is_coast_fi": invested >= coast_fi_number,
         "pct_to_coast": round(invested / coast_fi_number * 100, 1) if coast_fi_number > 0 else 0,
+        # Retirement income view (today's $)
+        "target_annual_salary": round(target_annual_salary, 2),
+        "target_monthly_salary": round(target_annual_salary / 12, 2),
+        "funded_annual_salary": round(funded_annual_salary, 2),
+        "funded_monthly_salary": round(funded_annual_salary / 12, 2),
+        "salary_pct_funded": round(funded_annual_salary / target_annual_salary * 100, 1) if target_annual_salary > 0 else 0,
     }
 
 
@@ -639,6 +651,11 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         "    number by retirement age. FIRE number = inflated annual retirement spend / safe withdrawal rate.",
         "    If you show the math, plug in these exact numbers; if a question changes an assumption, say the",
         "    headline figures above use the standard assumptions and reason from there.",
+        f"  - RETIREMENT SALARY (today's $): the income these numbers pay. TARGET salary = ${coast['target_annual_salary']:,.0f}/yr "
+        f"(${coast['target_monthly_salary']:,.0f}/mo) — what the fully-funded portfolio pays at the 4% rule, i.e. your retirement spend.",
+        f"    FUNDED SO FAR = ${coast['funded_annual_salary']:,.0f}/yr (${coast['funded_monthly_salary']:,.0f}/mo) — what your current "
+        f"invested ${coast['invested']:,.0f} would pay TODAY at 4% ({coast['salary_pct_funded']}% of the target salary). It grows toward",
+        "    the target as investments compound. If asked 'what's my retirement salary', lead with the TARGET, then funded-so-far.",
         "",
         "Accounts:",
     ]
