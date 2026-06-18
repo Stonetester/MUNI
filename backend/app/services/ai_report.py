@@ -370,17 +370,100 @@ def _gather_alltime_by_category(user: User, db: Session) -> dict:
     }
 
 
+# Account types that compound toward retirement (mirror of the Coast FI tab).
+_GROWTH_TYPES = {"401k", "ira", "hsa", "brokerage", "hysa"}
+
+# Default Coast FI assumptions (match the Coast FI calculator / source video).
+_COAST_DEFAULTS = {"return": 0.10, "inflation": 0.03, "swr": 0.04, "retire_age": 65, "age": 30}
+
+
+def _gather_coast_fi(user: User, db: Session) -> dict:
+    """Compute the same Coast FI / FIRE figures the Coast FI tab shows, from real accounts."""
+    accounts = db.query(Account).filter(Account.user_id == user.id).all()
+    invested = sum(a.balance for a in accounts if a.account_type in _GROWTH_TYPES and a.balance > 0)
+
+    today = date.today()
+    # Monthly retirement spend defaults to current monthly spend if available, else $6k.
+    this_month = _gather_financial_data(user, db, today.year, today.month)["this_month"]
+    monthly_spend = this_month["spending"] or 6000.0
+
+    years = _COAST_DEFAULTS["retire_age"] - _COAST_DEFAULTS["age"]
+    nominal, inflation, swr = _COAST_DEFAULTS["return"], _COAST_DEFAULTS["inflation"], _COAST_DEFAULTS["swr"]
+    annual_today = monthly_spend * 12
+    annual_future = annual_today * ((1 + inflation) ** years)
+    fire_number = annual_future / swr if swr else 0.0
+    coast_fi_number = fire_number / ((1 + nominal) ** years) if years >= 0 else fire_number
+    return {
+        "invested": round(invested, 2),
+        "monthly_spend": round(monthly_spend, 2),
+        "years_to_retire": years,
+        "fire_number": round(fire_number, 2),
+        "coast_fi_number": round(coast_fi_number, 2),
+        "is_coast_fi": invested >= coast_fi_number,
+        "pct_to_coast": round(invested / coast_fi_number * 100, 1) if coast_fi_number > 0 else 0,
+    }
+
+
+# Keywords / shapes that mark a question as "hard" → auto-escalate to the frontier model.
+_HARD_KEYWORDS = (
+    "explain", "why", "how does", "how do", "what is", "what's the difference", "compare",
+    "strategy", "should i", "trade-off", "tradeoff", "pros and cons", "scenario",
+    "optimize", "tax", "mortgage", "refinance", "amortiz", "withdrawal", "roth", "backdoor",
+    "rebalance", "allocation", "coast fi", "coast-fi", "fire number", "safe withdrawal",
+)
+
+
+def _is_hard_question(message: str) -> bool:
+    """Heuristic: conceptual, multi-part, or long questions warrant the stronger model."""
+    text = message.lower().strip()
+    if len(text) > 240:
+        return True
+    if text.count("?") >= 2:
+        return True
+    if any(kw in text for kw in _HARD_KEYWORDS):
+        return True
+    # multi-part ("and"/"vs"/numbered) conceptual asks
+    if (" vs " in text or " versus " in text) and "?" in text:
+        return True
+    return False
+
+
+def _reply_low_confidence(reply: str) -> bool:
+    """Detect a local model punting so we can escalate."""
+    low = reply.lower()
+    return any(s in low for s in (
+        "i'm not sure", "i am not sure", "i don't know", "i do not know",
+        "consult a financial", "cannot determine", "unable to determine",
+    ))
+
+
 def _build_chat_system_prompt(user: User, db: Session) -> str:
     today = date.today()
     data = _gather_financial_data(user, db, today.year, today.month)
     alltime = _gather_alltime_by_category(user, db)
+    coast = _gather_coast_fi(user, db)
 
     ctx_lines = [
-        f"You are a personal financial advisor for {data['user'].capitalize()}.",
-        "Answer questions about their finances directly and specifically using the data below.",
-        "Be concise. Use numbers from the data. If something isn't in the data, say so.",
+        f"You are a personal finance tutor and advisor for {data['user'].capitalize()}.",
+        "You do two things: (1) answer questions about THEIR finances using the real numbers below, and",
+        "(2) teach finance concepts — define terms plainly and, when useful, work the math using THEIR numbers.",
+        "You can explain and calculate: Coast FI, FIRE, safe withdrawal rate (the 4% rule), compound growth,",
+        "savings rate, net worth, house-buying terms (down payment, PMI, DTI, closing costs, points, amortization,",
+        "fixed vs ARM), retirement accounts (401k/IRA/Roth/HSA), and general personal-finance math.",
+        "Rules: be concise and concrete. Prefer THEIR numbers over generic examples — that is the whole point.",
+        "Show the formula and the substituted numbers when you calculate. If a figure isn't in the data, say so",
+        "rather than inventing it. Use plain language; define a term before using it.",
         "",
         f"Net Worth: ${data['net_worth']:,.2f} (Assets: ${data['total_assets']:,.2f}, Liabilities: ${data['total_liabilities']:,.2f})",
+        "",
+        "Coast FI / FIRE (today's figures, assumptions: 10% return, 3% inflation, 4% SWR, retire at 65):",
+        f"  - Invested toward retirement (401k/IRA/HSA/brokerage/HYSA): ${coast['invested']:,.2f}",
+        f"  - Current monthly spend used for the estimate: ${coast['monthly_spend']:,.2f}",
+        f"  - Traditional FIRE number: ${coast['fire_number']:,.2f}",
+        f"  - Coast FI number (need invested today): ${coast['coast_fi_number']:,.2f}  →  {coast['pct_to_coast']}% there"
+        + ("  (ALREADY Coast FI)" if coast["is_coast_fi"] else ""),
+        "  - Coast FI = amount invested today that, with growth alone (no new contributions), reaches the FIRE",
+        "    number by retirement age. FIRE number = inflated annual retirement spend / safe withdrawal rate.",
         "",
         "Accounts:",
     ]
@@ -470,29 +553,74 @@ def _chat_with_ollama(host: str, model: str, system_prompt: str, history: list, 
         )
 
 
-def answer_chat_question(user: User, db: Session, message: str, history: list, provider: str = "claude") -> str:
+def _chat_via_claude(settings, system_prompt: str, history: list, message: str) -> tuple[str, str]:
+    if not settings.ANTHROPIC_API_KEY:
+        return "⚠️ No Anthropic key set in backend `.env`.", "error"
+    try:
+        return _chat_with_claude(settings.ANTHROPIC_API_KEY, system_prompt, history, message), "claude"
+    except Exception as e:
+        return f"⚠️ **Claude Error**\n\n{e}", "error"
+
+
+def answer_chat_question(
+    user: User,
+    db: Session,
+    message: str,
+    history: list,
+    provider: str = "ollama",
+    model: str | None = None,
+    escalate: bool = False,
+) -> tuple[str, str]:
+    """Answer a finance-tutor chat question.
+
+    Returns (reply, model_used). When provider is the local model, a hard question
+    (or an explicit `escalate`) auto-routes to Claude. `model_used` reflects who
+    actually answered (e.g. "qwen3:14b", "claude", "qwen3:14b→claude").
+    """
     from app.config import settings
 
     system_prompt = _build_chat_system_prompt(user, db)
 
-    if provider == "ollama":
-        host = settings.OLLAMA_HOST or "http://10.0.0.172:11434"
-        model = settings.OLLAMA_REPORT_MODEL or "qwen3:8b"
-        try:
-            return _chat_with_ollama(host, model, system_prompt, history, message)
-        except Exception as e:
-            return f"⚠️ **Mongol Error**\n\n{e}"
-    elif provider == "openai":
+    # Manual override → straight to the strong model.
+    if escalate:
+        reply, used = _chat_via_claude(settings, system_prompt, history, message)
+        return reply, used
+
+    if provider == "openai":
         if not settings.OPENAI_API_KEY:
-            return "⚠️ No OpenAI key set in backend `.env`."
+            return "⚠️ No OpenAI key set in backend `.env`.", "error"
         try:
-            return _chat_with_openai(settings.OPENAI_API_KEY, system_prompt, history, message)
+            return _chat_with_openai(settings.OPENAI_API_KEY, system_prompt, history, message), "openai"
         except Exception as e:
-            return f"⚠️ **ChatGPT Error**\n\n{e}"
-    else:
-        if not settings.ANTHROPIC_API_KEY:
-            return "⚠️ No Anthropic key set in backend `.env`."
-        try:
-            return _chat_with_claude(settings.ANTHROPIC_API_KEY, system_prompt, history, message)
-        except Exception as e:
-            return f"⚠️ **Claude Error**\n\n{e}"
+            return f"⚠️ **ChatGPT Error**\n\n{e}", "error"
+
+    if provider == "claude":
+        return _chat_via_claude(settings, system_prompt, history, message)
+
+    # provider == "ollama" (local 14b, default) — with auto-escalation on hard questions.
+    host = settings.OLLAMA_HOST or "http://10.0.0.172:11434"
+    local_model = model or settings.OLLAMA_CHAT_MODEL or "qwen3:14b"
+
+    if _is_hard_question(message) and settings.ANTHROPIC_API_KEY:
+        reply, used = _chat_via_claude(settings, system_prompt, history, message)
+        if used == "claude":
+            return reply, f"{local_model}→claude"
+        # Claude unavailable/failed → fall through to local.
+
+    try:
+        reply = _chat_with_ollama(host, local_model, system_prompt, history, message)
+    except Exception as e:
+        # Local unreachable → try Claude as a fallback before giving up.
+        if settings.ANTHROPIC_API_KEY:
+            fb, used = _chat_via_claude(settings, system_prompt, history, message)
+            if used == "claude":
+                return fb, f"{local_model} (unreachable)→claude"
+        return f"⚠️ **Mongol Error**\n\n{e}", "error"
+
+    # Local answered but punted → escalate.
+    if _reply_low_confidence(reply) and settings.ANTHROPIC_API_KEY:
+        esc, used = _chat_via_claude(settings, system_prompt, history, message)
+        if used == "claude":
+            return esc, f"{local_model}→claude"
+
+    return reply, local_model

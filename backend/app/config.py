@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OLLAMA_HOST: str = "http://10.0.0.172:11434"
     OLLAMA_REPORT_MODEL: str = "qwen3:8b"
+    OLLAMA_CHAT_MODEL: str = "qwen3:14b"
 
     class Config:
         env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
