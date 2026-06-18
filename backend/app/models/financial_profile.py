@@ -26,6 +26,10 @@ class FinancialProfile(Base):
     # IRA
     ira_monthly_contribution = Column(Float, nullable=True)
 
+    # Coast FI / FIRE — user's expected monthly spend in retirement (today's $).
+    # When set, overrides the computed estimate. None = use the smart estimate.
+    monthly_retirement_spend = Column(Float, nullable=True)
+
     # Hidden sections — JSON array of section keys to hide in UI
     # e.g. '["student_loans", "ira"]'
     hidden_sections = Column(String, nullable=True, default="[]")

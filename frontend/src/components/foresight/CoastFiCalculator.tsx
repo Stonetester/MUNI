@@ -1,13 +1,14 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Area, AreaChart, CartesianGrid, Line, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { CircleDollarSign, Flag, Info, RotateCcw, Sparkles, Sun, Target, TrendingUp } from 'lucide-react'
+import { Check, CircleDollarSign, Flag, Info, RotateCcw, Sparkles, Sun, Target, TrendingUp } from 'lucide-react'
 import Card from '@/components/ui/Card'
 import { ForecastResponse, InvestmentHolding } from '@/lib/types'
+import { getFinancialProfile, updateFinancialProfile } from '@/lib/api'
 import { formatCurrency, cn } from '@/lib/utils'
 
 // Defaults taken directly from the "Coast FI" methodology in the source video
@@ -89,6 +90,32 @@ export default function CoastFiCalculator({
 
   const set = (key: keyof Inputs, value: number) =>
     setInputs((prev) => ({ ...prev, [key]: Number.isFinite(value) ? value : 0 }))
+
+  // Load a saved "expected retirement spend" override from the Financial Profile.
+  const [savedSpend, setSavedSpend] = useState<number | null>(null)
+  const [spendSaveState, setSpendSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  useEffect(() => {
+    getFinancialProfile()
+      .then((p) => {
+        if (p?.monthly_retirement_spend != null) {
+          setSavedSpend(p.monthly_retirement_spend)
+          setInputs((prev) => ({ ...prev, monthlyRetirementSpend: Math.round(p.monthly_retirement_spend!) }))
+        }
+      })
+      .catch(() => { /* non-fatal */ })
+  }, [])
+
+  const saveRetirementSpend = async () => {
+    setSpendSaveState('saving')
+    try {
+      await updateFinancialProfile({ monthly_retirement_spend: inputs.monthlyRetirementSpend })
+      setSavedSpend(inputs.monthlyRetirementSpend)
+      setSpendSaveState('saved')
+      setTimeout(() => setSpendSaveState('idle'), 2000)
+    } catch {
+      setSpendSaveState('idle')
+    }
+  }
 
   const reset = () => setInputs({
     currentAge: currentAge || 30,
@@ -314,6 +341,23 @@ export default function CoastFiCalculator({
           <Field label="Investment return" value={inputs.investmentReturn} suffix="%" step={0.5} onChange={(v) => set('investmentReturn', v)} />
           <Field label="Inflation rate" value={inputs.inflationRate} suffix="%" step={0.5} onChange={(v) => set('inflationRate', v)} />
           <Field label="Safe withdrawal rate" value={inputs.safeWithdrawalRate} suffix="%" step={0.25} onChange={(v) => set('safeWithdrawalRate', v)} />
+        </div>
+
+        {/* Persist the retirement-spend assumption so the AI chat uses the same number */}
+        <div className="mt-3 flex flex-col gap-2 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-text-secondary">
+            <span className="font-medium text-amber-300">Monthly retirement spend</span> drives your whole Coast FI number.
+            {savedSpend != null
+              ? ` Saved: ${formatCurrency(savedSpend)}/mo — the AI chat uses this too.`
+              : ' By default it’s estimated from your recurring spending (excludes wedding, student loans, and smooths one-offs). Set your own to be precise.'}
+          </p>
+          <button
+            onClick={saveRetirementSpend}
+            disabled={spendSaveState === 'saving' || inputs.monthlyRetirementSpend === savedSpend}
+            className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-400/20 disabled:opacity-50"
+          >
+            {spendSaveState === 'saved' ? <><Check size={13} /> Saved</> : spendSaveState === 'saving' ? 'Saving…' : `Save ${formatCurrency(inputs.monthlyRetirementSpend)}/mo`}
+          </button>
         </div>
       </Card>
 
