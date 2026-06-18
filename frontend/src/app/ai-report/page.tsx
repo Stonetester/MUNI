@@ -17,32 +17,114 @@ type Provider = 'claude' | 'openai' | 'ollama'
 type Tab = 'report' | 'chat'
 type ChatMessage = { role: 'user' | 'assistant'; content: string; modelUsed?: string }
 
-function ReportMarkdown({ text }: { text: string }) {
-  const lines = text.split('\n')
-  return (
-    <div className="prose prose-invert max-w-none text-sm leading-relaxed">
-      {lines.map((line, i) => {
-        if (line.startsWith('## ')) return <h2 key={i} className="text-base font-bold text-text-primary mt-6 mb-2 first:mt-0">{line.replace('## ', '')}</h2>
-        if (line.startsWith('# ')) return <h1 key={i} className="text-lg font-bold text-text-primary mt-4 mb-3">{line.replace('# ', '')}</h1>
-        if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-semibold text-text-primary mt-4 mb-1">{line.replace('### ', '')}</h3>
-        if (line.startsWith('- ') || line.startsWith('* ')) {
-          const content = line.replace(/^[-*] /, '')
-          return (
-            <div key={i} className="flex gap-2 my-1 text-text-secondary">
-              <span className="text-primary mt-1 shrink-0">•</span>
-              <span dangerouslySetInnerHTML={{ __html: boldify(content) }} />
-            </div>
-          )
-        }
-        if (line.trim() === '') return <div key={i} className="my-2" />
-        return <p key={i} className="text-text-secondary my-1" dangerouslySetInnerHTML={{ __html: boldify(line) }} />
-      })}
-    </div>
-  )
+// Inline: **bold**, *italic*, `code`. Run bold first so * inside ** isn't mis-parsed.
+function inlineMd(text: string): string {
+  const escaped = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return escaped
+    .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-text-primary font-semibold">$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em class="text-text-secondary/90 italic">$2</em>')
+    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 rounded bg-black/30 text-[0.85em] text-violet-300 font-mono">$1</code>')
 }
 
-function boldify(text: string): string {
-  return text.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-text-primary font-semibold">$1</strong>')
+// Block-level markdown renderer: headers, tables, blockquotes, ---, bullet + numbered
+// lists, paragraphs. Self-contained (no deps), styled for the dark theme.
+function ReportMarkdown({ text }: { text: string }) {
+  const lines = text.replace(/\r/g, '').split('\n')
+  const blocks: React.ReactNode[] = []
+  let i = 0
+  const isTableRow = (l: string) => /^\s*\|.*\|\s*$/.test(l)
+  const isDivider = (l: string) => /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(l) && l.includes('-')
+  const splitRow = (l: string) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim())
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    // Table: a pipe row followed by a |---|---| divider
+    if (isTableRow(line) && i + 1 < lines.length && isDivider(lines[i + 1])) {
+      const header = splitRow(line)
+      i += 2
+      const rows: string[][] = []
+      while (i < lines.length && isTableRow(lines[i])) { rows.push(splitRow(lines[i])); i++ }
+      blocks.push(
+        <div key={`t${i}`} className="my-3 overflow-x-auto rounded-xl border border-border">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-surface-2">
+                {header.map((h, hi) => (
+                  <th key={hi} className="px-3 py-2 text-left font-semibold text-text-primary border-b border-border" dangerouslySetInnerHTML={{ __html: inlineMd(h) }} />
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, ri) => (
+                <tr key={ri} className="border-b border-border/50 last:border-0">
+                  {header.map((_, ci) => (
+                    <td key={ci} className={`px-3 py-2 ${ci === 0 ? 'text-text-secondary' : 'text-text-primary'}`} dangerouslySetInnerHTML={{ __html: inlineMd(r[ci] ?? '') }} />
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+      continue
+    }
+
+    // Horizontal rule
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { blocks.push(<hr key={`hr${i}`} className="my-3 border-border" />); i++; continue }
+
+    // Headers
+    if (line.startsWith('### ')) { blocks.push(<h3 key={i} className="text-sm font-semibold text-text-primary mt-4 mb-1" dangerouslySetInnerHTML={{ __html: inlineMd(line.slice(4)) }} />); i++; continue }
+    if (line.startsWith('## ')) { blocks.push(<h2 key={i} className="text-base font-bold text-text-primary mt-5 mb-2 first:mt-0" dangerouslySetInnerHTML={{ __html: inlineMd(line.slice(3)) }} />); i++; continue }
+    if (line.startsWith('# ')) { blocks.push(<h1 key={i} className="text-lg font-bold text-text-primary mt-4 mb-3 first:mt-0" dangerouslySetInnerHTML={{ __html: inlineMd(line.slice(2)) }} />); i++; continue }
+
+    // Blockquote (consume consecutive > lines)
+    if (/^\s*>/.test(line)) {
+      const quote: string[] = []
+      while (i < lines.length && /^\s*>/.test(lines[i])) { quote.push(lines[i].replace(/^\s*>\s?/, '')); i++ }
+      blocks.push(
+        <div key={`q${i}`} className="my-2 border-l-2 border-violet-500/40 pl-3 text-text-secondary">
+          {quote.map((q, qi) => <p key={qi} className="my-0.5 text-[13px]" dangerouslySetInnerHTML={{ __html: inlineMd(q) }} />)}
+        </div>
+      )
+      continue
+    }
+
+    // Numbered list item
+    const numMatch = line.match(/^\s*(\d+)\.\s+(.*)$/)
+    if (numMatch) {
+      blocks.push(
+        <div key={i} className="flex gap-2 my-1 text-text-secondary">
+          <span className="text-primary font-semibold shrink-0">{numMatch[1]}.</span>
+          <span dangerouslySetInnerHTML={{ __html: inlineMd(numMatch[2]) }} />
+        </div>
+      )
+      i++; continue
+    }
+
+    // Bullet (supports a little indentation for sub-bullets)
+    const bulletMatch = line.match(/^(\s*)[-*]\s+(.*)$/)
+    if (bulletMatch) {
+      const indent = bulletMatch[1].length >= 2 ? 'ml-4' : ''
+      blocks.push(
+        <div key={i} className={`flex gap-2 my-1 text-text-secondary ${indent}`}>
+          <span className="text-primary mt-1 shrink-0">•</span>
+          <span dangerouslySetInnerHTML={{ __html: inlineMd(bulletMatch[2]) }} />
+        </div>
+      )
+      i++; continue
+    }
+
+    // Blank line
+    if (line.trim() === '') { blocks.push(<div key={i} className="h-2" />); i++; continue }
+
+    // Paragraph
+    blocks.push(<p key={i} className="text-text-secondary my-1 leading-relaxed" dangerouslySetInnerHTML={{ __html: inlineMd(line) }} />)
+    i++
+  }
+
+  return <div className="max-w-none text-sm leading-relaxed">{blocks}</div>
 }
 
 function ProviderBadge({ provider }: { provider: string }) {
