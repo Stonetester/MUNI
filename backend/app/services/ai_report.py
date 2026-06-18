@@ -437,12 +437,20 @@ def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
     accounts = db.query(Account).filter(Account.user_id.in_(user_ids)).all()
     invested = sum(a.balance for a in accounts if a.account_type in _GROWTH_TYPES and a.balance > 0)
 
+    # Representative monthly spend = average of the last completed months (EXCLUDING the
+    # current, partial month). Using a single month — especially the current partial one —
+    # badly distorts the FIRE number (e.g. a low June made it look like Coast FI was already hit).
     today = date.today()
-    # Monthly retirement spend defaults to combined current monthly spend if available, else $6k.
-    monthly_spend = 0.0
-    for u in users:
-        monthly_spend += _gather_financial_data(u, db, today.year, today.month)["this_month"]["spending"]
-    monthly_spend = monthly_spend or 6000.0
+    current_key = today.strftime("%Y-%m")
+    history = _gather_monthly_history(users, db, months=13)  # 12 completed + current
+    completed = [h for h in history if h["month"] != current_key and h["spending"] > 0]
+    sample = completed[:6] if len(completed) >= 3 else completed  # last 6 completed months
+    if sample:
+        monthly_spend = sum(h["spending"] for h in sample) / len(sample)
+        spend_basis = f"average of the last {len(sample)} completed months"
+    else:
+        monthly_spend = 6000.0
+        spend_basis = "default ($6,000; not enough history)"
 
     years = _COAST_DEFAULTS["retire_age"] - _COAST_DEFAULTS["age"]
     nominal, inflation, swr = _COAST_DEFAULTS["return"], _COAST_DEFAULTS["inflation"], _COAST_DEFAULTS["swr"]
@@ -453,6 +461,7 @@ def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
     return {
         "invested": round(invested, 2),
         "monthly_spend": round(monthly_spend, 2),
+        "spend_basis": spend_basis,
         "years_to_retire": years,
         "fire_number": round(fire_number, 2),
         "coast_fi_number": round(coast_fi_number, 2),
@@ -544,14 +553,18 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         f"{'Household ' if joint else ''}Net Worth: ${net_worth:,.2f} (Assets: ${total_assets:,.2f}, Liabilities: ${total_liabilities:,.2f})",
         "",
         f"Coast FI / FIRE — {'HOUSEHOLD (both partners combined)' if joint else 'this person only'} "
-        "(assumptions: 10% return, 3% inflation, 4% SWR, retire at 65):",
+        "(assumptions: 10% return, 3% inflation, 4% SWR, retire at 65). THESE ARE THE CANONICAL,",
+        "PRE-COMPUTED FIGURES — use them directly; do NOT recompute the FIRE or Coast FI number from",
+        "the monthly spend yourself (you'll get a different answer than the app's Coast FI tab):",
         f"  - Invested toward retirement (401k/IRA/HSA/brokerage/HYSA): ${coast['invested']:,.2f}",
-        f"  - Current monthly spend used for the estimate: ${coast['monthly_spend']:,.2f}",
+        f"  - Monthly spend used (today's $): ${coast['monthly_spend']:,.2f} — {coast['spend_basis']}, NOT a single month",
         f"  - Traditional FIRE number: ${coast['fire_number']:,.2f}",
         f"  - Coast FI number (need invested today): ${coast['coast_fi_number']:,.2f}  →  {coast['pct_to_coast']}% there"
         + ("  (ALREADY Coast FI)" if coast["is_coast_fi"] else ""),
         "  - Coast FI = amount invested today that, with growth alone (no new contributions), reaches the FIRE",
         "    number by retirement age. FIRE number = inflated annual retirement spend / safe withdrawal rate.",
+        "    If you show the math, plug in these exact numbers; if a question changes an assumption, say the",
+        "    headline figures above use the standard assumptions and reason from there.",
         "",
         "Accounts:",
     ]
