@@ -404,17 +404,22 @@ def _gather_coast_fi(user: User, db: Session) -> dict:
     }
 
 
-# Keywords / shapes that mark a question as "hard" → auto-escalate to the frontier model.
+# Keywords / shapes that mark a question as conceptual/advisory → auto-escalate.
+# Deliberately NOT generic lookups like "what is my…"/"how much…" — those stay local.
 _HARD_KEYWORDS = (
-    "explain", "why", "how does", "how do", "what is", "what's the difference", "compare",
-    "strategy", "should i", "trade-off", "tradeoff", "pros and cons", "scenario",
-    "optimize", "tax", "mortgage", "refinance", "amortiz", "withdrawal", "roth", "backdoor",
-    "rebalance", "allocation", "coast fi", "coast-fi", "fire number", "safe withdrawal",
+    "explain", "why ", "how does", "what's the difference", "difference between", "compare",
+    "strategy", "should i", "trade-off", "tradeoff", "pros and cons", "scenario", "what if",
+    "optimize", "refinance", "amortiz", "backdoor", "rebalance", "allocation",
+    "coast fi", "coast-fi", "fire number", "safe withdrawal", "withdrawal rate",
+    "roth vs", "roth or", "pmi", "down payment", "recommend", "advice", "better to",
 )
 
 
 def _is_hard_question(message: str) -> bool:
-    """Heuristic: conceptual, multi-part, or long questions warrant the stronger model."""
+    """Heuristic: conceptual/advisory, multi-part, or long questions warrant the stronger model.
+
+    Plain data lookups ("what is my net worth?", "how much did I spend on dining?") stay local.
+    """
     text = message.lower().strip()
     if len(text) > 240:
         return True
@@ -422,7 +427,7 @@ def _is_hard_question(message: str) -> bool:
         return True
     if any(kw in text for kw in _HARD_KEYWORDS):
         return True
-    # multi-part ("and"/"vs"/numbered) conceptual asks
+    # explicit comparisons phrased as a question
     if (" vs " in text or " versus " in text) and "?" in text:
         return True
     return False
