@@ -5,7 +5,7 @@ import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import { getAiReport, postAiChat } from '@/lib/api'
-import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare } from 'lucide-react'
+import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap } from 'lucide-react'
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -14,7 +14,7 @@ const MONTHS = [
 
 type Provider = 'claude' | 'openai' | 'ollama'
 type Tab = 'report' | 'chat'
-type ChatMessage = { role: 'user' | 'assistant'; content: string }
+type ChatMessage = { role: 'user' | 'assistant'; content: string; modelUsed?: string }
 
 function ReportMarkdown({ text }: { text: string }) {
   const lines = text.split('\n')
@@ -65,7 +65,7 @@ function ProviderBadge({ provider }: { provider: string }) {
   )
 }
 
-function ProviderToggle({ provider, onChange }: { provider: Provider; onChange: (p: Provider) => void }) {
+function ProviderToggle({ provider, onChange, localLabel = 'Mongol' }: { provider: Provider; onChange: (p: Provider) => void; localLabel?: string }) {
   const btn = (p: Provider, label: string, active: string, inactive: string) => (
     <button
       onClick={() => onChange(p)}
@@ -76,9 +76,9 @@ function ProviderToggle({ provider, onChange }: { provider: Provider; onChange: 
   )
   return (
     <div className="flex items-center justify-center gap-2">
+      {btn('ollama', localLabel, 'bg-orange-500/20 text-orange-400 border-orange-500/30', 'text-text-secondary hover:text-text-primary hover:bg-surface-2 border-transparent')}
       {btn('claude', 'Claude', 'bg-violet-500/20 text-violet-400 border-violet-500/30', 'text-text-secondary hover:text-text-primary hover:bg-surface-2 border-transparent')}
       {btn('openai', 'ChatGPT', 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30', 'text-text-secondary hover:text-text-primary hover:bg-surface-2 border-transparent')}
-      {btn('ollama', 'Mongol', 'bg-orange-500/20 text-orange-400 border-orange-500/30', 'text-text-secondary hover:text-text-primary hover:bg-surface-2 border-transparent')}
     </div>
   )
 }
@@ -90,6 +90,8 @@ export default function AiReportPage() {
 
   const [tab, setTab] = useState<Tab>('report')
   const [provider, setProvider] = useState<Provider>('claude')
+  // Chat defaults to the local model (Mongol 14b); report keeps the shared provider toggle.
+  const [chatProvider, setChatProvider] = useState<Provider>('ollama')
 
   // Report state
   const [year, setYear] = useState(defaultYear)
@@ -128,7 +130,7 @@ export default function AiReportPage() {
     }
   }
 
-  const sendChat = async () => {
+  const sendChat = async (escalate = false) => {
     const msg = chatInput.trim()
     if (!msg || chatLoading) return
     const newHistory: ChatMessage[] = [...chatHistory, { role: 'user', content: msg }]
@@ -136,8 +138,8 @@ export default function AiReportPage() {
     setChatInput('')
     setChatLoading(true)
     try {
-      const data = await postAiChat(msg, newHistory.slice(0, -1), provider)
-      setChatHistory([...newHistory, { role: 'assistant', content: data.reply }])
+      const data = await postAiChat(msg, newHistory.slice(0, -1), chatProvider, { escalate })
+      setChatHistory([...newHistory, { role: 'assistant', content: data.reply, modelUsed: data.model_used }])
     } catch (err: unknown) {
       const e = err as { message?: string }
       setChatHistory([...newHistory, { role: 'assistant', content: `⚠️ Error: ${e?.message || 'Request failed'}` }])
@@ -146,10 +148,7 @@ export default function AiReportPage() {
     }
   }
 
-  useEffect(() => {
-    fetchReport()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // Report is NOT auto-generated — it runs only when the user clicks Generate.
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -177,7 +176,7 @@ export default function AiReportPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-text-primary">AI Financial Advisor</h1>
-            <p className="text-xs text-text-secondary">Monthly reports and financial Q&A powered by AI</p>
+            <p className="text-xs text-text-secondary">Monthly reports, plus a finance tutor that answers with your real numbers</p>
           </div>
         </div>
 
@@ -203,8 +202,10 @@ export default function AiReportPage() {
           </button>
         </div>
 
-        {/* Provider toggle — shared */}
-        <ProviderToggle provider={provider} onChange={setProvider} />
+        {/* Provider toggle — report uses `provider`, chat uses `chatProvider` (local default) */}
+        {tab === 'report'
+          ? <ProviderToggle provider={provider} onChange={setProvider} localLabel="Mongol" />
+          : <ProviderToggle provider={chatProvider} onChange={setChatProvider} localLabel="Mongol 14b" />}
 
         {/* ── REPORT TAB ── */}
         {tab === 'report' && (
@@ -292,14 +293,14 @@ export default function AiReportPage() {
             <div className="flex flex-col gap-3 min-h-[300px]">
               {chatHistory.length === 0 && (
                 <div className="flex flex-col items-center gap-3 py-12 text-center">
-                  <MessageSquare size={32} className="text-violet-400/40" />
-                  <p className="text-text-secondary text-sm">Ask anything about your finances</p>
+                  <GraduationCap size={32} className="text-violet-400/40" />
+                  <p className="text-text-secondary text-sm">Ask about your finances — or learn a term. Answered with your real numbers.</p>
                   <div className="flex flex-col gap-2 mt-2 w-full max-w-sm">
                     {[
-                      'How much did I spend on dining last month?',
-                      'Am I on track for my wedding savings goal?',
-                      'What are my biggest spending categories?',
-                      'How does my savings rate compare to last month?',
+                      'What is Coast FI, and where am I on it?',
+                      'Explain the 4% safe withdrawal rule using my numbers',
+                      'What do I need for a 20% down payment, and what is PMI?',
+                      'Roth vs traditional IRA — which fits my situation?',
                     ].map(q => (
                       <button
                         key={q}
@@ -314,7 +315,7 @@ export default function AiReportPage() {
               )}
 
               {chatHistory.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                   <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm ${
                     msg.role === 'user'
                       ? 'bg-violet-500/20 text-text-primary rounded-br-sm'
@@ -325,6 +326,13 @@ export default function AiReportPage() {
                       : msg.content
                     }
                   </div>
+                  {msg.role === 'assistant' && msg.modelUsed && (
+                    <span className="mt-1 px-2 text-[10px] text-text-secondary/70">
+                      {msg.modelUsed.includes('→') || msg.modelUsed === 'claude'
+                        ? <span className="inline-flex items-center gap-1"><Zap size={9} className="text-violet-400" />{msg.modelUsed === 'claude' ? 'Claude' : `${msg.modelUsed.split('→')[0]} → escalated to Claude`}</span>
+                        : msg.modelUsed === 'openai' ? 'ChatGPT' : msg.modelUsed}
+                    </span>
+                  )}
                 </div>
               ))}
 
@@ -346,20 +354,38 @@ export default function AiReportPage() {
                 <textarea
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat() } }}
-                  placeholder="Ask about your finances…"
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(false) } }}
+                  placeholder="Ask a question or a finance term…"
                   rows={1}
                   className="w-full bg-transparent px-4 py-3 text-sm text-text-primary placeholder:text-text-secondary resize-none outline-none max-h-32"
                 />
               </div>
+              {/* Escalate: force the strong model (only meaningful when local is selected) */}
+              {chatProvider === 'ollama' && (
+                <button
+                  onClick={() => sendChat(true)}
+                  disabled={!chatInput.trim() || chatLoading}
+                  title="Ask the smart model (Claude)"
+                  className="h-10 px-2.5 flex items-center gap-1 rounded-xl border border-violet-500/30 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                >
+                  <Zap size={15} />
+                  <span className="text-xs font-medium hidden sm:inline">Smart</span>
+                </button>
+              )}
               <button
-                onClick={sendChat}
+                onClick={() => sendChat(false)}
                 disabled={!chatInput.trim() || chatLoading}
                 className="w-10 h-10 flex items-center justify-center rounded-xl bg-violet-500 text-white hover:bg-violet-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
               >
                 <Send size={16} />
               </button>
             </div>
+
+            <p className="text-[11px] text-text-secondary/70 text-center -mt-1">
+              {chatProvider === 'ollama'
+                ? 'Local Mongol 14b answers; hard questions auto-escalate to Claude. Tap ⚡ Smart to force it.'
+                : 'Answered grounded in your real MUNI numbers.'}
+            </p>
 
             {chatHistory.length > 0 && (
               <button onClick={() => setChatHistory([])} className="text-xs text-text-secondary hover:text-text-primary transition-colors self-center">

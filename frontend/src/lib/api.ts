@@ -667,9 +667,17 @@ export async function getAiReport(year?: number, month?: number, provider: 'clau
 export async function postAiChat(
   message: string,
   history: { role: string; content: string }[],
-  provider: 'claude' | 'openai' | 'ollama' = 'claude',
-): Promise<{ reply: string; provider: string }> {
-  const res = await api.post('/ai-report/chat', { message, history, provider })
+  provider: 'claude' | 'openai' | 'ollama' = 'ollama',
+  opts: { model?: string; escalate?: boolean } = {},
+): Promise<{ reply: string; provider: string; model_used: string }> {
+  if (isDemoModeActive()) {
+    return {
+      reply: `**Coast FI** is the point where the money you've already invested will grow — with no further contributions — to your full retirement target by the time you retire. _This is a demo response._`,
+      provider,
+      model_used: opts.escalate ? 'claude' : 'qwen3:14b',
+    }
+  }
+  const res = await api.post('/ai-report/chat', { message, history, provider, model: opts.model, escalate: opts.escalate })
   return res.data
 }
 

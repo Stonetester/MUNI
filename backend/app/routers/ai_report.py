@@ -50,7 +50,9 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: List[ChatMessage] = []
-    provider: str = "claude"
+    provider: str = "ollama"
+    model: Optional[str] = None
+    escalate: bool = False
 
 
 @router.post("/chat")
@@ -59,11 +61,13 @@ def post_ai_chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    reply = answer_chat_question(
+    reply, model_used = answer_chat_question(
         user=current_user,
         db=db,
         message=body.message,
         history=[{"role": m.role, "content": m.content} for m in body.history],
         provider=body.provider,
+        model=body.model,
+        escalate=body.escalate,
     )
-    return {"reply": reply, "provider": body.provider}
+    return {"reply": reply, "provider": body.provider, "model_used": model_used}
