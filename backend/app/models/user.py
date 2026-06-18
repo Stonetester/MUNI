@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Date, Integer, String, DateTime
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -14,7 +14,18 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=False)
     display_name = Column(String, nullable=True)
+    date_of_birth = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    @property
+    def age(self) -> int | None:
+        """Current age in years from date_of_birth, or None if unset."""
+        if not self.date_of_birth:
+            return None
+        today = date.today()
+        return today.year - self.date_of_birth.year - (
+            (today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day)
+        )
 
     # Relationships
     accounts = relationship("Account", back_populates="user", cascade="all, delete-orphan", foreign_keys="Account.user_id")

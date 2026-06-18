@@ -34,6 +34,7 @@ class ProfileIn(BaseModel):
     hysa_monthly_contribution: Optional[float] = None
     ira_monthly_contribution: Optional[float] = None
     monthly_retirement_spend: Optional[float] = None
+    monthly_savings_goal: Optional[float] = None
     hidden_sections: Optional[List[str]] = None
 
 
@@ -47,6 +48,7 @@ class ProfileOut(BaseModel):
     hysa_monthly_contribution: Optional[float]
     ira_monthly_contribution: Optional[float]
     monthly_retirement_spend: Optional[float]
+    monthly_savings_goal: Optional[float]
     hidden_sections: List[str]
     updated_at: Optional[datetime]
 

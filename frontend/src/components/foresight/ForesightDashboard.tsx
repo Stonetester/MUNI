@@ -32,6 +32,7 @@ interface Props {
   transactions: Transaction[]
   holdings: InvestmentHolding[]
   budgetEstimates: BudgetEstimate[]
+  currentAge?: number | null
   onMarkOneOff: (transaction: Transaction) => Promise<void>
 }
 
@@ -84,7 +85,7 @@ function isOneOff(transaction: Transaction) {
   return transaction.notes?.toLowerCase().includes('[one-off]') ?? false
 }
 
-export default function ForesightDashboard({ forecast, transactions, holdings, budgetEstimates, onMarkOneOff }: Props) {
+export default function ForesightDashboard({ forecast, transactions, holdings, budgetEstimates, currentAge, onMarkOneOff }: Props) {
   const [tab, setTab] = useState<Tab>('overview')
   const [intensity, setIntensity] = useState<Intensity>('steady')
   const [detailCategory, setDetailCategory] = useState<string | null>(null)
@@ -257,7 +258,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
         <CoastFiCalculator
           forecast={forecast}
           holdings={holdings}
-          currentAge={30}
+          currentAge={currentAge ?? 30}
           monthlySpend={analysis.monthlySpending}
           monthlyContribution={forecast.account_forecasts
             .filter((account) => account.annual_return_pct > 0)

@@ -30,6 +30,10 @@ class FinancialProfile(Base):
     # When set, overrides the computed estimate. None = use the smart estimate.
     monthly_retirement_spend = Column(Float, nullable=True)
 
+    # Savings goal — user's chosen monthly net-savings target.
+    # When set, overrides the suggested goal on the dashboard. None = use the suggestion.
+    monthly_savings_goal = Column(Float, nullable=True)
+
     # Hidden sections — JSON array of section keys to hide in UI
     # e.g. '["student_loans", "ira"]'
     hidden_sections = Column(String, nullable=True, default="[]")
