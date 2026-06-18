@@ -53,6 +53,7 @@ class ChatRequest(BaseModel):
     provider: str = "ollama"
     model: Optional[str] = None
     escalate: bool = False
+    joint: bool = False
 
 
 @router.post("/chat")
@@ -69,5 +70,6 @@ def post_ai_chat(
         provider=body.provider,
         model=body.model,
         escalate=body.escalate,
+        joint=body.joint,
     )
     return {"reply": reply, "provider": body.provider, "model_used": model_used}

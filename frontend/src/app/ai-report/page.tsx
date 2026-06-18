@@ -5,7 +5,8 @@ import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import { getAiReport, postAiChat } from '@/lib/api'
-import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap } from 'lucide-react'
+import { useViewMode } from '@/lib/viewMode'
+import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap, Users, User } from 'lucide-react'
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -88,6 +89,9 @@ export default function AiReportPage() {
   const defaultMonth = today.getDate() < 5 ? (today.getMonth() === 0 ? 12 : today.getMonth()) : today.getMonth() + 1
   const defaultYear = today.getDate() < 5 && today.getMonth() === 0 ? today.getFullYear() - 1 : today.getFullYear()
 
+  const { mode } = useViewMode()
+  const isJoint = mode === 'joint'
+
   const [tab, setTab] = useState<Tab>('report')
   const [provider, setProvider] = useState<Provider>('claude')
   // Chat defaults to the local model (Mongol 14b); report keeps the shared provider toggle.
@@ -138,7 +142,7 @@ export default function AiReportPage() {
     setChatInput('')
     setChatLoading(true)
     try {
-      const data = await postAiChat(msg, newHistory.slice(0, -1), chatProvider, { escalate })
+      const data = await postAiChat(msg, newHistory.slice(0, -1), chatProvider, { escalate, joint: isJoint })
       setChatHistory([...newHistory, { role: 'assistant', content: data.reply, modelUsed: data.model_used }])
     } catch (err: unknown) {
       const e = err as { message?: string }
@@ -206,6 +210,20 @@ export default function AiReportPage() {
         {tab === 'report'
           ? <ProviderToggle provider={provider} onChange={setProvider} localLabel="Mongol" />
           : <ProviderToggle provider={chatProvider} onChange={setChatProvider} localLabel="Mongol 14b" />}
+
+        {/* Scope indicator — which numbers the tutor is grounded in (follows the global Solo/Joint toggle) */}
+        {tab === 'chat' && (
+          <div className="flex justify-center -mt-2">
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
+              isJoint
+                ? 'bg-blue-500/15 text-blue-400 border-blue-500/25'
+                : 'bg-surface-2 text-text-secondary border-border'
+            }`}>
+              {isJoint ? <Users size={11} /> : <User size={11} />}
+              {isJoint ? 'Using household numbers (both of you)' : 'Using just your numbers'}
+            </span>
+          </div>
+        )}
 
         {/* ── REPORT TAB ── */}
         {tab === 'report' && (

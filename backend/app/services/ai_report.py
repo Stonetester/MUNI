@@ -377,15 +377,29 @@ _GROWTH_TYPES = {"401k", "ira", "hsa", "brokerage", "hysa"}
 _COAST_DEFAULTS = {"return": 0.10, "inflation": 0.03, "swr": 0.04, "retire_age": 65, "age": 30}
 
 
-def _gather_coast_fi(user: User, db: Session) -> dict:
-    """Compute the same Coast FI / FIRE figures the Coast FI tab shows, from real accounts."""
-    accounts = db.query(Account).filter(Account.user_id == user.id).all()
+def _scope_users(user: User, db: Session, joint: bool) -> list[User]:
+    """Users whose data is in scope: just this user (solo) or the whole household (joint)."""
+    if joint:
+        return db.query(User).all()
+    return [user]
+
+
+def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
+    """Compute the same Coast FI / FIRE figures the Coast FI tab shows, from real accounts.
+
+    Joint mode sums growth accounts across the whole household (the joint HYSA is a single
+    account owned by one user, so there is no double-counting)."""
+    users = _scope_users(user, db, joint)
+    user_ids = [u.id for u in users]
+    accounts = db.query(Account).filter(Account.user_id.in_(user_ids)).all()
     invested = sum(a.balance for a in accounts if a.account_type in _GROWTH_TYPES and a.balance > 0)
 
     today = date.today()
-    # Monthly retirement spend defaults to current monthly spend if available, else $6k.
-    this_month = _gather_financial_data(user, db, today.year, today.month)["this_month"]
-    monthly_spend = this_month["spending"] or 6000.0
+    # Monthly retirement spend defaults to combined current monthly spend if available, else $6k.
+    monthly_spend = 0.0
+    for u in users:
+        monthly_spend += _gather_financial_data(u, db, today.year, today.month)["this_month"]["spending"]
+    monthly_spend = monthly_spend or 6000.0
 
     years = _COAST_DEFAULTS["retire_age"] - _COAST_DEFAULTS["age"]
     nominal, inflation, swr = _COAST_DEFAULTS["return"], _COAST_DEFAULTS["inflation"], _COAST_DEFAULTS["swr"]
@@ -442,26 +456,50 @@ def _reply_low_confidence(reply: str) -> bool:
     ))
 
 
-def _build_chat_system_prompt(user: User, db: Session) -> str:
+def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> str:
     today = date.today()
-    data = _gather_financial_data(user, db, today.year, today.month)
-    alltime = _gather_alltime_by_category(user, db)
-    coast = _gather_coast_fi(user, db)
+    users = _scope_users(user, db, joint)
+    coast = _gather_coast_fi(user, db, joint)
+
+    # Per-user financial data, so we can attribute accounts/spending by owner in joint mode.
+    per_user = [(u, _gather_financial_data(u, db, today.year, today.month)) for u in users]
+
+    total_assets = sum(d["total_assets"] for _, d in per_user)
+    total_liabilities = sum(d["total_liabilities"] for _, d in per_user)
+    net_worth = total_assets - total_liabilities
+    month_income = sum(d["this_month"]["income"] for _, d in per_user)
+    month_spending = sum(d["this_month"]["spending"] for _, d in per_user)
+    savings_rate = round((month_income - month_spending) / month_income * 100, 1) if month_income > 0 else 0
+
+    if joint:
+        scope_line = (
+            f"You are the household finance tutor for {user.username.capitalize()} and "
+            + " & ".join(u.username.capitalize() for u in users if u.id != user.id)
+            + ". The numbers below are the COMBINED household (both partners). Account and spending lines are"
+            " labeled by owner. When asked about 'our'/'we'/'the household', use the combined totals."
+        )
+    else:
+        scope_line = (
+            f"You are the personal finance tutor for {user.username.capitalize()}. The numbers below are"
+            f" {user.username.capitalize()}'s only — NOT the household. If asked about a partner or joint"
+            " totals, say those are only visible in the app's Joint (household) view."
+        )
 
     ctx_lines = [
-        f"You are a personal finance tutor and advisor for {data['user'].capitalize()}.",
-        "You do two things: (1) answer questions about THEIR finances using the real numbers below, and",
-        "(2) teach finance concepts — define terms plainly and, when useful, work the math using THEIR numbers.",
+        scope_line,
+        "You do two things: (1) answer questions about these finances using the real numbers below, and",
+        "(2) teach finance concepts — define terms plainly and, when useful, work the math using these numbers.",
         "You can explain and calculate: Coast FI, FIRE, safe withdrawal rate (the 4% rule), compound growth,",
         "savings rate, net worth, house-buying terms (down payment, PMI, DTI, closing costs, points, amortization,",
         "fixed vs ARM), retirement accounts (401k/IRA/Roth/HSA), and general personal-finance math.",
-        "Rules: be concise and concrete. Prefer THEIR numbers over generic examples — that is the whole point.",
+        "Rules: be concise and concrete. Prefer these real numbers over generic examples — that is the whole point.",
         "Show the formula and the substituted numbers when you calculate. If a figure isn't in the data, say so",
         "rather than inventing it. Use plain language; define a term before using it.",
         "",
-        f"Net Worth: ${data['net_worth']:,.2f} (Assets: ${data['total_assets']:,.2f}, Liabilities: ${data['total_liabilities']:,.2f})",
+        f"{'Household ' if joint else ''}Net Worth: ${net_worth:,.2f} (Assets: ${total_assets:,.2f}, Liabilities: ${total_liabilities:,.2f})",
         "",
-        "Coast FI / FIRE (today's figures, assumptions: 10% return, 3% inflation, 4% SWR, retire at 65):",
+        f"Coast FI / FIRE — {'HOUSEHOLD (both partners combined)' if joint else 'this person only'} "
+        "(assumptions: 10% return, 3% inflation, 4% SWR, retire at 65):",
         f"  - Invested toward retirement (401k/IRA/HSA/brokerage/HYSA): ${coast['invested']:,.2f}",
         f"  - Current monthly spend used for the estimate: ${coast['monthly_spend']:,.2f}",
         f"  - Traditional FIRE number: ${coast['fire_number']:,.2f}",
@@ -472,34 +510,57 @@ def _build_chat_system_prompt(user: User, db: Session) -> str:
         "",
         "Accounts:",
     ]
-    for acc in data["accounts"]:
-        ctx_lines.append(f"  - {acc['name']} ({acc['type']}): ${acc['balance']:,.2f}")
+    for u, d in per_user:
+        for acc in d["accounts"]:
+            owner = f" [{u.username}]" if joint else ""
+            ctx_lines.append(f"  - {acc['name']} ({acc['type']}): ${acc['balance']:,.2f}{owner}")
 
     ctx_lines += [
         "",
-        f"This month — Income: ${data['this_month']['income']:,.2f}, Spending: ${data['this_month']['spending']:,.2f}, Savings rate: {data['this_month']['savings_rate']}%",
+        f"This month — Income: ${month_income:,.2f}, Spending: ${month_spending:,.2f}, Savings rate: {savings_rate}%",
         "",
         "Spending by category this month:",
     ]
-    for cat, amt in data["this_month"]["by_category"].items():
+    # Merge this-month category spend across users.
+    merged_month: dict[str, float] = {}
+    for _, d in per_user:
+        for cat, amt in d["this_month"]["by_category"].items():
+            merged_month[cat] = merged_month.get(cat, 0.0) + amt
+    for cat, amt in sorted(merged_month.items(), key=lambda x: -x[1]):
         ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
 
-    if alltime["earliest"]:
-        ctx_lines += [
-            "",
-            f"All-time spending by category ({alltime['earliest']} to {alltime['latest']}):",
-        ]
-        for cat, amt in alltime["spending"].items():
-            ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
+    # All-time, merged across users.
+    merged_spend: dict[str, float] = {}
+    merged_income: dict[str, float] = {}
+    earliest = latest = None
+    for u in users:
+        at = _gather_alltime_by_category(u, db)
+        for cat, amt in at["spending"].items():
+            merged_spend[cat] = merged_spend.get(cat, 0.0) + amt
+        for cat, amt in at["income"].items():
+            merged_income[cat] = merged_income.get(cat, 0.0) + amt
+        if at["earliest"]:
+            earliest = at["earliest"] if earliest is None else min(earliest, at["earliest"])
+            latest = at["latest"] if latest is None else max(latest, at["latest"])
 
+    if earliest:
+        ctx_lines += ["", f"All-time spending by category ({earliest} to {latest}):"]
+        for cat, amt in sorted(merged_spend.items(), key=lambda x: -x[1]):
+            ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
         ctx_lines += ["", "All-time income by category:"]
-        for cat, amt in alltime["income"].items():
+        for cat, amt in sorted(merged_income.items(), key=lambda x: -x[1]):
             ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
 
-    if data["upcoming_events"]:
+    # Upcoming events across users.
+    event_lines = []
+    for u, d in per_user:
+        for ev in d["upcoming_events"]:
+            owner = f" [{u.username}]" if joint else ""
+            event_lines.append(f"  - {ev['name']} ({ev['date']}): ${ev['estimated_cost']:,.2f}{owner}")
+    if event_lines:
         ctx_lines.append("\nUpcoming events:")
-        for ev in data["upcoming_events"]:
-            ctx_lines.append(f"  - {ev['name']} ({ev['date']}): ${ev['estimated_cost']:,.2f}")
+        ctx_lines += event_lines
+
     return "\n".join(ctx_lines)
 
 
@@ -575,16 +636,18 @@ def answer_chat_question(
     provider: str = "ollama",
     model: str | None = None,
     escalate: bool = False,
+    joint: bool = False,
 ) -> tuple[str, str]:
     """Answer a finance-tutor chat question.
 
     Returns (reply, model_used). When provider is the local model, a hard question
     (or an explicit `escalate`) auto-routes to Claude. `model_used` reflects who
     actually answered (e.g. "qwen3:14b", "claude", "qwen3:14b→claude").
+    When `joint`, the prompt is grounded in the COMBINED household (both partners).
     """
     from app.config import settings
 
-    system_prompt = _build_chat_system_prompt(user, db)
+    system_prompt = _build_chat_system_prompt(user, db, joint=joint)
 
     # Manual override → straight to the strong model.
     if escalate:
