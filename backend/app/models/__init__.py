@@ -14,6 +14,7 @@ from app.models.compensation_event import CompensationEvent
 from app.models.paystub import Paystub
 from app.models.home_buying import HomeBuyingGoal
 from app.models.event_line_item import EventLineItem
+from app.models.chat_session import ChatSession, ChatMessageRow
 
 __all__ = [
     "User",
@@ -32,4 +33,6 @@ __all__ = [
     "Paystub",
     "HomeBuyingGoal",
     "EventLineItem",
+    "ChatSession",
+    "ChatMessageRow",
 ]
