@@ -27,6 +27,7 @@ import type {
   Paystub,
   ParsedPaystub,
   HomeBuyingGoal,
+  SavingsGoalData,
 } from './types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -59,6 +60,21 @@ function createApiClient(): AxiosInstance {
 }
 
 const api = createApiClient()
+
+// Current user
+export interface CurrentUser {
+  id: number
+  username: string
+  display_name?: string | null
+  email: string
+  age?: number | null
+}
+
+export async function getMe(): Promise<CurrentUser> {
+  if (isDemoModeActive()) return { id: 1, username: 'keaton', display_name: 'Keaton', email: 'demo@local', age: 25 }
+  const res: AxiosResponse<CurrentUser> = await api.get('/auth/me')
+  return res.data
+}
 
 // Dashboard
 export async function getDashboard(): Promise<DashboardData> {
@@ -431,6 +447,32 @@ export async function getFinancialProfile(): Promise<FinancialProfile> {
 export async function updateFinancialProfile(data: Partial<FinancialProfile>): Promise<FinancialProfile> {
   if (isDemoModeActive()) return { ...demo.DEMO_FINANCIAL_PROFILE, ...data }
   const res: AxiosResponse<FinancialProfile> = await api.put('/financial-profile', data)
+  return res.data
+}
+
+// Savings goal (per-person + joint progress for the current month)
+export async function getSavingsGoals(joint = false): Promise<SavingsGoalData> {
+  if (isDemoModeActive()) {
+    const person = (name: string, total: number, goal: number) => ({
+      user_id: name === 'Keaton' ? 1 : 2, name,
+      income: total + 2400, spending: 2400, net_saved: total - 600,
+      contributions: { hysa: 300, ira: 200, k401_employee: 100, k401_employer: 0, total: 600 },
+      total_saved: total, suggested_goal: goal, user_goal: null, goal,
+      using_suggestion: true, pct_of_goal: Math.round((total / goal) * 1000) / 10,
+      on_track: total >= goal, remaining: Math.max(0, goal - total),
+    })
+    const people = [person('Keaton', 1450, 1500), person('Katherine', 1700, 1500)]
+    const tot = people.reduce((s, p) => s + p.total_saved, 0)
+    const g = people.reduce((s, p) => s + p.goal, 0)
+    return {
+      month: new Date().toISOString().slice(0, 7), people,
+      joint: { name: 'Joint', net_saved: tot - 1200, contributions_total: 1200, total_saved: tot,
+        suggested_goal: g, goal: g, pct_of_goal: Math.round((tot / g) * 1000) / 10,
+        on_track: tot >= g, remaining: Math.max(0, g - tot) },
+      current_user_id: 1,
+    }
+  }
+  const res: AxiosResponse<SavingsGoalData> = await api.get(`/savings-goal?joint=${joint}`)
   return res.data
 }
 

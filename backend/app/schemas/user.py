@@ -32,6 +32,7 @@ class UserMe(BaseModel):
     username: str
     display_name: Optional[str] = None
     email: EmailStr
+    age: Optional[int] = None
 
     model_config = {"from_attributes": True}
 

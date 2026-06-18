@@ -11,6 +11,7 @@ import {
   getHoldings,
   getJointForecast,
   getJointTransactions,
+  getMe,
   getTransactions,
   markJointTransactionOneOff,
   updateTransaction,
@@ -24,21 +25,24 @@ export default function ForecastPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [holdings, setHoldings] = useState<InvestmentHolding[]>([])
   const [budgetEstimates, setBudgetEstimates] = useState<Array<{ category_name: string; avg_monthly: number; months_sampled: number }>>([])
+  const [currentAge, setCurrentAge] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [forecastData, transactionData, holdingData, estimates] = await Promise.all([
+      const [forecastData, transactionData, holdingData, estimates, me] = await Promise.all([
         mode === 'joint' ? getJointForecast(24, 24) : getForecast(undefined, 24, 24),
         mode === 'joint' ? getJointTransactions(2000) : getTransactions({ limit: 2000 }),
         getHoldings().catch(() => []),
         getBudgetEstimates().catch(() => []),
+        getMe().catch(() => null),
       ])
       setForecast(forecastData)
       setTransactions(transactionData.items)
       setHoldings(holdingData)
       setBudgetEstimates(estimates)
+      setCurrentAge(me?.age ?? null)
     } catch (error) {
       console.error(error)
       setForecast(null)
@@ -72,6 +76,7 @@ export default function ForecastPage() {
           transactions={transactions}
           holdings={holdings}
           budgetEstimates={budgetEstimates}
+          currentAge={currentAge}
           onMarkOneOff={markOneOff}
         />
       ) : (

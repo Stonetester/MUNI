@@ -17,6 +17,7 @@ import RecentTransactions from '@/components/dashboard/RecentTransactions'
 import AlertsCard from '@/components/dashboard/AlertsCard'
 import SpendingCategoriesWidget from '@/components/dashboard/SpendingCategoriesWidget'
 import SpendCheckWidget from '@/components/dashboard/SpendCheckWidget'
+import SavingsGoalCard from '@/components/dashboard/SavingsGoalCard'
 import StatDetailModal, { BreakdownItem } from '@/components/dashboard/StatDetailModal'
 import { TrendingUp, TrendingDown, DollarSign, CreditCard } from 'lucide-react'
 import { useViewMode } from '@/lib/viewMode'
@@ -181,6 +182,9 @@ function JointDashboard() {
           </Card>
         )
       })}
+
+      {/* Savings goal — Keaton / Katherine / Joint progress */}
+      <SavingsGoalCard />
 
       {/* Joint recent transactions — color-coded by owner */}
       <RecentTransactions transactions={transactions} showOwner />
@@ -348,6 +352,9 @@ export default function DashboardPage() {
       <div className="flex flex-col gap-4 md:gap-5">
         {/* Spend Check — top of page */}
         <SpendCheckWidget />
+
+        {/* Savings goal — Keaton / Katherine / Joint progress */}
+        <SavingsGoalCard />
 
         {/* Net Worth */}
         <NetWorthCard data={data} />

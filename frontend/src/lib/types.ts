@@ -286,8 +286,54 @@ export interface FinancialProfile {
   hysa_monthly_contribution?: number
   ira_monthly_contribution?: number
   monthly_retirement_spend?: number
+  monthly_savings_goal?: number
   hidden_sections?: string
   updated_at?: string
+}
+
+// Savings goal (dashboard)
+export interface SavingsContributions {
+  hysa: number
+  ira: number
+  k401_employee: number
+  k401_employer: number
+  total: number
+}
+
+export interface SavingsGoalPerson {
+  user_id: number
+  name: string
+  income: number
+  spending: number
+  net_saved: number
+  contributions: SavingsContributions
+  total_saved: number
+  suggested_goal: number
+  user_goal: number | null
+  goal: number
+  using_suggestion: boolean
+  pct_of_goal: number
+  on_track: boolean
+  remaining: number
+}
+
+export interface SavingsGoalJoint {
+  name: string
+  net_saved: number
+  contributions_total: number
+  total_saved: number
+  suggested_goal: number
+  goal: number
+  pct_of_goal: number
+  on_track: boolean
+  remaining: number
+}
+
+export interface SavingsGoalData {
+  month: string
+  people: SavingsGoalPerson[]
+  joint: SavingsGoalJoint
+  current_user_id: number
 }
 
 // Student Loans
