@@ -384,6 +384,49 @@ def _scope_users(user: User, db: Session, joint: bool) -> list[User]:
     return [user]
 
 
+def _gather_monthly_history(users: list[User], db: Session, months: int = 18) -> list[dict]:
+    """Per-month income / spending / savings + top categories for the last `months` months,
+    merged across the scoped users. Gives the tutor real month-by-month history so it can
+    answer questions about past months (the prior prompt only had this-month + all-time totals)."""
+    user_ids = [u.id for u in users]
+    cats = db.query(Category).filter(Category.user_id.in_(user_ids)).all()
+    cats_map = {c.id: c.name for c in cats}
+
+    txns = (
+        db.query(Transaction)
+        .filter(Transaction.user_id.in_(user_ids), Transaction.scenario_id.is_(None))
+        .all()
+    )
+
+    # month key "YYYY-MM" -> {income, spending, by_category}
+    buckets: dict[str, dict] = {}
+    for t in txns:
+        key = t.date.strftime("%Y-%m")
+        b = buckets.setdefault(key, {"income": 0.0, "spending": 0.0, "by_category": {}})
+        if counts_as_income(t):
+            b["income"] += t.amount
+        elif counts_as_expense(t):
+            b["spending"] += abs(t.amount)
+            cat = cats_map.get(t.category_id, "Uncategorized")
+            b["by_category"][cat] = b["by_category"].get(cat, 0.0) + abs(t.amount)
+
+    ordered_keys = sorted(buckets.keys(), reverse=True)[:months]
+    result = []
+    for key in ordered_keys:
+        b = buckets[key]
+        savings = b["income"] - b["spending"]
+        top = sorted(b["by_category"].items(), key=lambda x: -x[1])[:3]
+        result.append({
+            "month": key,
+            "income": round(b["income"], 2),
+            "spending": round(b["spending"], 2),
+            "savings": round(savings, 2),
+            "savings_rate": round(savings / b["income"] * 100, 1) if b["income"] > 0 else 0,
+            "top_categories": [(c, round(v, 2)) for c, v in top],
+        })
+    return result  # newest-first
+
+
 def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
     """Compute the same Coast FI / FIRE figures the Coast FI tab shows, from real accounts.
 
@@ -495,6 +538,8 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         "Rules: be concise and concrete. Prefer these real numbers over generic examples — that is the whole point.",
         "Show the formula and the substituted numbers when you calculate. If a figure isn't in the data, say so",
         "rather than inventing it. Use plain language; define a term before using it.",
+        "You DO have month-by-month history below (last 18 months) — use it to answer questions about past",
+        "months, trends, and comparisons; do not claim you only have the current month.",
         "",
         f"{'Household ' if joint else ''}Net Worth: ${net_worth:,.2f} (Assets: ${total_assets:,.2f}, Liabilities: ${total_liabilities:,.2f})",
         "",
@@ -528,6 +573,20 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
             merged_month[cat] = merged_month.get(cat, 0.0) + amt
     for cat, amt in sorted(merged_month.items(), key=lambda x: -x[1]):
         ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
+
+    # Month-by-month history (last 18 months) so questions about PAST months can be answered.
+    history = _gather_monthly_history(users, db, months=18)
+    if history:
+        ctx_lines += [
+            "",
+            "Monthly history (most recent first) — income / spending / savings rate, top categories:",
+        ]
+        for h in history:
+            tops = ", ".join(f"{c} ${v:,.0f}" for c, v in h["top_categories"]) or "no spending"
+            ctx_lines.append(
+                f"  - {h['month']}: income ${h['income']:,.0f}, spending ${h['spending']:,.0f}, "
+                f"savings ${h['savings']:,.0f} ({h['savings_rate']}%) — top: {tops}"
+            )
 
     # All-time, merged across users.
     merged_spend: dict[str, float] = {}
