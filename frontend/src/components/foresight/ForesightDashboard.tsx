@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, CircleDollarSign,
-  Info, LineChart as LineChartIcon, PiggyBank, ReceiptText, RotateCcw, Sparkles, Target,
+  Info, LineChart as LineChartIcon, PiggyBank, ReceiptText, RotateCcw, Sparkles, Sun, Target,
   TrendingDown, TrendingUp, Utensils, WalletCards,
   X,
 } from 'lucide-react'
@@ -12,12 +12,13 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import Card from '@/components/ui/Card'
+import CoastFiCalculator from '@/components/foresight/CoastFiCalculator'
 import MonthDetailModal from '@/components/ui/MonthDetailModal'
 import { ForecastPoint, ForecastResponse, InvestmentHolding, Transaction } from '@/lib/types'
 import { formatCurrency, formatMonth } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
-type Tab = 'overview' | 'trends' | 'plan' | 'review'
+type Tab = 'overview' | 'trends' | 'plan' | 'coastfi' | 'review'
 type Intensity = 'comfortable' | 'steady' | 'push'
 
 interface BudgetEstimate {
@@ -55,6 +56,7 @@ const tabItems: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: 'overview', label: 'Foresight', icon: LineChartIcon },
   { id: 'trends', label: 'Trends', icon: TrendingUp },
   { id: 'plan', label: 'Plan', icon: Target },
+  { id: 'coastfi', label: 'Coast FI', icon: Sun },
   { id: 'review', label: 'Review', icon: ReceiptText },
 ]
 
@@ -216,7 +218,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
         <p className="text-sm text-text-secondary">Predictions, achievable spending targets, and the actions with the biggest savings impact.</p>
       </div>
 
-      <div className="grid grid-cols-4 gap-1 rounded-2xl border border-white/10 bg-surface p-1">
+      <div className="grid grid-cols-5 gap-1 rounded-2xl border border-white/10 bg-surface p-1">
         {tabItems.map((item) => {
           const Icon = item.icon
           return (
@@ -251,6 +253,25 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
         <Trends categories={analysis.categories} onSelect={setDetailCategory} />
       ) : tab === 'plan' ? (
         <Plan analysis={analysis} intensity={intensity} setIntensity={setIntensity} onCalculation={setCalculation} onPoint={setSelectedPoint} />
+      ) : tab === 'coastfi' ? (
+        <CoastFiCalculator
+          forecast={forecast}
+          holdings={holdings}
+          currentAge={30}
+          monthlySpend={analysis.monthlySpending}
+          monthlyContribution={forecast.account_forecasts
+            .filter((account) => account.annual_return_pct > 0)
+            .reduce((sum, account) => sum + account.monthly_contribution, 0)}
+          onDetail={(detail) => setCalculation({
+            title: detail.title,
+            value: detail.value,
+            formula: detail.formula,
+            dateRange: 'Projection in today’s (real) dollars from the current year to your target retirement age.',
+            assumptions: detail.notes,
+            warnings: [],
+            inputs: detail.inputs.map((input) => ({ label: input.label, value: input.value, note: input.note })),
+          })}
+        />
       ) : (
         <Review
           anomalies={analysis.anomalies.filter((item) => !dismissed.includes(item.id))}
