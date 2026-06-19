@@ -380,6 +380,8 @@ export interface AccountReturn {
   gain: number | null
   basis: string
   low_confidence?: boolean
+  window_label?: string          // what annualized_pct measures, e.g. "since inception"
+  trailing_12mo_pct?: number | null  // broker-style last-12-months XIRR (may be null)
   // present on the /accounts/returns list response (not the single-account one)
   account_name?: string
   account_type?: string

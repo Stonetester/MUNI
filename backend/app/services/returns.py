@@ -130,6 +130,51 @@ def _xirr(cashflows: list[tuple[date, float]]) -> Optional[float]:
     return (lo + hi) / 2
 
 
+def _xirr_over_snapshots(snaps: list) -> Optional[float]:
+    """XIRR over an arbitrary ordered list of snapshots (contributions lumped on
+    each statement date). Used for the trailing-12-month figure. Returns the
+    annual rate, or None if it can't be measured (too few rows / no time span)."""
+    if len(snaps) < 2:
+        return None
+    first, last = snaps[0], snaps[-1]
+    if (last.date - first.date).days <= 0 or first.balance <= 0:
+        return None
+    cashflows: list[tuple[date, float]] = [(first.date, -float(first.balance))]
+    for s in snaps[1:]:
+        if s.contributions:
+            cashflows.append((s.date, -float(s.contributions)))
+    cashflows.append((last.date, float(last.balance)))
+    return _xirr(cashflows)
+
+
+def _trailing_12mo_xirr(window: list) -> Optional[float]:
+    """Measured XIRR over the last ~12 months of the in-window snapshots.
+
+    Brokerage statements typically print a *trailing-12-month* personal rate of
+    return, which differs from MUNI's since-inception figure purely because of the
+    measurement window. We compute it so the UI can show both side by side.
+
+    Picks the earliest snapshot that is >= 365 days before the last one (so the
+    window is at least a year and starts on a real statement boundary). Needs at
+    least one full year of data or returns None.
+    """
+    if len(window) < 2:
+        return None
+    last = window[-1]
+    cutoff = last.date.toordinal() - 365
+    # earliest snapshot on/before the 1-year-ago mark, so the window spans >= 1yr
+    start_idx = 0
+    for i, s in enumerate(window):
+        if s.date.toordinal() <= cutoff:
+            start_idx = i
+        else:
+            break
+    sub = window[start_idx:]
+    if len(sub) < 2 or (last.date - sub[0].date).days < 300:
+        return None  # not a meaningful ~year of data
+    return _xirr_over_snapshots(sub)
+
+
 def _estimated_monthly_contribution(account_id: int, db: Session) -> float:
     """Best estimate of monthly contributions into this account, from its holdings."""
     holdings = (
@@ -172,6 +217,8 @@ def account_return(account_id: int, db: Session) -> dict:
         "gain": None,
         "method": None,
         "low_confidence": False,
+        "window_label": "since inception",   # what annualized_pct measures
+        "trailing_12mo_pct": None,           # broker-style last-12-months XIRR
     }
 
     if len(snaps) < 2:
@@ -225,6 +272,11 @@ def account_return(account_id: int, db: Session) -> dict:
     # --- Build cash flows + contribution accounting -----------------------------
     if have_real:
         # Real, dated contributions from the statements (the XIRR path).
+        # Each period's contributions are lumped on the statement date. (We tested
+        # spreading them across real paycheck dates; it's marginally more "correct"
+        # but moves the rate AWAY from broker-printed figures, because the true
+        # gap to a statement's number is the measurement WINDOW, not contribution
+        # timing — see trailing_12mo_pct below. So we keep the simpler lump.)
         cashflows: list[tuple[date, float]] = [(first.date, -first.balance)]
         net_contributions = 0.0
         for s in window[1:]:
@@ -304,6 +356,14 @@ def account_return(account_id: int, db: Session) -> dict:
     )
     base["low_confidence"] = low_confidence
 
+    # Trailing-12-month XIRR (broker-style), real-data path only — the estimate
+    # path doesn't have dated contributions to slice a clean year from.
+    trailing_pct = None
+    if have_real:
+        t12 = _trailing_12mo_xirr(window)
+        if t12 is not None:
+            trailing_pct = round(t12 * 100, 1)
+
     base.update({
         "annualized_pct": round(annualized * 100, 1),
         "simple_pct": round(simple * 100, 1) if simple is not None else None,
@@ -315,6 +375,8 @@ def account_return(account_id: int, db: Session) -> dict:
         "gain": round(gain, 2),
         "method": method,
         "basis": basis,
+        "window_label": "since inception",
+        "trailing_12mo_pct": trailing_pct,
     })
     return base
 

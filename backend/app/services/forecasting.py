@@ -56,6 +56,37 @@ DEFAULT_ANNUAL_RETURNS: Dict[str, float] = {
     "hysa": 3.9,   # overridden by FinancialProfile.hysa_apy if set
 }
 
+# Long-run market return assumption used as the anchor that an account's own
+# measured XIRR is blended toward. Single source of truth — same 10% nominal the
+# Coast-FI calculator uses, so projections stay internally consistent.
+MARKET_ANCHOR_ANNUAL = 10.0
+
+# Investment account types whose forecast growth should be anchored to their own
+# measured XIRR (not HYSA/savings — those are APY-driven, return is a set rate).
+XIRR_FORECAST_TYPES = {"401k", "ira", "brokerage", "hsa"}
+
+# How much we trust an account's measured XIRR vs. the market anchor. Confidence
+# rises with how many statements back the number; capped so a short bull-run
+# return (e.g. a 2-yr 20%/yr) can never fully drive a multi-decade projection.
+# This is a CONSTANT blend (v1): the blended rate is applied uniformly across the
+# horizon. A horizon-decaying weight (full-measured near-term → market long-term)
+# is the v2 refinement and needs the projection loop to vary rate by month-index.
+XIRR_TRUST_MAX = 0.70          # never lean more than 70% on personal XIRR
+XIRR_TRUST_PER_STATEMENT = 0.06  # +6% trust per statement of real contribution data
+
+
+def _blend_forecast_rate(measured_annual_pct: float, n_statements: int) -> float:
+    """Blend an account's measured XIRR toward the market anchor.
+
+    `measured_annual_pct` is the XIRR in percent (e.g. 14.9). Returns the blended
+    annual return in percent. Trust scales with `n_statements` up to XIRR_TRUST_MAX,
+    so accounts with thin history lean on the 10% market anchor and accounts with
+    years of statements lean on their own realized return — but never fully, so a
+    recent high return isn't extrapolated forever.
+    """
+    w = min(XIRR_TRUST_MAX, max(0.0, n_statements * XIRR_TRUST_PER_STATEMENT))
+    return w * measured_annual_pct + (1.0 - w) * MARKET_ANCHOR_ANNUAL
+
 FREQUENCY_MONTHS: Dict[str, float] = {
     "weekly": 1 / 4.33,       # occurrences per month
     "biweekly": 2 / 4.33,
@@ -273,7 +304,25 @@ def _build_compound_account_config(
     monthly_rate: Dict[int, float] = {}
     monthly_contrib: Dict[int, float] = {}
 
-    # 1. Build from InvestmentHolding records (highest priority)
+    # 0. Measured XIRR wins for investment accounts (highest priority for RATE).
+    #    Anchor each account's projected growth to its own realized money-weighted
+    #    return, blended toward the market anchor by data depth. Only sets the rate
+    #    when returns.py actually produced a number (≥120 days / ≥2 statements);
+    #    otherwise we fall through to holdings / defaults below. Does NOT set
+    #    contributions — those still come from holdings/profile.
+    from app.services.returns import account_return
+    for acc in accounts:
+        if acc.account_type not in XIRR_FORECAST_TYPES:
+            continue
+        r = account_return(acc.id, db)
+        if r.get("annualized_pct") is not None:
+            blended_annual = _blend_forecast_rate(
+                r["annualized_pct"], r.get("n_snapshots") or 0
+            )
+            monthly_rate[acc.id] = blended_annual / 100.0 / 12.0
+
+    # 1. Build from InvestmentHolding records. Holdings supply CONTRIBUTIONS always,
+    #    and supply the RATE only when a measured XIRR did not already set it.
     for acc in accounts:
         acc_holdings = [h for h in holdings if h.account_id == acc.id]
         if acc_holdings:
@@ -283,7 +332,8 @@ def _build_compound_account_config(
                 (h.assumed_annual_return or 0.0) * (h.current_value or 0.0) / total_val
                 for h in acc_holdings
             )
-            monthly_rate[acc.id] = blended_annual / 100.0 / 12.0
+            if acc.id not in monthly_rate:
+                monthly_rate[acc.id] = blended_annual / 100.0 / 12.0
             monthly_contrib[acc.id] = sum(h.monthly_contribution or 0.0 for h in acc_holdings)
 
     # 2. FinancialProfile overrides for HYSA and IRA (if not already set by holdings)
