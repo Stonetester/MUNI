@@ -27,6 +27,7 @@ import {
   Mail,
   Home,
   Workflow,
+  PieChart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { APP_VERSION, APP_NAME } from '@/lib/version'
@@ -38,6 +39,7 @@ const ALL_PRIMARY_ITEMS = [
   { id: 'transactions', label: 'Transactions', icon: ArrowUpDown, href: '/transactions' },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays, href: '/calendar' },
   { id: 'accounts', label: 'Accounts', icon: Wallet, href: '/accounts' },
+  { id: 'investments', label: 'Investments', icon: PieChart, href: '/investments' },
   { id: 'forecast', label: 'Foresight', icon: TrendingUp, href: '/forecast' },
   { id: 'events', label: 'Life Events', icon: Calendar, href: '/events' },
   { id: 'profile', label: 'My Profile', icon: UserCircle, href: '/financial-profile' },

@@ -28,6 +28,7 @@ import type {
   ParsedPaystub,
   HomeBuyingGoal,
   SavingsGoalData,
+  AccountReturn,
 } from './types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -110,6 +111,28 @@ export async function deleteAccount(id: number): Promise<void> {
 export async function getAccountBalanceDetails(): Promise<AccountBalanceDetail[]> {
   if (isDemoModeActive()) return []
   const res: AxiosResponse<AccountBalanceDetail[]> = await api.get('/accounts/balances')
+  return res.data
+}
+
+// Measured investment returns (from balance snapshots, net of contributions)
+export async function getReturns(joint = false): Promise<AccountReturn[]> {
+  if (isDemoModeActive()) {
+    return demo.DEMO_ACCOUNTS
+      .filter(a => ['401k', 'ira', 'brokerage', 'hsa', 'hysa'].includes(a.account_type))
+      .map(a => ({
+        account_id: a.id, annualized_pct: 9.2, simple_pct: 14.1,
+        period_start: '2024-01-31', period_end: '2026-03-31', n_snapshots: 6,
+        start_balance: a.balance * 0.6, end_balance: a.balance, est_contributions: a.balance * 0.3,
+        gain: a.balance * 0.1, basis: 'demo data', low_confidence: false,
+        account_name: a.name, account_type: a.account_type, owner_id: 1,
+      }))
+  }
+  const res: AxiosResponse<AccountReturn[]> = await api.get(`/accounts/returns?joint=${joint}`)
+  return res.data
+}
+
+export async function getAccountReturn(accountId: number): Promise<AccountReturn> {
+  const res: AxiosResponse<AccountReturn> = await api.get(`/accounts/${accountId}/return`)
   return res.data
 }
 
@@ -849,6 +872,59 @@ export async function parseStatement(file: File): Promise<ParsedStatement> {
   const res = await api.post('/statements/parse', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
+  return res.data
+}
+
+// Parse a statement INCLUDING holdings tables + stated rate of return
+export interface ParsedHolding {
+  ticker: string
+  fund_name: string
+  value: number | null
+  weight_percent: number | null
+}
+
+export interface ParsedStatementFull extends ParsedStatement {
+  holdings: ParsedHolding[]
+  personal_rate_of_return: number | null
+}
+
+export async function parseStatementFull(file: File): Promise<ParsedStatementFull> {
+  if (isDemoModeActive()) {
+    return {
+      institution: 'Demo Brokerage', account_type_hint: 'ira', account_label: 'Demo IRA',
+      statement_date: new Date().toISOString().slice(0, 10), ending_balance: 12500, account_number_hint: '****5678',
+      holdings: [
+        { ticker: 'SWPPX', fund_name: 'Schwab S&P 500 Index', value: 8000, weight_percent: 64 },
+        { ticker: 'SWISX', fund_name: 'Schwab International Index', value: 4500, weight_percent: 36 },
+      ],
+      personal_rate_of_return: 8.4,
+    }
+  }
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await api.post('/statements/parse-full', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return res.data
+}
+
+// Apply a reviewed statement: create snapshot + upsert/prune holdings
+export interface ApplyStatementResult {
+  account_id: number
+  snapshot: { date: string; balance: number } | null
+  holdings_upserted: number
+  holdings_created: number
+  holdings_removed: number
+}
+
+export async function applyStatement(data: {
+  account_id: number
+  statement_date: string
+  ending_balance: number | null
+  holdings: { ticker: string; fund_name?: string; value: number; weight_percent?: number | null }[]
+}): Promise<ApplyStatementResult> {
+  if (isDemoModeActive()) return { account_id: data.account_id, snapshot: data.ending_balance != null ? { date: data.statement_date, balance: data.ending_balance } : null, holdings_upserted: 0, holdings_created: data.holdings.length, holdings_removed: 0 }
+  const res = await api.post('/statements/apply', data)
   return res.data
 }
 
