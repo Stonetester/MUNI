@@ -29,15 +29,27 @@ function ReturnBadge({ ret }: { ret?: AccountReturn }) {
     )
   }
   const pos = ret.annualized_pct >= 0
+  const t12 = ret.trailing_12mo_pct
   return (
-    <span
-      className={`inline-flex items-center gap-1 text-sm font-semibold ${pctColor(ret.annualized_pct)}`}
-      title={ret.basis}
-    >
-      {pos ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-      {pos ? '+' : ''}{ret.annualized_pct.toFixed(1)}%/yr
-      {ret.low_confidence && <span className="text-[10px] text-yellow-500/80 font-normal">(rough)</span>}
-    </span>
+    <div className="flex flex-col items-end gap-0.5">
+      <span
+        className={`inline-flex items-center gap-1 text-sm font-semibold ${pctColor(ret.annualized_pct)}`}
+        title={ret.basis}
+      >
+        {pos ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+        {pos ? '+' : ''}{ret.annualized_pct.toFixed(1)}%/yr
+        {ret.low_confidence && <span className="text-[10px] text-yellow-500/80 font-normal">(rough)</span>}
+      </span>
+      <span className="text-[10px] text-text-secondary">{ret.window_label ?? 'since inception'}</span>
+      {typeof t12 === 'number' && (
+        <span
+          className="text-[11px] text-text-secondary"
+          title="Trailing-12-month money-weighted return — comparable to the figure your brokerage prints, which differs from the lifetime rate only because of the time window."
+        >
+          {t12 >= 0 ? '+' : ''}{t12.toFixed(1)}%/yr <span className="opacity-70">last 12 mo</span>
+        </span>
+      )}
+    </div>
   )
 }
 
