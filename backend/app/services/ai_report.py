@@ -626,6 +626,10 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         "You can explain and calculate: Coast FI, FIRE, safe withdrawal rate (the 4% rule), compound growth,",
         "savings rate, net worth, house-buying terms (down payment, PMI, DTI, closing costs, points, amortization,",
         "fixed vs ARM), retirement accounts (401k/IRA/Roth/HSA), and general personal-finance math.",
+        "You also know the actual FUNDS/STOCKS held in each investment account and the MEASURED average",
+        "return per account (listed below). When asked 'what funds do I own' or 'what was my average return on",
+        "my IRA/401k/brokerage', answer from those lists — use the measured return number directly and cite the",
+        "account. Never invent a return for an account marked as not-yet-measurable.",
         "Rules: be concise and concrete. Prefer these real numbers over generic examples — that is the whole point.",
         "Show the formula and the substituted numbers when you calculate. If a figure isn't in the data, say so",
         "rather than inventing it. Use plain language; define a term before using it.",
@@ -663,6 +667,77 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         for acc in d["accounts"]:
             owner = f" [{u.username}]" if joint else ""
             ctx_lines.append(f"  - {acc['name']} ({acc['type']}): ${acc['balance']:,.2f}{owner}")
+
+    # ── Investments: holdings + MEASURED average return per account ──────────────
+    # This is what lets the tutor answer "what funds do I own?" and "what was my
+    # average return on my IRA?" — previously NONE of this was in the prompt, so
+    # the model had no investment data to recall.
+    from app.models.investment_holding import InvestmentHolding
+    from app.services.returns import all_account_returns
+
+    user_ids = [u.id for u in users]
+    accounts_by_id = {
+        a.id: a for a in db.query(Account).filter(Account.user_id.in_(user_ids)).all()
+    }
+    holdings = (
+        db.query(InvestmentHolding)
+        .filter(InvestmentHolding.account_id.in_(list(accounts_by_id.keys())))
+        .all()
+    )
+    if holdings:
+        ctx_lines += ["", "Investment holdings (the actual funds/stocks inside each account):"]
+        # group by account
+        by_acct: dict[int, list] = {}
+        for h in holdings:
+            by_acct.setdefault(h.account_id, []).append(h)
+        for acc_id, hs in by_acct.items():
+            acc = accounts_by_id.get(acc_id)
+            if not acc:
+                continue
+            owner = f" [{acc.user.username}]" if joint and acc.user else ""
+            ctx_lines.append(f"  {acc.name} ({acc.account_type}){owner}:")
+            for h in sorted(hs, key=lambda x: -(x.current_value or 0)):
+                ret = f", assumed return {h.assumed_annual_return}%" if h.assumed_annual_return else ""
+                wt = f", {h.weight_percent:.0f}% of account" if h.weight_percent else ""
+                name = h.fund_name or h.ticker
+                # Some statements (John Hancock, Fidelity) list fund NAMES, not real
+                # tickers — we store a slug. Only show the ticker when it looks real
+                # (i.e. it isn't just a slug of the name) so the chat reads cleanly.
+                slug_like = (h.fund_name and h.ticker and
+                             h.ticker not in (h.fund_name or "") and len(h.ticker) > 6)
+                label = name if slug_like else f"{h.ticker} — {name}"
+                ctx_lines.append(
+                    f"    - {label}: ${h.current_value:,.2f}{wt}{ret}"
+                )
+
+    returns = all_account_returns(user_ids, db)
+    measured = [r for r in returns if r["annualized_pct"] is not None]
+    if measured:
+        ctx_lines += [
+            "",
+            "MEASURED average return per investment account (annualized, computed from your uploaded",
+            "statement balances and netted of contributions — this is the REAL number, use it directly):",
+        ]
+        for r in measured:
+            owner = ""
+            if joint:
+                acc = accounts_by_id.get(r["account_id"])
+                if acc and acc.user:
+                    owner = f" [{acc.user.username}]"
+            ctx_lines.append(
+                f"  - {r['account_name']} ({r['account_type']}){owner}: "
+                f"{r['annualized_pct']}%/yr "
+                f"(${r['start_balance']:,.0f}→${r['end_balance']:,.0f}, {r['period_start']}→{r['period_end']}; "
+                f"{r['basis']})"
+            )
+    # Accounts we couldn't measure yet (so the tutor says WHY instead of guessing).
+    unmeasured = [r for r in returns if r["annualized_pct"] is None]
+    if unmeasured:
+        ctx_lines.append(
+            "  (No measured return yet for: "
+            + ", ".join(f"{r['account_name']} — {r['basis']}" for r in unmeasured)
+            + ". Do NOT invent a return for these; tell the user to upload more statements.)"
+        )
 
     ctx_lines += [
         "",

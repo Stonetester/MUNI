@@ -13,6 +13,7 @@ class BalanceSnapshot(Base):
     account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     date = Column(Date, nullable=False, index=True)
     balance = Column(Float, nullable=False)
+    contributions = Column(Float, nullable=True)  # money added during this statement's period
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

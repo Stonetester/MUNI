@@ -27,6 +27,7 @@ import {
   Layers,
   Receipt,
   Workflow,
+  PieChart,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import TutorialModal from './TutorialModal'
@@ -46,6 +47,7 @@ const moreItems = [
   { label: 'Life Events', icon: Calendar, href: '/events' },
   { label: 'My Profile', icon: UserCircle, href: '/financial-profile' },
   { label: 'Home Buying', icon: Home, href: '/home-buying' },
+  { label: 'Investments', icon: PieChart, href: '/investments' },
   { label: 'Paystubs', icon: FileText, href: '/paystubs' },
   { label: 'Statements', icon: Receipt, href: '/statements' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },

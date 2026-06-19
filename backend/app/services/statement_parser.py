@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ParsedHolding:
+    """One fund/stock position pulled from a statement's holdings table."""
+    ticker: str                       # symbol if present, else a short slug of the name
+    fund_name: str                    # full human-readable name
+    value: Optional[float]            # current market value ($)
+    weight_percent: Optional[float] = None   # % of account, if the statement gives it
+
+
+@dataclass
 class ParsedStatement:
     institution: str                  # "EverBank" | "John Hancock" | "Schwab"
     account_type_hint: str            # "hysa" | "retirement_401k" | "ira"
@@ -23,6 +32,14 @@ class ParsedStatement:
     statement_date: Optional[date]
     ending_balance: Optional[float]
     account_number_hint: Optional[str]  # last 4 digits if found
+    holdings: list = None             # list[ParsedHolding] — funds/stocks in the account
+    personal_rate_of_return: Optional[float] = None  # stated PRR for the period, if any (Fidelity)
+    period_contributions: Optional[float] = None     # money added THIS period (deposits + employer);
+                                                     # netted out of returns so deposits aren't "gains"
+
+    def __post_init__(self):
+        if self.holdings is None:
+            self.holdings = []
 
 
 def _parse_money(raw: str) -> Optional[float]:
@@ -31,6 +48,42 @@ def _parse_money(raw: str) -> Optional[float]:
         return float(cleaned)
     except ValueError:
         return None
+
+
+def _sum_period_contributions(text: str, institution: str) -> Optional[float]:
+    """Money the account holder/employer ADDED this statement period.
+
+    Netting this out of the balance change is what turns a garbage "2700%/yr"
+    (mostly deposits) into a real investment return. We take the PERIOD column
+    (the first number after each label), not YTD/inception.
+    """
+    total = 0.0
+    found = False
+
+    if institution == "Schwab":
+        # 'Deposits 375.00 675.00'  -> period = first number
+        m = re.search(r"\bDeposits\s+([\d,]+\.\d{2})", text)
+        if m:
+            total += _parse_money(m.group(1)) or 0.0
+            found = True
+
+    elif institution == "Fidelity":
+        for label in (r"Your Contributions", r"Employer Contributions"):
+            m = re.search(label + r"\s+\$([\d,]+\.\d{2})", text)
+            if m:
+                total += _parse_money(m.group(1)) or 0.0
+                found = True
+
+    elif institution == "John Hancock":
+        # Each line: '<LABEL> <period> <ytd> <inception>' -> period = first number.
+        for label in (r"EE ELECTIVE DEFERRAL", r"SAFE HARBOR NON-ELECTIVE CONTR",
+                      r"ER PROFIT SHARING", r"Transfers into the plan"):
+            m = re.search(label + r"\s+([\d,]+\.\d{2})", text)
+            if m:
+                total += _parse_money(m.group(1)) or 0.0
+                found = True
+
+    return round(total, 2) if found else None
 
 
 def _extract_text(pdf_path: str) -> str:
@@ -181,7 +234,71 @@ def _parse_john_hancock(text: str) -> Optional[ParsedStatement]:
         statement_date=stmt_date,
         ending_balance=balance,
         account_number_hint=None,
+        holdings=_john_hancock_holdings(text),
+        period_contributions=_sum_period_contributions(text, "John Hancock"),
     )
+
+
+def _slug_ticker(name: str) -> str:
+    """John Hancock / Fidelity list fund NAMES, not tickers. Make a stable slug so
+    holdings match across statements. Uses initials of each word PLUS a compact tail
+    so similar names ('iShares MSCI EAFE Value ETF' vs '...Growth ETF') don't collide."""
+    words = re.findall(r"[A-Za-z0-9]+", name.upper())
+    if not words:
+        return "FUND"
+    initials = "".join(w[0] for w in words)
+    tail = re.sub(r"[^A-Za-z0-9]", "", name).upper()[-6:]
+    return (initials + tail)[:16]
+
+
+def _john_hancock_holdings(text: str) -> list:
+    """Pull funds from JH 'What investment options make up your account' table.
+
+    Each line:  <fund name> <cur%> <ongoing%> <units1> <units2> <unitval1> <unitval2> <val1> <val2>
+    e.g.  '500 Index Fund 20.42 0.00 132.697495 132.508703 100.543527 103.211000 13,341.88 13,676.37'
+    We want the fund name, the current %, and the LAST value (current value).
+    """
+    start = re.search(r"What investment options make up your account", text)
+    if not start:
+        return []
+    end = re.search(r"Total account\b", text[start.end():])
+    block = text[start.end(): start.end() + (end.start() if end else 6000)]
+
+    holdings = []
+    # name then 8 numeric columns; allow $ on unit values; commas in values.
+    # The cur%/ongoing% columns may carry a literal '%' (e.g. '20.30%'); fund names may
+    # start with a digit ('500 Index Fund'); both happen on the two biggest holdings.
+    pat = re.compile(
+        r"^([A-Za-z0-9][A-Za-z0-9 .&'/-]+?)\s+"
+        r"(\d{1,3}\.\d{2})%?\s+(\d{1,3}\.\d{2})%?\s+"       # cur%, ongoing% (optional %)
+        r"([\d.]+)\s+([\d.]+)\s+"                            # units1, units2
+        r"\$?([\d,.]+)\s+\$?([\d,.]+)\s+"                    # unitval1, unitval2
+        r"\$?([\d,]+\.\d{2})\s+\$?([\d,]+\.\d{2})\s*$",      # val1, val2 (current = last; $ optional)
+        re.MULTILINE,
+    )
+    seen = set()
+    for m in pat.finditer(block):
+        name = m.group(1).strip()
+        low = name.lower()
+        # Skip the allocation-strategy subtotals and the grand-total row, but NOT real
+        # funds whose names happen to start with these words (e.g. "Total Stock Market
+        # Index Fund"). Those bare strategy rows have no numeric columns after them and
+        # so won't match `pat` anyway; the explicit guards here are the exact subtotals.
+        if low in ("growth", "aggressive growth", "total account value", "total account"):
+            continue
+        cur_pct = float(m.group(2))
+        cur_val = _parse_money(m.group(9))
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        holdings.append(ParsedHolding(
+            ticker=_slug_ticker(name),
+            fund_name=name,
+            value=cur_val,
+            weight_percent=cur_pct or None,
+        ))
+    return holdings
 
 
 # ── Charles Schwab (IRA / Brokerage) ─────────────────────────────────────────
@@ -257,7 +374,55 @@ def _parse_schwab(text: str) -> Optional[ParsedStatement]:
         statement_date=stmt_date,
         ending_balance=balance,
         account_number_hint=acct_hint,
+        holdings=_schwab_holdings(text),
+        period_contributions=_sum_period_contributions(text, "Schwab"),
     )
+
+
+def _schwab_holdings(text: str) -> list:
+    """Pull positions from the Schwab 'Top Account Holdings This Period' table.
+
+    Lines look like:
+        SWPPX SCHWABS&P500INDEX 1,474.22 37%
+        VOO VANGUARDS&P500ETF 1,262.08 32%
+        SWISX SCHWABINTERNATIONALINDE... 748.94 19%
+        CHARLESSCHWABBANK 472.93 12%      <- cash sweep, no symbol; skip
+    The block is bounded by 'Top Account Holdings' .. 'Gain or (Loss) Summary'.
+    """
+    start = re.search(r"Top Account Holdings", text)
+    if not start:
+        return []
+    end = re.search(r"Gain or \(Loss\)|Positions - Summary", text[start.end():])
+    block = text[start.end(): start.end() + (end.start() if end else 4000)]
+
+    holdings = []
+    # SYMBOL (uppercase/digits) then description then  value  percent%
+    pat = re.compile(
+        r"^([A-Z]{2,6})\s+(.+?)\s+([\d,]+\.\d{2})\s+(\d{1,3})%\s*$",
+        re.MULTILINE,
+    )
+    for m in pat.finditer(block):
+        sym, desc, val, pct = m.group(1), m.group(2).strip(), m.group(3), m.group(4)
+        if sym in ("CUSIP", "SYMBOL"):
+            continue
+        holdings.append(ParsedHolding(
+            ticker=sym,
+            fund_name=desc.replace("...", "").strip(),
+            value=_parse_money(val),
+            weight_percent=float(pct),
+        ))
+
+    # Cash sweep row has no symbol — e.g. 'CHARLESSCHWABBANK 472.93 12%'. Capture it as
+    # CASH so the holdings total reconciles with the account balance.
+    cash = re.search(r"^([A-Z][A-Z &]+BANK)\s+([\d,]+\.\d{2})\s+(\d{1,3})%\s*$", block, re.MULTILINE)
+    if cash:
+        holdings.append(ParsedHolding(
+            ticker="CASH",
+            fund_name="Cash & Bank Sweep",
+            value=_parse_money(cash.group(2)),
+            weight_percent=float(cash.group(3)),
+        ))
+    return holdings
 
 
 # ── Fidelity NetBenefits (401k) ───────────────────────────────────────────────
@@ -290,6 +455,12 @@ def _parse_fidelity(text: str) -> Optional[ParsedStatement]:
     if eb_match:
         balance = _parse_money(eb_match.group(1))
 
+    # Fidelity prints a stated time-weighted "Personal Rate of Return" for the period.
+    prr = None
+    prr_match = re.search(r"Personal Rate of Return\s*This Period\s*(-?\d{1,3}\.\d)%", text)
+    if prr_match:
+        prr = float(prr_match.group(1))
+
     return ParsedStatement(
         institution="Fidelity",
         account_type_hint="retirement_401k",
@@ -297,7 +468,52 @@ def _parse_fidelity(text: str) -> Optional[ParsedStatement]:
         statement_date=stmt_date,
         ending_balance=balance,
         account_number_hint=None,
+        holdings=_fidelity_holdings(text),
+        personal_rate_of_return=prr,
+        period_contributions=_sum_period_contributions(text, "Fidelity"),
     )
+
+
+def _fidelity_holdings(text: str) -> list:
+    """Pull funds from the Fidelity 'Market Value of Your Account' table.
+
+    Lines (pdfplumber wraps the name across the price/value columns):
+        TRP Retire
+        2055 I 217.699 326.993 $23.05 $22.75 $5,017.96 $7,439.09
+    We anchor on a row that ends with two share counts, two $prices, two $values
+    and take the LAST value as current.  Name may be on the preceding line.
+    """
+    start = re.search(r"Market Value of Your Account", text)
+    if not start:
+        return []
+    end = re.search(r"Account Totals|Remember that", text[start.end():])
+    block = text[start.end(): start.end() + (end.start() if end else 3000)]
+    lines = [ln.rstrip() for ln in block.splitlines() if ln.strip()]
+
+    holdings = []
+    row_pat = re.compile(
+        r"^(.*?)([\d,]+\.\d{2,3})\s+([\d,]+\.\d{2,3})\s+"     # shares1 shares2
+        r"\$([\d,]+\.\d{2})\s+\$([\d,]+\.\d{2})\s+"            # price1 price2
+        r"\$([\d,]+\.\d{2})\s+\$([\d,]+\.\d{2})\s*$"           # value1 value2 (current=last)
+    )
+    for idx, ln in enumerate(lines):
+        m = row_pat.match(ln)
+        if not m:
+            continue
+        name = m.group(1).strip()
+        # Name often spills onto the previous line ("TRP Retire" / "2055 I ...")
+        if (not name or len(name) < 3) and idx > 0:
+            name = (lines[idx - 1].strip() + " " + name).strip()
+        if not name or name.lower().startswith(("blended", "account totals", "tier")):
+            continue
+        cur_val = _parse_money(m.group(7))
+        holdings.append(ParsedHolding(
+            ticker=_slug_ticker(name),
+            fund_name=name,
+            value=cur_val,
+            weight_percent=None,
+        ))
+    return holdings
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────

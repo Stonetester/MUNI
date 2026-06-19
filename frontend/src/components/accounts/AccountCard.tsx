@@ -1,15 +1,16 @@
 'use client'
 
-import { Account, AccountBalanceDetail } from '@/lib/types'
+import { Account, AccountBalanceDetail, AccountReturn } from '@/lib/types'
 import { formatCurrency, accountTypeLabel, isLiability } from '@/lib/utils'
 import { AccountTypeBadge } from '@/components/ui/Badge'
 import { deleteAccount } from '@/lib/api'
-import { Edit2, Trash2, Building2, TrendingUp, CreditCard, PiggyBank, Wallet, Users } from 'lucide-react'
+import { Edit2, Trash2, Building2, TrendingUp, TrendingDown, CreditCard, PiggyBank, Wallet, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface AccountCardProps {
   account: Account
   balanceDetail?: AccountBalanceDetail
+  accountReturn?: AccountReturn
   onEdit: (account: Account) => void
   onDeleted: () => void
   onClick: (account: Account) => void
@@ -37,7 +38,7 @@ function formatShortDate(dateStr: string): string {
   return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export default function AccountCard({ account, balanceDetail, onEdit, onDeleted, onClick }: AccountCardProps) {
+export default function AccountCard({ account, balanceDetail, accountReturn, onEdit, onDeleted, onClick }: AccountCardProps) {
   const liability = isLiability(account.account_type)
   const accentColor = getAccentColor(account.account_type)
   const isCompound = COMPOUND_TYPES.has(account.account_type)
@@ -158,6 +159,21 @@ export default function AccountCard({ account, balanceDetail, onEdit, onDeleted,
           <p className={cn('text-xl font-bold', liability ? 'text-danger' : 'text-text-primary')}>
             {liability ? '-' : ''}{formatCurrency(estimatedBalance)}
           </p>
+        )}
+        {accountReturn && accountReturn.annualized_pct !== null && (
+          <div
+            className="flex items-center gap-1 mt-2"
+            title={accountReturn.basis}
+          >
+            {accountReturn.annualized_pct >= 0
+              ? <TrendingUp size={12} className="text-green-400" />
+              : <TrendingDown size={12} className="text-red-400" />}
+            <span className={cn('text-xs font-semibold', accountReturn.annualized_pct >= 0 ? 'text-green-400' : 'text-red-400')}>
+              {accountReturn.annualized_pct >= 0 ? '+' : ''}{accountReturn.annualized_pct.toFixed(1)}%/yr
+            </span>
+            <span className="text-[10px] text-muted">measured</span>
+            {accountReturn.low_confidence && <span className="text-[10px] text-yellow-500/80">rough</span>}
+          </div>
         )}
         {!account.is_active && (
           <p className="text-xs text-muted mt-1">Inactive</p>

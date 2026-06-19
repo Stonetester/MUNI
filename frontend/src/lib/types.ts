@@ -366,6 +366,26 @@ export interface InvestmentHolding {
   updated_at?: string
 }
 
+// Measured investment return (from balance snapshots, net of contributions)
+export interface AccountReturn {
+  account_id: number
+  annualized_pct: number | null
+  simple_pct: number | null
+  period_start: string | null
+  period_end: string | null
+  n_snapshots: number
+  start_balance: number | null
+  end_balance: number | null
+  est_contributions: number | null
+  gain: number | null
+  basis: string
+  low_confidence?: boolean
+  // present on the /accounts/returns list response (not the single-account one)
+  account_name?: string
+  account_type?: string
+  owner_id?: number
+}
+
 // Compensation Events
 export type CompensationEventType = 'raise' | 'bonus' | 'spot_award' | 'stipend' | 'other'
 
