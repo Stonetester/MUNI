@@ -21,6 +21,11 @@ export interface AccountBalanceDetail {
   actual_balance: number | null
   last_snapshot_date: string | null
   monthly_contribution: number
+  // Where the contribution figure came from, so the UI never shows a manual
+  // estimate as if it were measured. measured | manual_fallback | profile | paycheck | none
+  contribution_source: string
+  contribution_label: string
+  contribution_basis: string
   next_pay_date: string | null
   paychecks_since_anchor: number
 }

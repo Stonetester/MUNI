@@ -11,6 +11,7 @@ import {
   getHoldings, createHolding, updateHolding, deleteHolding,
   getCompensationEvents, createCompensationEvent, deleteCompensationEvent,
   getAccounts,
+  getAccountBalanceDetails,
   inferSalaryFromPaystubs,
 } from '@/lib/api'
 import type { FinancialProfile, StudentLoan, InvestmentHolding, CompensationEvent, Account } from '@/lib/types'
@@ -219,16 +220,34 @@ function IncomeSection({ profile, onSaved }: { profile: FinancialProfile | null;
 }
 
 // ─── HYSA section ─────────────────────────────────────────────────────────────
-function HysaSection({ profile, onSaved }: { profile: FinancialProfile | null; onSaved: () => void }) {
+function HysaSection({ profile, accounts, onSaved }: { profile: FinancialProfile | null; accounts: Account[]; onSaved: () => void }) {
   const [hysaApy, setHysaApy] = useState(profile?.hysa_apy?.toString() ?? '')
   const [hysaContrib, setHysaContrib] = useState(profile?.hysa_monthly_contribution?.toString() ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  // Live MEASURED contribution from real EverBank deposits (the value the forecast
+  // actually uses). The manual field below is only a fallback when this is absent.
+  const [measured, setMeasured] = useState<{ amount: number; label: string; basis: string } | null>(null)
 
   useEffect(() => {
     setHysaApy(profile?.hysa_apy?.toString() ?? '')
     setHysaContrib(profile?.hysa_monthly_contribution?.toString() ?? '')
   }, [profile])
+
+  useEffect(() => {
+    const hysa = accounts.find(a => a.account_type === 'hysa')
+    if (!hysa) { setMeasured(null); return }
+    getAccountBalanceDetails()
+      .then(details => {
+        const d = details.find(x => x.account_id === hysa.id)
+        if (d && d.contribution_source === 'measured') {
+          setMeasured({ amount: d.monthly_contribution, label: d.contribution_label, basis: d.contribution_basis })
+        } else {
+          setMeasured(null)
+        }
+      })
+      .catch(() => setMeasured(null))
+  }, [accounts])
 
   const handleSave = async () => {
     setSaving(true)
@@ -247,10 +266,29 @@ function HysaSection({ profile, onSaved }: { profile: FinancialProfile | null; o
 
   return (
     <div className="mt-4 flex flex-col gap-4">
+      {measured && (
+        <div className="p-3 rounded-xl bg-green-400/10 border border-green-400/20 text-xs text-text-secondary">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-green-400 font-semibold">{fmt(measured.amount)}/mo</span>
+            <span className="text-[10px] text-green-400 bg-green-400/10 border border-green-400/20 rounded-full px-1.5 py-0.5">
+              {measured.label}
+            </span>
+          </div>
+          <p>This is the contribution the forecast actually uses — {measured.basis}. The manual value below is only a fallback if no EverBank deposits are found.</p>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-4">
         <Input label="HYSA APY (%)" type="number" step="0.01" value={hysaApy} onChange={e => setHysaApy(e.target.value)} placeholder="3.9" />
-        <Input label="Monthly Contribution ($)" type="number" value={hysaContrib} onChange={e => setHysaContrib(e.target.value)} placeholder="1600" />
+        <Input
+          label={measured ? 'Monthly Contribution ($) — fallback estimate' : 'Monthly Contribution ($)'}
+          type="number" value={hysaContrib} onChange={e => setHysaContrib(e.target.value)} placeholder="1600"
+        />
       </div>
+      {!measured && (
+        <p className="text-[11px] text-text-secondary -mt-2">
+          Used only as a fallback estimate when no EverBank deposit transactions are found. Once your sheet has EverBank deposits, the forecast averages those instead.
+        </p>
+      )}
       {hysaApy && hysaContrib && (
         <div className="p-3 rounded-xl bg-surface-2 text-xs text-text-secondary">
           At {hysaApy}% APY, ${parseFloat(hysaContrib).toLocaleString()}/mo grows to{' '}
@@ -828,7 +866,7 @@ export default function FinancialProfilePage() {
             }
           />
         }>
-          <HysaSection profile={profile} onSaved={loadProfile} />
+          <HysaSection profile={profile} accounts={accounts} onSaved={loadProfile} />
         </Section>
 
         <Section title="IRA Contributions" icon={BarChart3} color="bg-indigo-600" tooltip={

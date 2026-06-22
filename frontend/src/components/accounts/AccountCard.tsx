@@ -56,6 +56,15 @@ export default function AccountCard({ account, balanceDetail, accountReturn, onE
   // Cash pool (checking): show estimated + next pay date hint
   const showCashEstimate = isCashPool && !excluded && balanceDetail != null
 
+  // Monthly contribution + where it came from (measured deposits vs manual estimate).
+  const contribAmount = balanceDetail?.monthly_contribution ?? 0
+  const contribSource = balanceDetail?.contribution_source ?? 'none'
+  const contribLabel = balanceDetail?.contribution_label ?? ''
+  const contribBasis = balanceDetail?.contribution_basis ?? ''
+  // Show a contribution line on compound accounts that actually have one.
+  const showContribution = isCompound && !excluded && contribAmount > 0 && contribSource !== 'none'
+  const contribIsMeasured = contribSource === 'measured'
+
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!window.confirm(`Delete "${account.name}"? This cannot be undone.`)) return
@@ -173,6 +182,22 @@ export default function AccountCard({ account, balanceDetail, accountReturn, onE
             </span>
             <span className="text-[10px] text-muted">measured</span>
             {accountReturn.low_confidence && <span className="text-[10px] text-yellow-500/80">rough</span>}
+          </div>
+        )}
+        {showContribution && (
+          <div className="flex items-center gap-1.5 mt-2" title={contribBasis}>
+            <PiggyBank size={12} className="text-secondary" />
+            <span className="text-xs font-medium text-text-secondary">
+              {formatCurrency(contribAmount)}/mo
+            </span>
+            <span className={cn(
+              'text-[10px] px-1.5 py-0.5 rounded-full border',
+              contribIsMeasured
+                ? 'text-green-400 bg-green-400/10 border-green-400/20'
+                : 'text-yellow-500/90 bg-yellow-500/10 border-yellow-500/20',
+            )}>
+              {contribLabel}
+            </span>
           </div>
         )}
         {!account.is_active && (
