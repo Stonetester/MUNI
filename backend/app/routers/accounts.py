@@ -21,6 +21,11 @@ class AccountBalanceDetail(BaseModel):
     actual_balance: Optional[float]
     last_snapshot_date: Optional[date]
     monthly_contribution: float
+    # Where the contribution figure comes from, so the UI can label it clearly and
+    # never present a manual estimate as if it were measured.
+    contribution_source: str = "none"   # measured | manual_fallback | profile | paycheck | none
+    contribution_label: str = "none"
+    contribution_basis: str = ""
     next_pay_date: Optional[date] = None
     paychecks_since_anchor: int = 0
 
@@ -97,6 +102,9 @@ def get_account_balances(
             actual_balance=data["actual"],
             last_snapshot_date=data["last_snapshot_date"],
             monthly_contribution=data["monthly_contribution"],
+            contribution_source=data.get("contribution_source", "none"),
+            contribution_label=data.get("contribution_label", "none"),
+            contribution_basis=data.get("contribution_basis", ""),
             next_pay_date=data.get("next_pay_date"),
             paychecks_since_anchor=data.get("paychecks_since_anchor", 0),
         )

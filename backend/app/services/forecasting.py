@@ -275,18 +275,68 @@ def _event_impact_for_month(events: List[LifeEvent], month_str: str) -> float:
     return total
 
 
+def _statement_monthly_contribution(account_id: int, db: Session) -> Optional[float]:
+    """Measured monthly contribution from this account's statement snapshots.
+
+    Statements (the `balance_snapshots.contributions` rows parsed from JH/Schwab/Fidelity
+    PDFs) are the TRUTH for how much was actually contributed. We total the recorded
+    contributions over the statement-backed window and divide by its length in months.
+    Returns None when there isn't enough real contribution data to measure (caller then
+    falls back to the manual holding/profile estimate).
+    """
+    snaps = (
+        db.query(BalanceSnapshot)
+        .filter(BalanceSnapshot.account_id == account_id)
+        .order_by(BalanceSnapshot.date.asc())
+        .all()
+    )
+    if len(snaps) < 2:
+        return None
+    # Window: first snapshot through the last one that recorded contributions.
+    recorded = [s for s in snaps if s.contributions is not None]
+    if len(recorded) < 1:
+        return None
+    first, last = snaps[0], recorded[-1]
+    days = (last.date - first.date).days
+    if days < 60:
+        return None  # too short to derive a monthly pace
+    total = sum(float(s.contributions) for s in snaps if s.contributions)
+    if total <= 0:
+        return None
+    months = days / 30.44
+    return round(total / months, 2)
+
+
+def _hysa_contributing_user_ids(account: Account, db: Session) -> List[int]:
+    """Users who deposit into this HYSA. Joint HYSA → every household user (so both
+    Keaton and Katherine's EverBank deposits are measured ONCE into the shared
+    account). Solo HYSA → just the owner."""
+    if account.is_joint:
+        return [u.id for u in db.query(User).all()]
+    ids = [account.user_id]
+    if account.joint_user_id and account.joint_user_id not in ids:
+        ids.append(account.joint_user_id)
+    return ids
+
+
 def _build_compound_account_config(
     accounts: List[Account],
     db: Session,
     user_id: int,
-) -> tuple[Dict[int, float], Dict[int, float]]:
+) -> tuple[Dict[int, float], Dict[int, float], Dict[int, dict]]:
     """
-    Returns (monthly_rate_map, monthly_contrib_map) for each account.
+    Returns (monthly_rate_map, monthly_contrib_map, hysa_detail_map) for each account.
     Pulls from InvestmentHolding records first, then FinancialProfile defaults.
     Uses DEFAULT_ANNUAL_RETURNS as the final fallback for compound-type accounts.
+
+    `monthly_contrib_map` holds the FORWARD-looking monthly contribution (the trailing
+    average for HYSA). `hysa_detail_map[account_id]` carries the measured-vs-manual
+    source label and the current-month actual so the forecast loop can apply $0 for the
+    current month when no EverBank deposit has landed yet.
     """
     from app.models.investment_holding import InvestmentHolding
     from app.models.financial_profile import FinancialProfile
+    from app.services.hysa_contributions import hysa_contribution_for_account
 
     account_ids = [a.id for a in accounts]
     holdings = (
@@ -303,6 +353,7 @@ def _build_compound_account_config(
 
     monthly_rate: Dict[int, float] = {}
     monthly_contrib: Dict[int, float] = {}
+    hysa_detail: Dict[int, dict] = {}
 
     # 0. Measured XIRR wins for investment accounts (highest priority for RATE).
     #    Anchor each account's projected growth to its own realized money-weighted
@@ -336,14 +387,42 @@ def _build_compound_account_config(
                 monthly_rate[acc.id] = blended_annual / 100.0 / 12.0
             monthly_contrib[acc.id] = sum(h.monthly_contribution or 0.0 for h in acc_holdings)
 
-    # 2. FinancialProfile overrides for HYSA and IRA (if not already set by holdings)
+    # 1b. STATEMENTS ARE THE TRUTH for investment-account contributions (401k/IRA/
+    #     brokerage/HSA). When a statement-backed monthly contribution can be measured
+    #     from balance_snapshots.contributions, it OVERRIDES the manual holding/profile
+    #     value (which is only an estimate for future prediction). Past real data beats
+    #     a typed-in number. HYSA is handled separately below from EverBank deposits.
+    for acc in accounts:
+        if acc.account_type not in XIRR_FORECAST_TYPES:
+            continue
+        measured = _statement_monthly_contribution(acc.id, db)
+        if measured is not None:
+            monthly_contrib[acc.id] = measured
+
+    # 2a. HYSA contribution from REAL EverBank deposits (truth) — overrides any holding
+    #     value above. We measure the actual "Savings Transfer" deposits (both partners
+    #     for a joint HYSA, summed ONCE) and use the trailing average as the forward
+    #     monthly contribution. The manual profile value is only a labeled fallback when
+    #     there are no deposits to measure. The current-month actual (which may be $0 if
+    #     nobody has deposited yet this month) is stored in hysa_detail for the loop.
+    for acc in accounts:
+        if acc.account_type != "hysa":
+            continue
+        contributing_ids = _hysa_contributing_user_ids(acc, db)
+        detail = hysa_contribution_for_account(
+            db,
+            contributing_ids,
+            manual_fallback=(profile.hysa_monthly_contribution if profile else None),
+        )
+        monthly_contrib[acc.id] = detail["avg_monthly"]
+        hysa_detail[acc.id] = detail
+
+    # 2. FinancialProfile overrides for HYSA APY and IRA (if not already set by holdings)
     if profile:
         for acc in accounts:
             if acc.account_type == "hysa":
                 if acc.id not in monthly_rate and (profile.hysa_apy or 0) > 0:
                     monthly_rate[acc.id] = (profile.hysa_apy or 0) / 100.0 / 12.0
-                if acc.id not in monthly_contrib and (profile.hysa_monthly_contribution or 0) > 0:
-                    monthly_contrib[acc.id] = profile.hysa_monthly_contribution or 0.0
 
         ira_without_holdings = [
             a for a in accounts
@@ -360,7 +439,7 @@ def _build_compound_account_config(
             default_annual = DEFAULT_ANNUAL_RETURNS.get(acc.account_type, 5.0)
             monthly_rate[acc.id] = default_annual / 100.0 / 12.0
 
-    return monthly_rate, monthly_contrib
+    return monthly_rate, monthly_contrib, hysa_detail
 
 
 def _infer_pay_schedule(user_id: int, db: Session) -> Optional[Dict]:
@@ -523,7 +602,7 @@ def compute_estimated_balances(
         if snap.account_id not in latest_snapshot:
             latest_snapshot[snap.account_id] = snap
 
-    monthly_rate, monthly_contrib = _build_compound_account_config(accounts, db, user_id)
+    monthly_rate, monthly_contrib, hysa_detail = _build_compound_account_config(accounts, db, user_id)
 
     # Infer pay schedule and historical expense rate once for this user
     pay_schedule = _infer_pay_schedule(user_id, db)
@@ -570,6 +649,9 @@ def compute_estimated_balances(
                 "actual": actual_balance,
                 "last_snapshot_date": snap.date if snap else None,
                 "monthly_contribution": 0.0,
+                "contribution_source": "none",
+                "contribution_label": "none",
+                "contribution_basis": "",
                 "anchor_date": anchor_date,
                 "next_pay_date": None,
                 "paychecks_since_anchor": 0,
@@ -600,6 +682,9 @@ def compute_estimated_balances(
                     2 if pay_schedule["frequency"] == "semi_monthly" else
                     (4.33 / 2 if pay_schedule["frequency"] == "biweekly" else 1)
                 ), 2) if pay_schedule else 0.0,
+                "contribution_source": "paycheck" if pay_schedule else "none",
+                "contribution_label": "from paycheck cadence" if pay_schedule else "none",
+                "contribution_basis": "",
                 "anchor_date": anchor_date,
                 "next_pay_date": next_pay_date,
                 "paychecks_since_anchor": paychecks_landed,
@@ -613,6 +698,9 @@ def compute_estimated_balances(
                 "actual": actual_balance,
                 "last_snapshot_date": snap.date if snap else None,
                 "monthly_contribution": 0.0,
+                "contribution_source": "none",
+                "contribution_label": "none",
+                "contribution_basis": "",
                 "anchor_date": anchor_date,
                 "next_pay_date": None,
                 "paychecks_since_anchor": 0,
@@ -641,11 +729,29 @@ def compute_estimated_balances(
             else:
                 balance = anchor_balance + contrib * months_elapsed
 
+        # Contribution source label (HYSA = measured/manual; others = profile/holdings).
+        detail = hysa_detail.get(acc.id)
+        if detail is not None:
+            contribution_source = detail["source"]
+            contribution_label = detail["label"]
+            contribution_basis = detail["basis"]
+        elif acc.account_type == "hysa":
+            contribution_source = "none"
+            contribution_label = "none"
+            contribution_basis = "no contribution source"
+        else:
+            contribution_source = "profile" if contrib > 0 else "none"
+            contribution_label = "from profile/holdings" if contrib > 0 else "none"
+            contribution_basis = ""
+
         results[acc.id] = {
             "estimated": round(balance, 2),
             "actual": actual_balance,
             "last_snapshot_date": snap.date if snap else None,
             "monthly_contribution": round(contrib, 2),
+            "contribution_source": contribution_source,
+            "contribution_label": contribution_label,
+            "contribution_basis": contribution_basis,
             "anchor_date": anchor_date,
             "next_pay_date": None,
             "paychecks_since_anchor": 0,
@@ -685,9 +791,15 @@ def run_forecast(
     }
 
     # ── Compound interest config ───────────────────────────────────────────────
-    account_monthly_rate, account_monthly_contrib = _build_compound_account_config(
+    account_monthly_rate, account_monthly_contrib, hysa_detail = _build_compound_account_config(
         accounts, db, user.id
     )
+    # HYSA accounts get a current-month override: contribution is the actual deposits
+    # recorded so far this month (often $0 until an EverBank deposit lands). Future
+    # months use the trailing average already in account_monthly_contrib.
+    hysa_current_month_contrib = {
+        acc_id: d["current_month"] for acc_id, d in hysa_detail.items()
+    }
 
     # ── Starting balances ─────────────────────────────────────────────────────
     # Seed from Account.balance, then override with the most recent BalanceSnapshot
@@ -752,12 +864,13 @@ def run_forecast(
 
     # For joint compound accounts that this user contributes to but doesn't own,
     # derive their monthly contribution from their Savings Transfer (savings-kind)
-    # historical average. This correctly models Katherine contributing $1,700/month
-    # to the shared HYSA: her cash decreases (Savings Transfer outflow) and the
-    # joint HYSA compound balance grows by that amount each month.
+    # historical average.
+    # NOTE: HYSA is intentionally EXCLUDED here — its contribution is now measured
+    # from BOTH partners' real EverBank deposits in _build_compound_account_config
+    # (summed once). Including HYSA here would double-count Katherine's deposits.
     joint_non_owned = [
         a for a in accounts
-        if a.id in compound_ids and a.user_id != user.id
+        if a.id in compound_ids and a.user_id != user.id and a.account_type != "hysa"
     ]
     if joint_non_owned:
         savings_kind_ids = {
@@ -851,6 +964,10 @@ def run_forecast(
         for acc_id in list(running_compound.keys()):
             rate = account_monthly_rate.get(acc_id, 0.0)
             contrib = account_monthly_contrib.get(acc_id, 0.0)
+            # HYSA current month (i==0): only count deposits ALREADY recorded this
+            # month — don't assume the average has happened yet (it may be $0).
+            if i == 0 and acc_id in hysa_current_month_contrib:
+                contrib = hysa_current_month_contrib[acc_id]
             # FV formula per month: balance = balance * (1 + r) + contribution
             running_compound[acc_id] = running_compound[acc_id] * (1.0 + rate) + contrib
 
@@ -977,21 +1094,30 @@ def run_joint_forecast(
     # ── Compound config: each user contributes to their owned accounts ──
     account_monthly_rate: Dict[int, float] = {}
     account_monthly_contrib: Dict[int, float] = {}
+    # HYSA current-month actuals (apply $0-or-actual for i==0, trailing avg after).
+    hysa_current_month_contrib: Dict[int, float] = {}
 
     for u in users:
         owned = [a for a in all_accounts if a.user_id == u.id]
-        rate_map, contrib_map = _build_compound_account_config(owned, db, u.id)
+        rate_map, contrib_map, hysa_detail = _build_compound_account_config(owned, db, u.id)
         for acc_id, rate in rate_map.items():
             if acc_id not in account_monthly_rate:
                 account_monthly_rate[acc_id] = rate
         for acc_id, contrib in contrib_map.items():
             account_monthly_contrib[acc_id] = account_monthly_contrib.get(acc_id, 0.0) + contrib
+        # HYSA detail: for a joint HYSA the helper already measured BOTH partners'
+        # deposits (summed once), and only the OWNER's loop iteration sets it — the
+        # non-owner doesn't own the account so won't double-add. Record current-month.
+        for acc_id, d in hysa_detail.items():
+            hysa_current_month_contrib[acc_id] = d["current_month"]
 
     # For users without their own savings account, add their savings-transfer avg
-    # to the joint compound account (e.g. Katherine's $1,700 → joint HYSA).
+    # to the joint compound account (e.g. a joint brokerage).
+    # NOTE: HYSA is EXCLUDED — its both-partner contribution is already measured above
+    # from real EverBank deposits. Including it here would double-count Katherine.
     joint_compound_ids = {
         a.id for a in all_accounts
-        if a.account_type in COMPOUND_TYPES and a.is_joint
+        if a.account_type in COMPOUND_TYPES and a.is_joint and a.account_type != "hysa"
     }
     for u in users:
         owned = [a for a in all_accounts if a.user_id == u.id]
@@ -1110,6 +1236,9 @@ def run_joint_forecast(
         for acc_id in list(running_compound.keys()):
             rate = account_monthly_rate.get(acc_id, 0.0)
             contrib = account_monthly_contrib.get(acc_id, 0.0)
+            # HYSA current month: only deposits already recorded this month (may be $0).
+            if i == 0 and acc_id in hysa_current_month_contrib:
+                contrib = hysa_current_month_contrib[acc_id]
             running_compound[acc_id] = running_compound[acc_id] * (1.0 + rate) + contrib
 
         for a in all_accounts:

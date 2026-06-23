@@ -365,13 +365,10 @@ def _find_header_row(rows: list[list]) -> tuple[int, dict]:
     return 0, {}
 
 
-_HYSA_KEYWORDS = {"hysa", "everbank", "ever bank", "high yield"}
-
-
-def _is_hysa_transfer(description: str) -> bool:
-    """Return True if the description looks like an HYSA contribution."""
-    desc_lower = description.strip().lower()
-    return any(kw in desc_lower for kw in _HYSA_KEYWORDS)
+# HYSA detection lives in hysa_contributions so sync and the contribution-measurement
+# service share one definition and can never drift apart.
+from app.services.hysa_contributions import HYSA_KEYWORDS as _HYSA_KEYWORDS  # noqa: F401
+from app.services.hysa_contributions import is_hysa_transfer as _is_hysa_transfer  # noqa: F401
 
 
 def _dedup_desc_key(txn_date: date, description: str) -> str:
