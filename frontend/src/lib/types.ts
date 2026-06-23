@@ -299,6 +299,17 @@ export interface FinancialProfile {
 // Savings goal (dashboard)
 export interface SavingsContributions {
   hysa: number
+  hysa_source: string       // "measured" | "manual_fallback" | "none"
+  hysa_is_joint: boolean
+  ira: number
+  k401_employee: number
+  k401_employer: number
+  total: number
+}
+
+export interface ContributionHistoryMonth {
+  month: string            // YYYY-MM
+  hysa: number
   ira: number
   k401_employee: number
   k401_employer: number
@@ -310,15 +321,16 @@ export interface SavingsGoalPerson {
   name: string
   income: number
   spending: number
-  net_saved: number
+  net_saved: number               // income - expenses; the goal is measured against THIS
   contributions: SavingsContributions
-  total_saved: number
+  contributions_history: ContributionHistoryMonth[]
+  total_saved: number             // net_saved + contributions; display only, NOT the goal
   suggested_goal: number
   user_goal: number | null
   goal: number
   using_suggestion: boolean
-  pct_of_goal: number
-  on_track: boolean
+  pct_of_goal: number             // net_saved vs goal
+  on_track: boolean               // net_saved >= goal
   remaining: number
 }
 
@@ -326,6 +338,7 @@ export interface SavingsGoalJoint {
   name: string
   net_saved: number
   contributions_total: number
+  contributions_history: ContributionHistoryMonth[]
   total_saved: number
   suggested_goal: number
   goal: number

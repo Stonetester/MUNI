@@ -476,22 +476,29 @@ export async function updateFinancialProfile(data: Partial<FinancialProfile>): P
 // Savings goal (per-person + joint progress for the current month)
 export async function getSavingsGoals(joint = false): Promise<SavingsGoalData> {
   if (isDemoModeActive()) {
-    const person = (name: string, total: number, goal: number) => ({
+    const now = new Date()
+    const histMonths = (base: number) => Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (6 - i), 1)
+      const total = Math.round(base + (i - 3) * 30)
+      return { month: d.toISOString().slice(0, 7), hysa: 300, ira: 200, k401_employee: 100, k401_employer: 0, total }
+    })
+    const person = (name: string, netSaved: number, goal: number) => ({
       user_id: name === 'Keaton' ? 1 : 2, name,
-      income: total + 2400, spending: 2400, net_saved: total - 600,
-      contributions: { hysa: 300, ira: 200, k401_employee: 100, k401_employer: 0, total: 600 },
-      total_saved: total, suggested_goal: goal, user_goal: null, goal,
-      using_suggestion: true, pct_of_goal: Math.round((total / goal) * 1000) / 10,
-      on_track: total >= goal, remaining: Math.max(0, goal - total),
+      income: netSaved + 2400, spending: 2400, net_saved: netSaved,
+      contributions: { hysa: 300, hysa_source: 'measured', hysa_is_joint: true, ira: 200, k401_employee: 100, k401_employer: 0, total: 600 },
+      contributions_history: histMonths(600),
+      total_saved: netSaved + 600, suggested_goal: goal, user_goal: null, goal,
+      using_suggestion: true, pct_of_goal: Math.round((netSaved / goal) * 1000) / 10,
+      on_track: netSaved >= goal, remaining: Math.max(0, goal - netSaved),
     })
     const people = [person('Keaton', 1450, 1500), person('Katherine', 1700, 1500)]
-    const tot = people.reduce((s, p) => s + p.total_saved, 0)
+    const net = people.reduce((s, p) => s + p.net_saved, 0)
     const g = people.reduce((s, p) => s + p.goal, 0)
     return {
       month: new Date().toISOString().slice(0, 7), people,
-      joint: { name: 'Joint', net_saved: tot - 1200, contributions_total: 1200, total_saved: tot,
-        suggested_goal: g, goal: g, pct_of_goal: Math.round((tot / g) * 1000) / 10,
-        on_track: tot >= g, remaining: Math.max(0, g - tot) },
+      joint: { name: 'Joint', net_saved: net, contributions_total: 1200, contributions_history: histMonths(1200),
+        total_saved: net + 1200, suggested_goal: g, goal: g, pct_of_goal: Math.round((net / g) * 1000) / 10,
+        on_track: net >= g, remaining: Math.max(0, g - net) },
       current_user_id: 1,
     }
   }
