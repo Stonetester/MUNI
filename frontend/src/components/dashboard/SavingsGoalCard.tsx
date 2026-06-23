@@ -76,7 +76,8 @@ export default function SavingsGoalCard() {
         <div className="mb-4 flex items-center gap-2">
           <PiggyBank size={18} className="text-primary" />
           <p className="text-xs text-text-secondary">
-            Net saved this month + retirement contributions (HYSA, IRA, 401k), vs each person's planned goal.
+            Net cash saved (income &minus; expenses) vs each person&rsquo;s planned goal. Retirement &amp; savings-account
+            contributions are shown separately below &mdash; they&rsquo;re steady automatic savings, not part of this goal.
           </p>
         </div>
 
@@ -85,20 +86,19 @@ export default function SavingsGoalCard() {
             <GoalRow
               key={p.user_id}
               name={p.name}
-              total={p.total_saved}
+              netSaved={p.net_saved}
               goal={p.goal}
               pct={p.pct_of_goal}
               onTrack={p.on_track}
               remaining={p.remaining}
               highlight={p.user_id === data.current_user_id}
-              person={p}
               onOpen={() => setDetail({ type: 'person', person: p })}
             />
           ))}
 
           <GoalRow
             name="Joint household"
-            total={data.joint.total_saved}
+            netSaved={data.joint.net_saved}
             goal={data.joint.goal}
             pct={data.joint.pct_of_goal}
             onTrack={data.joint.on_track}
@@ -107,6 +107,9 @@ export default function SavingsGoalCard() {
             onOpen={() => setDetail({ type: 'joint', joint: data.joint, people: data.people })}
           />
         </div>
+
+        {/* Separate informational section: retirement & savings-account contributions. */}
+        <ContributionsSection data={data} />
 
         {me && (
           <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3">
@@ -184,17 +187,16 @@ export default function SavingsGoalCard() {
 }
 
 function GoalRow({
-  name, total, goal, pct, onTrack, remaining, highlight, joint, person, onOpen,
+  name, netSaved, goal, pct, onTrack, remaining, highlight, joint, onOpen,
 }: {
   name: string
-  total: number
+  netSaved: number
   goal: number
   pct: number
   onTrack: boolean
   remaining: number
   highlight?: boolean
   joint?: boolean
-  person?: SavingsGoalPerson
   onOpen: () => void
 }) {
   const capped = Math.min(100, Math.max(0, pct))
@@ -226,8 +228,8 @@ function GoalRow({
 
       <div className="mt-2 flex items-baseline justify-between text-xs">
         <span className="text-text-secondary">
-          <span className={cn('text-sm font-bold', onTrack ? 'text-primary' : 'text-text-primary')}>{formatCurrency(total)}</span>
-          {' '}saved of {formatCurrency(goal)}
+          <span className={cn('text-sm font-bold', onTrack ? 'text-primary' : 'text-text-primary')}>{formatCurrency(netSaved)}</span>
+          {' '}net cash saved of {formatCurrency(goal)}
         </span>
         <span className="font-semibold text-text-secondary">{pct.toFixed(0)}%</span>
       </div>
@@ -238,14 +240,98 @@ function GoalRow({
 
       <p className="mt-1.5 text-[11px] text-muted">
         {onTrack
-          ? `Goal met - ${formatCurrency(total - goal)} ahead.`
-          : `${formatCurrency(remaining)} to go this month.`}
-        {person && person.contributions.total > 0 && (
-          <> Includes {formatCurrency(person.contributions.total)} in retirement/savings contributions.</>
-        )}
+          ? `Goal met - ${formatCurrency(netSaved - goal)} ahead this month.`
+          : `${formatCurrency(remaining)} to go this month (income minus expenses).`}
         {joint && <> Combined across both partners.</>}
       </p>
     </button>
+  )
+}
+
+/**
+ * Retirement & savings-account contributions — a SEPARATE informational section.
+ * These are steady, automatic savings (401k + IRA + HYSA), NOT part of the main goal.
+ * Shows this month's per-account breakdown (with measured/manual + joint labels on the
+ * HYSA) and a short month-by-month history so you can see your contribution pace.
+ */
+function ContributionsSection({ data }: { data: SavingsGoalData }) {
+  const me = data.people.find((p) => p.user_id === data.current_user_id) ?? data.people[0]
+  if (!me) return null
+  const c = me.contributions
+  const history = me.contributions_history ?? []
+
+  const rows: Array<{ label: string; value: number; chip?: ReactNode }> = [
+    {
+      label: 'HYSA',
+      value: c.hysa,
+      chip: c.hysa > 0 ? (
+        <span className="ml-1.5 inline-flex items-center gap-1">
+          {c.hysa_is_joint && (
+            <span className="rounded-full border border-info/30 bg-info/10 px-1.5 py-0.5 text-[10px] text-info">joint</span>
+          )}
+          <span className={cn(
+            'rounded-full border px-1.5 py-0.5 text-[10px]',
+            c.hysa_source === 'measured'
+              ? 'border-green-400/20 bg-green-400/10 text-green-400'
+              : 'border-yellow-500/20 bg-yellow-500/10 text-yellow-500/90',
+          )}>
+            {c.hysa_source === 'measured' ? 'measured' : 'manual est.'}
+          </span>
+        </span>
+      ) : undefined,
+    },
+    { label: 'IRA', value: c.ira },
+    { label: '401(k) employee', value: c.k401_employee },
+    { label: '401(k) employer match', value: c.k401_employer },
+  ]
+
+  const maxTotal = Math.max(1, ...history.map((h) => h.total))
+
+  return (
+    <div className="mt-4 rounded-xl border border-secondary/20 bg-secondary/5 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <PiggyBank size={15} className="text-secondary" />
+        <p className="text-xs font-semibold text-text-primary">Retirement &amp; savings contributions</p>
+        <span className="ml-auto text-[11px] text-muted">this month</span>
+      </div>
+
+      <div className="space-y-1.5">
+        {rows.filter((r) => r.value > 0).map((r) => (
+          <div key={r.label} className="flex items-center justify-between text-xs">
+            <span className="flex items-center text-text-secondary">{r.label}{r.chip}</span>
+            <span className="font-medium text-text-primary">{formatCurrency(r.value)}</span>
+          </div>
+        ))}
+        <div className="flex items-center justify-between border-t border-white/10 pt-1.5 text-xs">
+          <span className="font-semibold text-text-primary">Total contributed</span>
+          <span className="font-bold text-secondary">{formatCurrency(c.total)}/mo</span>
+        </div>
+        {c.hysa_is_joint && c.hysa > 0 && (
+          <p className="text-[10px] text-muted">
+            HYSA shown is your share of the joint EverBank deposits (combined deposits split per partner).
+          </p>
+        )}
+      </div>
+
+      {history.length > 0 && (
+        <div className="mt-3">
+          <p className="mb-1.5 text-[11px] text-muted">Your contribution pace (last {history.length} months)</p>
+          <div className="flex items-end gap-1.5">
+            {history.map((h) => (
+              <div key={h.month} className="flex flex-1 flex-col items-center gap-1" title={`${h.month}: ${formatCurrency(h.total)}`}>
+                <div className="flex h-12 w-full items-end justify-center">
+                  <div
+                    className="w-full rounded-t bg-secondary/60"
+                    style={{ height: `${Math.max(4, (h.total / maxTotal) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-[9px] text-muted">{h.month.slice(5)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -265,21 +351,25 @@ function SavingsGoalDetailModal({ detail, onClose }: { detail: SavingsGoalDetail
 }
 
 function PersonGoalDetail({ person }: { person: SavingsGoalPerson }) {
+  const c = person.contributions
+  const hysaLabel = c.hysa_is_joint
+    ? `HYSA contribution (your share of joint, ${c.hysa_source === 'measured' ? 'measured' : 'manual est.'})`
+    : `HYSA contribution (${c.hysa_source === 'measured' ? 'measured' : 'manual est.'})`
   const contributionRows = [
-    ['HYSA contribution', person.contributions.hysa],
-    ['IRA contribution', person.contributions.ira],
-    ['401(k) employee', person.contributions.k401_employee],
-    ['401(k) employer match', person.contributions.k401_employer],
+    [hysaLabel, c.hysa],
+    ['IRA contribution', c.ira],
+    ['401(k) employee', c.k401_employee],
+    ['401(k) employer match', c.k401_employer],
   ] as const
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
-        <p className="text-xs uppercase tracking-wider text-primary">Current month saved</p>
-        <p className="mt-1 text-2xl font-bold text-text-primary">{formatCurrency(person.total_saved)}</p>
+        <p className="text-xs uppercase tracking-wider text-primary">Net cash saved this month</p>
+        <p className="mt-1 text-2xl font-bold text-text-primary">{formatCurrency(person.net_saved)}</p>
         <p className="mt-2 text-sm text-text-secondary">
-          {formatCurrency(person.income)} income - {formatCurrency(person.spending)} spending = {formatCurrency(person.net_saved)} net cash saved.
-          {' '}Then {formatCurrency(person.contributions.total)} automatic savings/retirement contributions are added.
+          {formatCurrency(person.income)} income &minus; {formatCurrency(person.spending)} spending = {formatCurrency(person.net_saved)} net cash saved.
+          {' '}This is what the goal is measured against. Retirement/savings contributions are tracked separately below.
         </p>
       </div>
 
@@ -292,25 +382,29 @@ function PersonGoalDetail({ person }: { person: SavingsGoalPerson }) {
           ['Suggested goal', `${formatCurrency(person.suggested_goal)}/mo`],
           ['Profile goal', person.user_goal === null ? 'Not set' : `${formatCurrency(person.user_goal)}/mo`],
         ]}
-        note="The suggestion averages the last 6 completed months of positive total savings, stretches that by 10%, never goes below automatic contributions, then rounds to the nearest $25."
+        note="The suggestion averages the last 6 completed months of positive NET CASH saved (income minus expenses), stretches that by 10%, then rounds to the nearest $25. Retirement/savings contributions are not part of the goal."
       />
 
       <DetailSection
-        title="Saved calculation"
+        title="Goal calculation (net cash)"
         icon={<Calculator size={15} />}
         rows={[
           ['Income counted this month', formatCurrency(person.income)],
           ['Spending counted this month', `-${formatCurrency(person.spending)}`],
-          ['Net cash saved', formatCurrency(person.net_saved)],
-          ['Automatic contributions', formatCurrency(person.contributions.total)],
-          ['Total saved against goal', formatCurrency(person.total_saved)],
+          ['Net cash saved (vs goal)', formatCurrency(person.net_saved)],
+          ['Goal', formatCurrency(person.goal)],
         ]}
-        note="Savings and transfer categories are excluded from income and spending, so moving cash into savings does not count as spending."
+        note="Savings and transfer categories are excluded from income and spending, so moving cash into a savings account does not count as spending."
       />
 
       <DetailSection
-        title="Contribution breakdown"
-        rows={contributionRows.map(([label, value]) => [label, formatCurrency(value)])}
+        title="Retirement & savings contributions (separate from goal)"
+        icon={<PiggyBank size={15} />}
+        rows={[
+          ...contributionRows.map(([label, value]) => [label, formatCurrency(value)] as const),
+          ['Total contributed', `${formatCurrency(c.total)}/mo`],
+        ]}
+        note="These steady, automatic contributions are shown for awareness. They are NOT counted toward the net-cash savings goal above."
       />
 
       <div className="rounded-xl border border-white/10 bg-surface-2 p-4">
@@ -318,7 +412,7 @@ function PersonGoalDetail({ person }: { person: SavingsGoalPerson }) {
           <div>
             <p className="text-sm font-semibold text-text-primary">{person.pct_of_goal.toFixed(1)}% of goal</p>
             <p className="text-xs text-text-secondary">
-              {person.on_track ? `${formatCurrency(person.total_saved - person.goal)} ahead this month.` : `${formatCurrency(person.remaining)} left this month.`}
+              {person.on_track ? `${formatCurrency(person.net_saved - person.goal)} ahead this month.` : `${formatCurrency(person.remaining)} left this month.`}
             </p>
           </div>
           <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', person.on_track ? 'bg-primary/15 text-primary' : 'bg-danger/15 text-danger')}>
@@ -334,10 +428,11 @@ function JointGoalDetail({ joint, people }: { joint: SavingsGoalJoint; people: S
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-info/30 bg-info/5 p-4">
-        <p className="text-xs uppercase tracking-wider text-info">Household saved</p>
-        <p className="mt-1 text-2xl font-bold text-text-primary">{formatCurrency(joint.total_saved)}</p>
+        <p className="text-xs uppercase tracking-wider text-info">Household net cash saved</p>
+        <p className="mt-1 text-2xl font-bold text-text-primary">{formatCurrency(joint.net_saved)}</p>
         <p className="mt-2 text-sm text-text-secondary">
-          {formatCurrency(joint.net_saved)} joint net cash saved + {formatCurrency(joint.contributions_total)} combined automatic contributions.
+          {formatCurrency(joint.net_saved)} combined net cash saved (income &minus; expenses) &mdash; the goal is measured against this.
+          {' '}Separately, {formatCurrency(joint.contributions_total)} combined automatic retirement/savings contributions this month.
         </p>
       </div>
 
@@ -349,15 +444,24 @@ function JointGoalDetail({ joint, people }: { joint: SavingsGoalJoint; people: S
           ['Joint suggested goal', `${formatCurrency(joint.suggested_goal)}/mo`],
           ['People included', people.map((p) => p.name).join(', ')],
         ]}
-        note="The household goal is the sum of each person's effective monthly goal, so one person's custom profile goal and another person's suggestion can both be represented."
+        note="The household goal is the sum of each person's effective monthly NET-CASH goal. Progress is the sum of each person's net cash saved."
       />
 
       <DetailSection
-        title="Person-level inputs"
+        title="Person-level inputs (net cash)"
         rows={people.map((p) => [
           p.name,
-          `${formatCurrency(p.total_saved)} saved of ${formatCurrency(p.goal)} goal`,
+          `${formatCurrency(p.net_saved)} net cash of ${formatCurrency(p.goal)} goal`,
         ])}
+      />
+
+      <DetailSection
+        title="Combined contributions (separate from goal)"
+        icon={<PiggyBank size={15} />}
+        rows={[
+          ['Combined HYSA + IRA + 401k', `${formatCurrency(joint.contributions_total)}/mo`],
+        ]}
+        note="The joint HYSA is measured once from both partners' EverBank deposits, so it is not double-counted across people."
       />
 
       <div className="rounded-xl border border-white/10 bg-surface-2 p-4">
@@ -365,7 +469,7 @@ function JointGoalDetail({ joint, people }: { joint: SavingsGoalJoint; people: S
           <div>
             <p className="text-sm font-semibold text-text-primary">{joint.pct_of_goal.toFixed(1)}% of goal</p>
             <p className="text-xs text-text-secondary">
-              {joint.on_track ? `${formatCurrency(joint.total_saved - joint.goal)} ahead this month.` : `${formatCurrency(joint.remaining)} left this month.`}
+              {joint.on_track ? `${formatCurrency(joint.net_saved - joint.goal)} ahead this month.` : `${formatCurrency(joint.remaining)} left this month.`}
             </p>
           </div>
           <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', joint.on_track ? 'bg-primary/15 text-primary' : 'bg-danger/15 text-danger')}>
