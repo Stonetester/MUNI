@@ -77,6 +77,19 @@ export async function getMe(): Promise<CurrentUser> {
   return res.data
 }
 
+// Household ages — used by joint Coast FI to model the worst case (oldest partner,
+// i.e. the shorter runway to retirement). Returns the oldest age across members.
+export interface JointAges {
+  members: Array<{ username: string; display_name?: string | null; age: number }>
+  oldest_age: number | null
+}
+
+export async function getJointAges(): Promise<JointAges> {
+  if (isDemoModeActive()) return { members: [{ username: 'keaton', age: 25 }, { username: 'katherine', age: 26 }], oldest_age: 26 }
+  const res: AxiosResponse<JointAges> = await api.get('/joint/ages')
+  return res.data
+}
+
 // Dashboard
 export async function getDashboard(): Promise<DashboardData> {
   if (isDemoModeActive()) return demo.DEMO_DASHBOARD

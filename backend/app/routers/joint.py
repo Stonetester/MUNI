@@ -252,3 +252,24 @@ def joint_forecast(
         result.points = historical_points + result.points
 
     return result
+
+
+@router.get("/ages")
+def joint_ages(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Ages of every household member, for joint Coast FI (worst-case = oldest).
+
+    Coast FI in joint mode must fund both partners by retirement. We model the
+    worst case (shorter runway) by using the OLDEST partners age, so the
+    frontend returns max(age) across members. None ages are omitted.
+    """
+    users = db.query(User).all()
+    members = [
+        {"username": u.username, "display_name": u.display_name, "age": u.age}
+        for u in users
+        if u.age is not None
+    ]
+    oldest_age = max((m["age"] for m in members), default=None)
+    return {"members": members, "oldest_age": oldest_age}

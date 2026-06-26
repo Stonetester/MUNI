@@ -30,6 +30,13 @@ class FinancialProfile(Base):
     # When set, overrides the computed estimate. None = use the smart estimate.
     monthly_retirement_spend = Column(Float, nullable=True)
 
+    # Coast FI calculator assumptions — persisted so they survive page refreshes.
+    # None = use the default (10% return, 3% inflation, 4% SWR, 65 retirement).
+    coast_fi_investment_return = Column(Float, nullable=True)
+    coast_fi_inflation_rate = Column(Float, nullable=True)
+    coast_fi_swr = Column(Float, nullable=True)
+    coast_fi_retirement_age = Column(Integer, nullable=True)
+
     # Savings goal — user's chosen monthly net-savings target.
     # When set, overrides the suggested goal on the dashboard. None = use the suggestion.
     monthly_savings_goal = Column(Float, nullable=True)

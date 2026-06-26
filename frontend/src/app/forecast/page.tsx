@@ -9,6 +9,7 @@ import {
   getBudgetEstimates,
   getForecast,
   getHoldings,
+  getJointAges,
   getJointForecast,
   getJointTransactions,
   getMe,
@@ -31,18 +32,22 @@ export default function ForecastPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [forecastData, transactionData, holdingData, estimates, me] = await Promise.all([
+      const [forecastData, transactionData, holdingData, estimates, me, jointAges] = await Promise.all([
         mode === 'joint' ? getJointForecast(24, 24) : getForecast(undefined, 24, 24),
         mode === 'joint' ? getJointTransactions(2000) : getTransactions({ limit: 2000 }),
         getHoldings().catch(() => []),
         getBudgetEstimates().catch(() => []),
         getMe().catch(() => null),
+        mode === 'joint' ? getJointAges().catch(() => null) : Promise.resolve(null),
       ])
       setForecast(forecastData)
       setTransactions(transactionData.items)
       setHoldings(holdingData)
       setBudgetEstimates(estimates)
-      setCurrentAge(me?.age ?? null)
+      // Joint Coast FI models the worst case (oldest partner = shorter runway).
+      // Solo mode uses the logged-in user's own age. Fall back to /auth/me if the
+      // household-ages call returns nothing.
+      setCurrentAge(mode === 'joint' ? (jointAges?.oldest_age ?? me?.age ?? null) : (me?.age ?? null))
     } catch (error) {
       console.error(error)
       setForecast(null)

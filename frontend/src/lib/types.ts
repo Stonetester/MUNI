@@ -293,6 +293,10 @@ export interface FinancialProfile {
   monthly_retirement_spend?: number
   monthly_savings_goal?: number
   hidden_sections?: string
+  coast_fi_investment_return?: number
+  coast_fi_inflation_rate?: number
+  coast_fi_swr?: number
+  coast_fi_retirement_age?: number
   updated_at?: string
 }
 

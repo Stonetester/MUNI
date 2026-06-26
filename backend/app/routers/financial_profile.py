@@ -36,6 +36,10 @@ class ProfileIn(BaseModel):
     monthly_retirement_spend: Optional[float] = None
     monthly_savings_goal: Optional[float] = None
     hidden_sections: Optional[List[str]] = None
+    coast_fi_investment_return: Optional[float] = None
+    coast_fi_inflation_rate: Optional[float] = None
+    coast_fi_swr: Optional[float] = None
+    coast_fi_retirement_age: Optional[int] = None
 
 
 class ProfileOut(BaseModel):
@@ -50,6 +54,10 @@ class ProfileOut(BaseModel):
     monthly_retirement_spend: Optional[float]
     monthly_savings_goal: Optional[float]
     hidden_sections: List[str]
+    coast_fi_investment_return: Optional[float]
+    coast_fi_inflation_rate: Optional[float]
+    coast_fi_swr: Optional[float]
+    coast_fi_retirement_age: Optional[int]
     updated_at: Optional[datetime]
 
     model_config = {"from_attributes": True}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Area, AreaChart, CartesianGrid, Line, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -8,8 +8,9 @@ import {
 import { Check, CircleDollarSign, Flag, Info, RotateCcw, Sparkles, Sun, Target, TrendingUp, Wallet } from 'lucide-react'
 import Card from '@/components/ui/Card'
 import { ForecastResponse, InvestmentHolding } from '@/lib/types'
-import { getFinancialProfile, updateFinancialProfile } from '@/lib/api'
+import { getFinancialProfile, getReturns, updateFinancialProfile } from '@/lib/api'
 import { formatCurrency, cn } from '@/lib/utils'
+import { useViewMode } from '@/lib/viewMode'
 
 // Defaults taken directly from the "Coast FI" methodology in the source video
 // (Traditional and Coast FI/RE Journey Summary spreadsheet).
@@ -24,6 +25,8 @@ const DEFAULTS = {
 
 // Account types that compound toward retirement (the "invested" pile).
 const GROWTH_TYPES = /401k|ira|hsa|brokerage|investment|hysa|retirement|roth/i
+// Account types where a measured XIRR is meaningful (exclude HYSA which is just APY).
+const XIRR_TYPES = /401k|ira|hsa|brokerage|roth/i
 
 interface CoastFiDetail {
   title: string
@@ -62,6 +65,9 @@ function coastNumber(futureTarget: number, discountRate: number, years: number) 
 export default function CoastFiCalculator({
   forecast, holdings, currentAge, monthlySpend, monthlyContribution, onDetail,
 }: Props) {
+  const { mode } = useViewMode()
+  const isJoint = mode === 'joint'
+
   // ---- Auto-derived starting values (all editable below) ----
   const derivedInvested = useMemo(() => {
     const fromForecast = forecast.account_forecasts
@@ -91,31 +97,88 @@ export default function CoastFiCalculator({
   const set = (key: keyof Inputs, value: number) =>
     setInputs((prev) => ({ ...prev, [key]: Number.isFinite(value) ? value : 0 }))
 
-  // Load a saved "expected retirement spend" override from the Financial Profile.
-  const [savedSpend, setSavedSpend] = useState<number | null>(null)
-  const [spendSaveState, setSpendSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
-  useEffect(() => {
-    getFinancialProfile()
-      .then((p) => {
-        if (p?.monthly_retirement_spend != null) {
-          setSavedSpend(p.monthly_retirement_spend)
-          setInputs((prev) => ({ ...prev, monthlyRetirementSpend: Math.round(p.monthly_retirement_spend!) }))
-        }
-      })
-      .catch(() => { /* non-fatal */ })
-  }, [])
+  // Whether profile settings have finished loading (gate for auto-save)
+  const [profileLoaded, setProfileLoaded] = useState(false)
+  // Measured blended XIRR from real accounts — used as the smart default return rate
+  const [xirrReturn, setXirrReturn] = useState<number | null>(null)
+  // Auto-save indicator
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Tracks whether the age prop has already been synced into inputs
+  const ageSynced = useRef(false)
 
-  const saveRetirementSpend = async () => {
-    setSpendSaveState('saving')
-    try {
-      await updateFinancialProfile({ monthly_retirement_spend: inputs.monthlyRetirementSpend })
-      setSavedSpend(inputs.monthlyRetirementSpend)
-      setSpendSaveState('saved')
-      setTimeout(() => setSpendSaveState('idle'), 2000)
-    } catch {
-      setSpendSaveState('idle')
+  // Sync age prop when it arrives from the async /auth/me call (prop starts at 30,
+  // then updates once the API responds). Only apply while profile hasn't loaded yet
+  // (after that the user may have edited the field manually).
+  useEffect(() => {
+    if (currentAge != null && !ageSynced.current && !profileLoaded) {
+      ageSynced.current = true
+      setInputs((prev) => ({ ...prev, currentAge }))
     }
-  }
+  }, [currentAge, profileLoaded])
+
+  // On mount (and when joint mode changes): fetch XIRR rates + load saved settings
+  useEffect(() => {
+    Promise.all([
+      getFinancialProfile().catch(() => null),
+      getReturns(isJoint).catch(() => []),
+    ]).then(([profile, returns]) => {
+      // Compute a balance-weighted blended XIRR from non-estimated growth accounts
+      const eligible = returns.filter(
+        (r) => r.annualized_pct != null && !r.low_confidence && XIRR_TYPES.test(r.account_type ?? '')
+      )
+      const totalBal = eligible.reduce((s, r) => s + (r.start_balance ?? 1), 0)
+      const blended = eligible.length === 0
+        ? null
+        : totalBal > 0
+          ? eligible.reduce((s, r) => s + r.annualized_pct! * (r.start_balance ?? 1), 0) / totalBal
+          : eligible.reduce((s, r) => s + r.annualized_pct!, 0) / eligible.length
+      const roundedXirr = blended != null ? Math.round(blended * 10) / 10 : null
+      setXirrReturn(roundedXirr)
+
+      // Apply saved profile settings; fall back to XIRR rate then DEFAULTS
+      setInputs((prev) => ({
+        ...prev,
+        currentAge: currentAge || prev.currentAge,
+        investmentReturn: profile?.coast_fi_investment_return
+          ?? roundedXirr
+          ?? DEFAULTS.investmentReturn,
+        inflationRate: profile?.coast_fi_inflation_rate ?? DEFAULTS.inflationRate,
+        safeWithdrawalRate: profile?.coast_fi_swr ?? DEFAULTS.safeWithdrawalRate,
+        retirementAge: profile?.coast_fi_retirement_age ?? DEFAULTS.retirementAge,
+        monthlyRetirementSpend: profile?.monthly_retirement_spend ?? prev.monthlyRetirementSpend,
+      }))
+
+      ageSynced.current = true
+      setProfileLoaded(true)
+    })
+  }, [isJoint]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save all Coast FI assumptions 1.5 s after any change (debounced)
+  useEffect(() => {
+    if (!profileLoaded) return
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(async () => {
+      setSaveState('saving')
+      try {
+        await updateFinancialProfile({
+          coast_fi_investment_return: inputs.investmentReturn,
+          coast_fi_inflation_rate: inputs.inflationRate,
+          coast_fi_swr: inputs.safeWithdrawalRate,
+          coast_fi_retirement_age: inputs.retirementAge,
+          monthly_retirement_spend: inputs.monthlyRetirementSpend,
+        })
+        setSaveState('saved')
+        setTimeout(() => setSaveState('idle'), 2000)
+      } catch {
+        setSaveState('idle')
+      }
+    }, 1500)
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
+  }, [
+    inputs.investmentReturn, inputs.inflationRate, inputs.safeWithdrawalRate,
+    inputs.retirementAge, inputs.monthlyRetirementSpend, profileLoaded,
+  ])
 
   const reset = () => setInputs({
     currentAge: currentAge || 30,
@@ -123,7 +186,7 @@ export default function CoastFiCalculator({
     currentInvested: Math.round(derivedInvested),
     monthlyContribution: Math.round(monthlyContribution),
     monthlyRetirementSpend: Math.round(monthlySpend) || 6000,
-    investmentReturn: DEFAULTS.investmentReturn,
+    investmentReturn: xirrReturn ?? DEFAULTS.investmentReturn,
     inflationRate: DEFAULTS.inflationRate,
     safeWithdrawalRate: DEFAULTS.safeWithdrawalRate,
   })
@@ -209,7 +272,7 @@ export default function CoastFiCalculator({
     notes: [
       `FIRE number = inflated annual retirement spend / safe withdrawal rate = ${formatCurrency(result.annualRetirementSpendFuture)} / ${inputs.safeWithdrawalRate}% = ${formatCurrency(result.fireNumber)}.`,
       `Future spend = ${formatCurrency(result.annualRetirementSpendToday)}/yr today grown at ${inputs.inflationRate}% inflation for ${result.years} years = ${formatCurrency(result.annualRetirementSpendFuture)}/yr.`,
-      'Coast FI does not mean you can stop working — it means your retirement is already funded by compounding, so future income only needs to cover today’s living costs.',
+      `Coast FI does not mean you can stop working — it means your retirement is already funded by compounding, so future income only needs to cover today's living costs.`,
     ],
     inputs: [
       { label: 'Current invested balance', value: formatCurrency(inputs.currentInvested), note: 'Growth accounts (401k, IRA, brokerage, HSA, HYSA)' },
@@ -228,7 +291,7 @@ export default function CoastFiCalculator({
       `Reaching this by contributing ${formatCurrency(inputs.monthlyContribution)}/mo is projected for ${result.fireYear} (age ${inputs.retirementAge}).`,
     ],
     inputs: [
-      { label: 'Monthly retirement spend (today’s $)', value: formatCurrency(inputs.monthlyRetirementSpend) },
+      { label: "Monthly retirement spend (today's $)", value: formatCurrency(inputs.monthlyRetirementSpend) },
       { label: 'Annual retirement spend (future $)', value: formatCurrency(result.annualRetirementSpendFuture), note: `${formatCurrency(result.annualRetirementSpendToday)}/yr × (1 + ${inputs.inflationRate}%)^${result.years}` },
       { label: 'Safe withdrawal rate', value: `${inputs.safeWithdrawalRate}%` },
     ],
@@ -256,6 +319,12 @@ export default function CoastFiCalculator({
               compound growth alone carries you to a comfortable retirement at your target age. Hit it early and every future
               paycheck only has to cover today&apos;s life — not tomorrow&apos;s retirement.
             </p>
+            {isJoint && (
+              <p className="mt-2 text-xs text-amber-200/80">
+                Joint mode: this funds <em>both</em> of you — your combined retirement spend, your combined invested pile, and
+                the <strong>older partner&apos;s</strong> age (age {inputs.currentAge}) so the target is met by the time the first of you retires (worst case).
+              </p>
+            )}
           </div>
         </div>
       </Card>
@@ -308,7 +377,7 @@ export default function CoastFiCalculator({
               value: `${formatCurrency(result.targetAnnualSalary)}/yr`,
               formula: `Your retirement spend is the income your fully-funded portfolio pays: ${formatCurrency(inputs.monthlyRetirementSpend)}/mo × 12 = ${formatCurrency(result.targetAnnualSalary)}/yr (${formatCurrency(result.targetAnnualSalary / 12)}/mo). At the ${inputs.safeWithdrawalRate}% safe withdrawal rate, the ${formatCurrency(result.fireNumber)} FIRE number is sized to pay exactly this, inflation-adjusted, for life.`,
               notes: [
-                'This is in today’s dollars — the FIRE number is the inflated lump sum that funds it.',
+                `This is in today's dollars — the FIRE number is the inflated lump sum that funds it.`,
                 'Change "Monthly retirement spend" above to change this salary.',
               ],
               inputs: [
@@ -325,7 +394,7 @@ export default function CoastFiCalculator({
               formula: `Your invested ${formatCurrency(inputs.currentInvested)} × ${inputs.safeWithdrawalRate}% safe withdrawal rate = ${formatCurrency(result.fundedAnnualSalary)}/yr (${formatCurrency(result.fundedAnnualSalary / 12)}/mo) — what your current portfolio could safely pay if you retired today. That's ${result.salaryPctFunded.toFixed(0)}% of your ${formatCurrency(result.targetAnnualSalary)}/yr target.`,
               notes: [
                 'This grows toward the target salary as your investments compound and you keep contributing.',
-                'It is NOT today’s income — it is the retirement paycheck your current balance would support.',
+                `It is NOT today's income — it is the retirement paycheck your current balance would support.`,
               ],
               inputs: [
                 { label: 'Invested today', value: formatCurrency(inputs.currentInvested) },
@@ -389,13 +458,37 @@ export default function CoastFiCalculator({
       {/* Editable assumptions */}
       <Card title="Your inputs & assumptions">
         <div className="mb-3 flex items-center justify-between">
-          <p className="text-xs text-muted">Pre-filled from your real accounts and spending. Adjust anything to model a scenario.</p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-muted">Pre-filled from your real accounts and spending. Changes save automatically.</p>
+            {saveState === 'saving' && (
+              <span className="text-xs text-text-secondary animate-pulse">Saving…</span>
+            )}
+            {saveState === 'saved' && (
+              <span className="flex items-center gap-1 text-xs text-primary"><Check size={12} /> Saved</span>
+            )}
+          </div>
           <button onClick={reset} className="flex items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-xs text-text-secondary hover:text-primary">
             <RotateCcw size={12} /> Reset
           </button>
         </div>
+
+        {xirrReturn != null && (
+          <div className="mb-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-text-secondary">
+            <span className="font-medium text-primary">Measured return:</span>{' '}
+            {isJoint ? 'Joint' : 'Your'} accounts averaged <span className="font-medium text-primary">{xirrReturn}%/yr</span> (XIRR).
+            {inputs.investmentReturn !== xirrReturn && (
+              <button
+                onClick={() => set('investmentReturn', xirrReturn)}
+                className="ml-2 text-primary underline hover:no-underline"
+              >
+                Use this
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Field label="Current age" value={inputs.currentAge} onChange={(v) => set('currentAge', v)} />
+          <Field label={isJoint ? 'Current age (oldest)' : 'Current age'} value={inputs.currentAge} onChange={(v) => set('currentAge', v)} />
           <Field label="Retirement age" value={inputs.retirementAge} onChange={(v) => set('retirementAge', v)} />
           <Field label="Invested today" value={inputs.currentInvested} prefix="$" step={1000} onChange={(v) => set('currentInvested', v)} />
           <Field label="Monthly contribution" value={inputs.monthlyContribution} prefix="$" step={50} onChange={(v) => set('monthlyContribution', v)} />
@@ -403,23 +496,6 @@ export default function CoastFiCalculator({
           <Field label="Investment return" value={inputs.investmentReturn} suffix="%" step={0.5} onChange={(v) => set('investmentReturn', v)} />
           <Field label="Inflation rate" value={inputs.inflationRate} suffix="%" step={0.5} onChange={(v) => set('inflationRate', v)} />
           <Field label="Safe withdrawal rate" value={inputs.safeWithdrawalRate} suffix="%" step={0.25} onChange={(v) => set('safeWithdrawalRate', v)} />
-        </div>
-
-        {/* Persist the retirement-spend assumption so the AI chat uses the same number */}
-        <div className="mt-3 flex flex-col gap-2 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-text-secondary">
-            <span className="font-medium text-amber-300">Monthly retirement spend</span> drives your whole Coast FI number.
-            {savedSpend != null
-              ? ` Saved: ${formatCurrency(savedSpend)}/mo — the AI chat uses this too.`
-              : ' By default it’s estimated from your recurring spending (excludes wedding, student loans, and smooths one-offs). Set your own to be precise.'}
-          </p>
-          <button
-            onClick={saveRetirementSpend}
-            disabled={spendSaveState === 'saving' || inputs.monthlyRetirementSpend === savedSpend}
-            className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-400/20 disabled:opacity-50"
-          >
-            {spendSaveState === 'saved' ? <><Check size={13} /> Saved</> : spendSaveState === 'saving' ? 'Saving…' : `Save ${formatCurrency(inputs.monthlyRetirementSpend)}/mo`}
-          </button>
         </div>
       </Card>
 

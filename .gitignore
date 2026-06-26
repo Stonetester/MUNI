@@ -60,3 +60,8 @@ seed_transactions.json
 
 # Log files
 backend_log.txt
+
+# Timestamped local backups (never commit — may contain secrets/data)
+*.bak-*
+.env.local.bak*
+backend/finance.db.bak*
