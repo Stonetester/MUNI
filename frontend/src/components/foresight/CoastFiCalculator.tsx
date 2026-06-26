@@ -5,12 +5,13 @@ import {
   Area, AreaChart, CartesianGrid, Line, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { Check, CircleDollarSign, Flag, Info, RotateCcw, Sparkles, Sun, Target, TrendingUp, Wallet } from 'lucide-react'
+import { Calculator, Check, CircleDollarSign, Flag, Info, RotateCcw, Sparkles, Sun, Target, TrendingUp, Wallet } from 'lucide-react'
 import Card from '@/components/ui/Card'
 import { ForecastResponse, InvestmentHolding } from '@/lib/types'
 import { getFinancialProfile, getReturns, updateFinancialProfile } from '@/lib/api'
 import { formatCurrency, cn } from '@/lib/utils'
 import { useViewMode } from '@/lib/viewMode'
+import { solveFor, type SolveTarget, type SolverInputs } from '@/lib/coastFiSolver'
 
 // Defaults taken directly from the "Coast FI" methodology in the source video
 // (Traditional and Coast FI/RE Journey Summary spreadsheet).
@@ -499,6 +500,13 @@ export default function CoastFiCalculator({
         </div>
       </Card>
 
+      {/* Goal solver — set one target, back-solve the input that makes it work */}
+      <GoalSolver
+        inputs={inputs}
+        isJoint={isJoint}
+        onApply={(key, value) => set(key, value)}
+      />
+
       <Card className="border-purple-400/30 bg-purple-400/5">
         <div className="flex gap-3">
           <Sparkles className="shrink-0 text-purple-300" />
@@ -520,6 +528,146 @@ export default function CoastFiCalculator({
         </div>
       </Card>
     </>
+  )
+}
+
+// ── Goal solver ─────────────────────────────────────────────────────────────
+// Pick ONE thing to solve for; set the rest as targets; it back-solves the model
+// so the invested pile hits the FIRE number exactly at retirement. Kept visually
+// distinct (indigo) from the regular Coast FI cards so the two don't blur together.
+
+const SOLVE_OPTIONS: Array<{ key: SolveTarget; label: string; blurb: string; applyKey: keyof SolverInputs }> = [
+  { key: 'monthlyContribution', label: 'Required monthly contribution', blurb: 'How much must I save each month to retire on time?', applyKey: 'monthlyContribution' },
+  { key: 'retirementAge', label: 'Earliest retirement age', blurb: 'Given my contribution, when can I retire?', applyKey: 'retirementAge' },
+  { key: 'monthlyRetirementSpend', label: 'Max sustainable spend', blurb: 'How much can I live on in retirement?', applyKey: 'monthlyRetirementSpend' },
+  { key: 'investmentReturn', label: 'Required return rate', blurb: 'What return would my plan actually need?', applyKey: 'investmentReturn' },
+]
+
+function GoalSolver({ inputs, isJoint, onApply }: {
+  inputs: SolverInputs
+  isJoint: boolean
+  onApply: (key: keyof SolverInputs, value: number) => void
+}) {
+  const [target, setTarget] = useState<SolveTarget>('retirementAge')
+  const active = SOLVE_OPTIONS.find((o) => o.key === target)!
+
+  // Which input fields to SHOW as the held-fixed targets (everything except the
+  // one being solved for; we also always hide inflation/SWR to keep it focused —
+  // those live in the assumptions card above).
+  const fieldDefs: Array<{ key: keyof SolverInputs; label: string; prefix?: string; suffix?: string; step?: number }> = [
+    { key: 'retirementAge', label: isJoint ? 'Retirement age (both)' : 'Retirement age', step: 1 },
+    { key: 'monthlyContribution', label: 'Monthly contribution', prefix: '$', step: 50 },
+    { key: 'monthlyRetirementSpend', label: 'Retirement spend', prefix: '$', step: 100 },
+    { key: 'investmentReturn', label: 'Investment return', suffix: '%', step: 0.5 },
+  ]
+  const shownFields = fieldDefs.filter((f) => f.key !== active.applyKey)
+
+  // Local editable copy of the targets so the solver is "what-if" — editing here
+  // does NOT mutate the main calculator until the user taps Apply on the result.
+  const [draft, setDraft] = useState<SolverInputs>(inputs)
+  // Keep the draft in sync if the parent inputs change (e.g. profile loads, Reset).
+  useEffect(() => { setDraft(inputs) }, [inputs])
+  const setDraftField = (key: keyof SolverInputs, value: number) =>
+    setDraft((prev) => ({ ...prev, [key]: Number.isFinite(value) ? value : 0 }))
+
+  const solved = useMemo(() => solveFor(target, draft), [target, draft])
+
+  // Format the solved value in the unit of the target.
+  const formattedValue = (() => {
+    if (solved.value == null) return '—'
+    switch (target) {
+      case 'monthlyContribution':
+      case 'monthlyRetirementSpend':
+        return `${formatCurrency(Math.round(solved.value))}/mo`
+      case 'retirementAge':
+        return `age ${Math.ceil(solved.value)}`
+      case 'investmentReturn':
+        return `${solved.value.toFixed(1)}%/yr`
+    }
+  })()
+
+  // For the "required return" solve, compare against the user's current return
+  // assumption so they get an instant realism flag.
+  const returnRealism = target === 'investmentReturn' && solved.value != null
+    ? solved.value > draft.investmentReturn + 0.05
+      ? { tone: 'warn' as const, text: `Higher than your ${draft.investmentReturn}% assumption — this plan is optimistic.` }
+      : { tone: 'ok' as const, text: `At or below your ${draft.investmentReturn}% assumption — realistic.` }
+    : null
+
+  return (
+    <Card className="border-indigo-400/30 bg-indigo-400/5">
+      <div className="mb-3 flex items-start gap-3">
+        <Calculator className="mt-0.5 shrink-0 text-indigo-300" size={20} />
+        <div>
+          <p className="font-semibold text-indigo-300">Solve for your goal</p>
+          <p className="mt-0.5 text-xs text-text-secondary">
+            Pick one thing to solve for and set the rest. This is a what-if — nothing changes above until you tap Apply.
+          </p>
+        </div>
+      </div>
+
+      {/* Solve-for selector */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {SOLVE_OPTIONS.map((o) => (
+          <button
+            key={o.key}
+            onClick={() => setTarget(o.key)}
+            className={cn(
+              'rounded-xl border px-2.5 py-2 text-left text-xs transition-colors',
+              target === o.key
+                ? 'border-indigo-400/60 bg-indigo-400/15 text-indigo-200'
+                : 'border-white/10 bg-surface text-text-secondary hover:border-white/20',
+            )}
+          >
+            <span className="font-medium leading-tight">{o.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <p className="mt-2 text-xs text-muted">{active.blurb}</p>
+
+      {/* Held-fixed target inputs (everything except the solved variable) */}
+      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {shownFields.map((f) => (
+          <Field
+            key={f.key}
+            label={f.label}
+            value={draft[f.key]}
+            prefix={f.prefix}
+            suffix={f.suffix}
+            step={f.step}
+            onChange={(v) => setDraftField(f.key, v)}
+          />
+        ))}
+      </div>
+
+      {/* Result */}
+      <div className="mt-4 rounded-xl border border-indigo-400/20 bg-background/40 p-4">
+        <div className="flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wider text-indigo-300/80">{active.label}</p>
+            <p className={cn('mt-0.5 text-2xl font-bold', solved.unsolvable ? 'text-danger' : 'text-indigo-200')}>
+              {formattedValue}
+            </p>
+          </div>
+          {!solved.unsolvable && solved.value != null && (
+            <button
+              onClick={() => onApply(active.applyKey, Math.round(solved.value! * 100) / 100)}
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-indigo-400/40 bg-indigo-400/10 px-3 py-2 text-xs font-medium text-indigo-200 hover:bg-indigo-400/20"
+            >
+              <Check size={13} /> Apply to inputs
+            </button>
+          )}
+        </div>
+        <p className="mt-2 text-xs leading-5 text-text-secondary">{solved.note}</p>
+        {returnRealism && (
+          <p className={cn('mt-2 rounded-lg px-2.5 py-1.5 text-xs',
+            returnRealism.tone === 'warn' ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary')}>
+            {returnRealism.text}
+          </p>
+        )}
+      </div>
+    </Card>
   )
 }
 
