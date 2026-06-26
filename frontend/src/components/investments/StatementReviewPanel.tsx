@@ -310,9 +310,10 @@ export default function StatementReviewPanel({
       showToast('Statement applied', 'success')
       onApplied()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Apply failed'
+      const axiosDetail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      const msg = axiosDetail ?? (err instanceof Error ? err.message : 'Apply failed')
       setQueue((prev) => prev.map((q) => q.id === id ? { ...q, status: 'error', error: msg } : q))
-      showToast('Failed to apply statement', 'error')
+      showToast(msg, 'error')
     }
   }, [onApplied])
 

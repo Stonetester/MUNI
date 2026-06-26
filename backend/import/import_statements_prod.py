@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal               # noqa: E402
 from app.models.user import User                    # noqa: E402
+from app.models.balance_snapshot import BalanceSnapshot  # noqa: E402
 from app.services.statement_parser import parse_statement  # noqa: E402
 from app.services.statement_apply import apply_parsed_statement  # noqa: E402
 
@@ -48,6 +49,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="Skip PDFs whose account+date snapshot already exists in the DB")
     args = ap.parse_args()
 
     root = Path(args.root)
@@ -85,6 +88,18 @@ def main():
         line = (f"acct {acct_id} ({owner}) <- {pdf.name}: {r.institution} {r.statement_date} "
                 f"bal=${r.ending_balance} holdings={len(hold)}"
                 + (f" PRR={r.personal_rate_of_return}%" if r.personal_rate_of_return is not None else ""))
+
+        if args.skip_existing:
+            already = (
+                db.query(BalanceSnapshot)
+                .filter(BalanceSnapshot.account_id == acct_id,
+                        BalanceSnapshot.date == r.statement_date)
+                .first()
+            )
+            if already:
+                print(f"SKIP (already imported): {line}")
+                continue
+
         if args.dry_run:
             print("[dry] " + line)
             continue

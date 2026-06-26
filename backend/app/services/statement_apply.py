@@ -44,6 +44,20 @@ def apply_parsed_statement(
     result = {"account_id": account_id, "snapshot": None,
               "holdings_upserted": 0, "holdings_created": 0, "holdings_removed": 0}
 
+    # Reject re-import of a statement we already have data for.
+    if ending_balance is not None or holdings:
+        existing_snap = (
+            db.query(BalanceSnapshot)
+            .filter(BalanceSnapshot.account_id == account_id, BalanceSnapshot.date == stmt_date)
+            .first()
+        )
+        if existing_snap is not None:
+            raise HTTPException(
+                409,
+                f"A statement for account {account_id} on {stmt_date.isoformat()} already exists "
+                f"(balance ${existing_snap.balance:,.2f}). Delete it first if you want to replace it.",
+            )
+
     # A statement is a full snapshot of what's held. Only let it rewrite the holdings
     # set if it is the LATEST statement for this account — otherwise importing an old
     # statement after a newer one would resurrect sold positions. We compare against the
