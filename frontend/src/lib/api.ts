@@ -660,9 +660,11 @@ export async function parsePaystub(file: File): Promise<ParsedPaystub> {
   return res.data
 }
 
-export async function savePaystub(data: Partial<Paystub>): Promise<Paystub> {
+export async function savePaystub(data: Partial<Paystub>, overwrite = false): Promise<Paystub> {
   if (isDemoModeActive()) return { ...demo.DEMO_PAYSTUBS[0], ...data }
-  const res: AxiosResponse<Paystub> = await api.post('/paystubs', data)
+  const res: AxiosResponse<Paystub> = await api.post('/paystubs', data, {
+    params: overwrite ? { overwrite: true } : undefined,
+  })
   return res.data
 }
 

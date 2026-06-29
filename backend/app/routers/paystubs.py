@@ -345,29 +345,49 @@ def delete_all_paystubs(
 def save_paystub(
     data: PaystubIn,
     raw_pdf_path: Optional[str] = None,
+    overwrite: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Save a confirmed (reviewed) paystub and auto-create income transactions."""
-    # Duplicate guard: one paystub per pay_date per user
+    """Save a confirmed (reviewed) paystub and auto-create income transactions.
+
+    Duplicate handling (one paystub per pay_date per user):
+      - overwrite=False (default): if a stub for this pay_date exists, return 409
+        so the caller can decide. Preserves the original safety against blind dupes.
+      - overwrite=True: update the existing stub in place with the new parsed data
+        and regenerate its linked income transactions. This is what lets a user
+        re-submit a paystub through the app to refresh stale/incorrect data
+        (e.g. a parser fix) without manually deleting first.
+    """
     existing = db.query(Paystub).filter(
         Paystub.user_id == current_user.id,
         Paystub.pay_date == data.pay_date,
     ).first()
-    if existing:
+
+    if existing and not overwrite:
         raise HTTPException(
             409,
             f"A paystub for {data.pay_date} already exists (id {existing.id}). "
-            "Delete the existing one first, or correct the pay date.",
+            "Re-submit with overwrite to update it, or delete the existing one first.",
         )
 
-    stub = Paystub(
-        user_id=current_user.id,
-        raw_pdf_path=raw_pdf_path,
-        **data.model_dump()
-    )
-    db.add(stub)
-    db.flush()  # get stub.id before creating transactions
+    if existing and overwrite:
+        # Update existing stub in place, then rebuild its income transactions.
+        stub = existing
+        _delete_paystub_transactions(stub.id, current_user.id, db)
+        for k, v in data.model_dump().items():
+            setattr(stub, k, v)
+        if raw_pdf_path is not None:
+            stub.raw_pdf_path = raw_pdf_path
+        db.flush()
+    else:
+        stub = Paystub(
+            user_id=current_user.id,
+            raw_pdf_path=raw_pdf_path,
+            **data.model_dump()
+        )
+        db.add(stub)
+        db.flush()  # get stub.id before creating transactions
 
     _create_income_transactions(stub, db)
     rule_result = _upsert_salary_rule(stub, db)

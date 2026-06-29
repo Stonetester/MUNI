@@ -217,18 +217,18 @@ function BatchQueueView({
     }
   }
 
-  const saveItem = async (item: BatchItem) => {
+  const saveItem = async (item: BatchItem, overwrite = false) => {
     if (!item.result) return
     update(item.id, { status: 'saving' })
     const data: Partial<Paystub> = { pay_date: todayISO(), ...item.result.parsed, ...item.edited }
     try {
-      const saved = await savePaystub(data)
+      const saved = await savePaystub(data, overwrite)
       showRuleToast(saved)
       update(item.id, { status: 'saved' })
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
       if (status === 409) {
-        update(item.id, { status: 'duplicate', error: 'Already saved — pay date exists in history' })
+        update(item.id, { status: 'duplicate', error: 'Already in history — click Update to refresh its data' })
       } else {
         update(item.id, { status: 'error', error: 'Save failed' })
       }
@@ -242,6 +242,18 @@ function BatchQueueView({
       const toSave = queueRef.current.filter(i => i.status === 'done')
       for (const item of toSave) {
         await saveItem(item)
+      }
+    } finally {
+      setSavingAll(false)
+    }
+  }
+
+  const updateAllDuplicates = async () => {
+    setSavingAll(true)
+    try {
+      const toUpdate = queueRef.current.filter(i => i.status === 'duplicate')
+      for (const item of toUpdate) {
+        await saveItem(item, true)
       }
     } finally {
       setSavingAll(false)
@@ -338,6 +350,14 @@ function BatchQueueView({
                     Restore
                   </button>
                 )}
+                {item.status === 'duplicate' && (
+                  <button
+                    onClick={() => saveItem(item, true)}
+                    className="text-xs text-yellow-400 hover:text-yellow-300 px-2 py-1 rounded hover:bg-yellow-500/10 transition-colors font-semibold"
+                  >
+                    Update
+                  </button>
+                )}
               </div>
             </div>
 
@@ -379,6 +399,11 @@ function BatchQueueView({
               ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
               : <><Save size={14} /> Save All ({pending})</>
             }
+          </Button>
+        )}
+        {duplicates > 0 && !savingAll && (
+          <Button variant="ghost" onClick={updateAllDuplicates}>
+            <Save size={14} /> Update {duplicates} existing
           </Button>
         )}
         <Button variant="ghost" onClick={onDone} disabled={savingAll}>
@@ -432,18 +457,19 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [duplicate, setDuplicate] = useState(false)  // a stub for this pay_date exists
 
   const f = (key: keyof Paystub) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.type === 'number' ? (e.target.value ? parseFloat(e.target.value) : undefined) : e.target.value
     setForm(prev => ({ ...prev, [key]: val }))
   }
 
-  const handleSave = async () => {
+  const handleSave = async (overwrite = false) => {
     if (!form.pay_date) { setError('Pay date is required.'); return }
     setSaving(true)
     setError('')
     try {
-      const result = await savePaystub(form)
+      const result = await savePaystub(form, overwrite)
       const amt = result.salary_rule_amount ? `$${result.salary_rule_amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''
       if (result.salary_rule_action === 'created') {
         showToast(`Salary recurring rule created (${amt}/mo) — forecast updated`, 'success')
@@ -452,11 +478,20 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
       } else if (result.salary_rule_action === 'updated_change') {
         showToast(`Salary rule updated to ${amt}/mo`, 'info')
       }
+      if (overwrite) showToast('Paystub updated', 'success')
+      setDuplicate(false)
       setSaved(true)
       setTimeout(() => { setSaved(false); onSaved() }, 1000)
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg || 'Failed to save paystub.')
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 409) {
+        // Existing stub for this pay_date — offer to overwrite it.
+        setDuplicate(true)
+        setError('A paystub for this pay date already exists. Update it with these values?')
+      } else {
+        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        setError(msg || 'Failed to save paystub.')
+      }
     } finally {
       setSaving(false)
     }
@@ -541,10 +576,17 @@ function ReviewForm({ parsed, onSaved, onCancel }: { parsed: ParsedPaystub; onSa
         </div>
 
         <div className="flex gap-3 mt-2">
-          <Button variant="primary" loading={saving} onClick={handleSave}>
-            {saved ? <CheckCircle size={14} /> : <FileText size={14} />}
-            {saved ? 'Saved!' : 'Save Paystub'}
-          </Button>
+          {duplicate ? (
+            <Button variant="primary" loading={saving} onClick={() => handleSave(true)}>
+              {saved ? <CheckCircle size={14} /> : <Save size={14} />}
+              {saved ? 'Updated!' : 'Update Existing Paystub'}
+            </Button>
+          ) : (
+            <Button variant="primary" loading={saving} onClick={() => handleSave(false)}>
+              {saved ? <CheckCircle size={14} /> : <FileText size={14} />}
+              {saved ? 'Saved!' : 'Save Paystub'}
+            </Button>
+          )}
           <Button variant="ghost" onClick={onCancel}>Discard</Button>
         </div>
       </div>
