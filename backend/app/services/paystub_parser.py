@@ -158,20 +158,30 @@ def parse_paylocity(text: str) -> dict:
     d["tax_total"] = _parse_money(_re_val(r"^Taxes\s+([\d,]+\.\d{2})", text))
     d["ytd_taxes_total"] = _parse_money(_re_val(r"^Taxes\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text))
 
-    # --- Deductions ---
+    # --- Deductions: EMPLOYEE 401k ---
     # NOTE: IGNORECASE on the plain "401k" patterns — Grimm & Parker (Paylocity) stubs
     # render the employee 401k deduction line as lowercase "401k 192.94 994.70".
     # Without IGNORECASE the \b401K pattern silently missed it and reported $0.00.
+    #
+    # GUARD: the bare "401k" pattern must NOT match an EMPLOYER line ("Employer 401k",
+    # "401K-ER", "401 Safe H", "401(k) Match"). With IGNORECASE the bare pattern would
+    # otherwise grab "401k" inside "Employer 401k ..." and report the employer amount as
+    # the employee deduction. The negative lookbehind excludes a preceding "Employer "/"ER ",
+    # and we anchor the bare match to a plain "401k"/"401K" token NOT immediately followed
+    # by an employer suffix (-ER) or "(k) Match"/"Safe H".
+    _emp_neg_lookbehind = r"(?<!Employer )(?<!ER )"
+    _emp_401k_bare = _emp_neg_lookbehind + r"\b401[Kk](?![-\s]?ER\b)\s+([\d,]+\.\d{2})"
+    _emp_401k_bare_ytd = _emp_neg_lookbehind + r"\b401[Kk](?![-\s]?ER\b)\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})"
     d["deduction_401k"] = (
-        _parse_money(_re_val(r"\b401K\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
-        _parse_money(_re_val(r"401\(k\)\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
         _parse_money(_re_val(r"401K[-\s]?EE\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
-        _parse_money(_re_val(r"Employee 401[Kk]\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
+        _parse_money(_re_val(r"Employee 401[Kk]\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
+        _parse_money(_re_val(_emp_401k_bare, text)) or
+        _parse_money(_re_val(r"(?<!Match )401\(k\)\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
     )
     d["ytd_401k_employee"] = (
-        _parse_money(_re_val(r"\b401K\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
-        _parse_money(_re_val(r"401\(k\)\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
-        _parse_money(_re_val(r"401K[-\s]?EE\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
+        _parse_money(_re_val(r"401K[-\s]?EE\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
+        _parse_money(_re_val(_emp_401k_bare_ytd, text)) or
+        _parse_money(_re_val(r"(?<!Match )401\(k\)\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
     )
 
     d["deduction_dental"] = _parse_money(_re_val(r"\bDental\s+([\d,]+\.\d{2})", text))
