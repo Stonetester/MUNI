@@ -124,19 +124,25 @@ def _resolve_hysa(
     n_people: int,
     today: date,
 ) -> tuple[float, str, bool, dict]:
-    """Resolve the per-person HYSA monthly contribution.
+    """Resolve the per-person HYSA contribution for the CURRENT month.
 
-    The HYSA is a shared joint account: we measure the COMBINED monthly contribution once
-    from all household members' real EverBank deposits, then split it evenly per person so
-    that per_person × n_people == the measured joint total (no double-count).
+    Uses the actual EverBank deposits recorded SO FAR this month (may be $0 if no deposit
+    has landed yet). This is intentionally different from the forecast's trailing average —
+    the savings goal card shows what actually happened this month, not an estimate.
+
+    The HYSA is a shared joint account: the combined deposits from all household members
+    are summed once and split evenly per person (no double-count).
 
     Returns (per_person_amount, source, is_joint, measured_payload).
-    Falls back to the profile's manual value (NOT split — it's a single person's estimate)
-    when there are no real deposits to measure.
+    Falls back to the profile's manual value only when there are no EverBank transactions
+    at all in the dataset (truly no data, not just a quiet month).
     """
     measured = measured_hysa_contributions(db, household_user_ids)
     if measured["has_data"]:
-        per_person = measured["avg_monthly"] / max(1, n_people)
+        # Use current_month actual (deposits recorded so far this month, may be $0).
+        # Do NOT use avg_monthly — that's for forecasting future months, not tracking
+        # what was actually deposited this month.
+        per_person = measured["current_month"] / max(1, n_people)
         return round(per_person, 2), "measured", True, measured
 
     manual = (profile.hysa_monthly_contribution or 0.0) if profile else 0.0
