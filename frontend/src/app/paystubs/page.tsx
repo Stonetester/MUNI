@@ -415,37 +415,55 @@ function BatchQueueView({
 }
 
 // ─── Batch processor — parses files one by one ────────────────────────────────
+// Runs a self-continuing loop: grab the next `queued` item, parse it, mark it
+// done/error, then immediately look for the next one — all inside a single async
+// loop. The previous version re-ran an effect on every render and gated on a ref
+// that could still read `true` when the final "done" state update rendered, so the
+// queue stalled with a stuck spinner until the component remounted (navigate away
+// + back). Driving the whole loop from one effect, keyed on the queue identity,
+// removes that race.
 function useBatchProcessor(queue: BatchItem[], onQueueChange: (q: BatchItem[]) => void) {
   const processingRef = useRef(false)
   const queueRef = useRef(queue)
   queueRef.current = queue
+  const onChangeRef = useRef(onQueueChange)
+  onChangeRef.current = onQueueChange
+
+  // Only depends on whether there is at least one queued item, so a new batch
+  // (or a restored item) restarts the loop, but per-item status churn doesn't.
+  const hasQueued = queue.some(i => i.status === 'queued')
 
   useEffect(() => {
-    if (processingRef.current) return
-    const nextQueued = queueRef.current.find(i => i.status === 'queued')
-    if (!nextQueued) return
-
+    if (!hasQueued || processingRef.current) return
     processingRef.current = true
+
     ;(async () => {
       try {
-        // We store the file on the item temporarily — need a file map
-        // The file is passed via a data attribute workaround: we store it on window
-        const fileMap = (window as unknown as Record<string, Map<string, File>>)['__paystubFiles__']
-        const file = fileMap?.get(nextQueued.id)
-        if (!file) {
-          onQueueChange(queueRef.current.map(i => i.id === nextQueued.id ? { ...i, status: 'error', error: 'File reference lost' } : i))
-          return
+        // Loop until no queued items remain — read fresh state via queueRef each pass.
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const next = queueRef.current.find(i => i.status === 'queued')
+          if (!next) break
+
+          const fileMap = (window as unknown as Record<string, Map<string, File>>)['__paystubFiles__']
+          const file = fileMap?.get(next.id)
+          if (!file) {
+            onChangeRef.current(queueRef.current.map(i => i.id === next.id ? { ...i, status: 'error', error: 'File reference lost' } : i))
+            continue
+          }
+          onChangeRef.current(queueRef.current.map(i => i.id === next.id ? { ...i, status: 'parsing' } : i))
+          try {
+            const result = await parsePaystub(file)
+            onChangeRef.current(queueRef.current.map(i => i.id === next.id ? { ...i, status: 'done', result } : i))
+          } catch {
+            onChangeRef.current(queueRef.current.map(i => i.id === next.id ? { ...i, status: 'error', error: 'Parse failed — check PDF is digital (not scanned)' } : i))
+          }
         }
-        onQueueChange(queueRef.current.map(i => i.id === nextQueued.id ? { ...i, status: 'parsing' } : i))
-        const result = await parsePaystub(file)
-        onQueueChange(queueRef.current.map(i => i.id === nextQueued.id ? { ...i, status: 'done', result } : i))
-      } catch {
-        onQueueChange(queueRef.current.map(i => i.id === nextQueued.id ? { ...i, status: 'error', error: 'Parse failed — check PDF is digital (not scanned)' } : i))
       } finally {
         processingRef.current = false
       }
     })()
-  })
+  }, [hasQueued])
 }
 
 // ─── Parsed review form (single file) ────────────────────────────────────────
