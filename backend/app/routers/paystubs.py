@@ -21,6 +21,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models.account import Account, AccountType
 from app.models.category import Category
+from app.models.financial_profile import FinancialProfile
 from app.models.paystub import Paystub
 from app.models.recurring_rule import RecurringRule
 from app.models.transaction import Transaction
@@ -308,6 +309,21 @@ def _upsert_salary_rule(stub: Paystub, db: Session) -> dict:
     return {"action": action, "amount": monthly_amount}
 
 
+def _sync_401k_to_profile(stub: Paystub, db: Session) -> None:
+    """Write deduction_401k from a regular paystub back to financial_profiles.
+
+    Keeps employee_401k_per_paycheck in sync with what the paystub parser actually
+    sees, so the savings-goal dashboard never shows a stale manually-entered value.
+    Only runs for regular (non-bonus) paystubs with a positive 401k deduction.
+    """
+    if stub.pay_type == "bonus" or not stub.deduction_401k or stub.deduction_401k <= 0:
+        return
+    profile = db.query(FinancialProfile).filter(FinancialProfile.user_id == stub.user_id).first()
+    if profile is None:
+        return
+    profile.employee_401k_per_paycheck = stub.deduction_401k
+
+
 def _delete_paystub_transactions(stub_id: int, user_id: int, db: Session) -> None:
     """Remove income transactions previously created from this paystub."""
     db.query(Transaction).filter(
@@ -415,6 +431,7 @@ def save_paystub(
 
     _create_income_transactions(stub, db)
     rule_result = _upsert_salary_rule(stub, db)
+    _sync_401k_to_profile(stub, db)
 
     db.commit()
     db.refresh(stub)
@@ -470,6 +487,7 @@ def update_paystub(
         setattr(stub, k, v)
 
     _create_income_transactions(stub, db)
+    _sync_401k_to_profile(stub, db)
 
     db.commit()
     db.refresh(stub)
