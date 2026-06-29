@@ -159,14 +159,17 @@ def parse_paylocity(text: str) -> dict:
     d["ytd_taxes_total"] = _parse_money(_re_val(r"^Taxes\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text))
 
     # --- Deductions ---
+    # NOTE: IGNORECASE on the plain "401k" patterns — Grimm & Parker (Paylocity) stubs
+    # render the employee 401k deduction line as lowercase "401k 192.94 994.70".
+    # Without IGNORECASE the \b401K pattern silently missed it and reported $0.00.
     d["deduction_401k"] = (
-        _parse_money(_re_val(r"\b401K\s+([\d,]+\.\d{2})", text)) or
+        _parse_money(_re_val(r"\b401K\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
         _parse_money(_re_val(r"401\(k\)\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
         _parse_money(_re_val(r"401K[-\s]?EE\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
         _parse_money(_re_val(r"Employee 401[Kk]\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
     )
     d["ytd_401k_employee"] = (
-        _parse_money(_re_val(r"\b401K\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text)) or
+        _parse_money(_re_val(r"\b401K\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
         _parse_money(_re_val(r"401\(k\)\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE)) or
         _parse_money(_re_val(r"401K[-\s]?EE\s+[\d,]+\.\d{2}\s+([\d,]+\.\d{2})", text, flags=re.IGNORECASE))
     )
