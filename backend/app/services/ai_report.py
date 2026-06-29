@@ -384,6 +384,55 @@ def _scope_users(user: User, db: Session, joint: bool) -> list[User]:
     return [user]
 
 
+def _gather_yearly_summary(users: list[User], db: Session, years: int = 3) -> list[dict]:
+    """Per-year income and spending by category for the last `years` calendar years.
+
+    This lets the model answer "how much side income did I make in 2026?" exactly —
+    the monthly history only carries top-3 spend categories and no income-category breakdown,
+    so year-filtered category queries were impossible before this."""
+    user_ids = [u.id for u in users]
+    cats_map = {c.id: c.name for c in db.query(Category).filter(Category.user_id.in_(user_ids)).all()}
+
+    txns = (
+        db.query(Transaction)
+        .filter(Transaction.user_id.in_(user_ids), Transaction.scenario_id.is_(None))
+        .all()
+    )
+
+    today = date.today()
+    target_years = [today.year - i for i in range(years)]
+
+    buckets: dict[int, dict] = {
+        yr: {"income_by_cat": {}, "spending_by_cat": {}, "income": 0.0, "spending": 0.0}
+        for yr in target_years
+    }
+
+    for t in txns:
+        yr = t.date.year
+        if yr not in buckets:
+            continue
+        b = buckets[yr]
+        cat = cats_map.get(t.category_id, "Uncategorized")
+        if counts_as_income(t):
+            b["income"] += t.amount
+            b["income_by_cat"][cat] = b["income_by_cat"].get(cat, 0.0) + t.amount
+        elif counts_as_expense(t):
+            b["spending"] += abs(t.amount)
+            b["spending_by_cat"][cat] = b["spending_by_cat"].get(cat, 0.0) + abs(t.amount)
+
+    result = []
+    for yr in sorted(target_years, reverse=True):
+        b = buckets[yr]
+        result.append({
+            "year": yr,
+            "income": round(b["income"], 2),
+            "spending": round(b["spending"], 2),
+            "income_by_cat": {k: round(v, 2) for k, v in sorted(b["income_by_cat"].items(), key=lambda x: -x[1])},
+            "spending_by_cat": {k: round(v, 2) for k, v in sorted(b["spending_by_cat"].items(), key=lambda x: -x[1])},
+        })
+    return result
+
+
 def _gather_monthly_history(users: list[User], db: Session, months: int = 18) -> list[dict]:
     """Per-month income / spending / savings + top categories for the last `months` months,
     merged across the scoped users. Gives the tutor real month-by-month history so it can
@@ -758,14 +807,38 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
     if history:
         ctx_lines += [
             "",
-            "Monthly history (most recent first) — income / spending / savings rate, top categories:",
+            "Monthly history (most recent first) — income / spending / savings rate, top spend categories:",
         ]
         for h in history:
             tops = ", ".join(f"{c} ${v:,.0f}" for c, v in h["top_categories"]) or "no spending"
             ctx_lines.append(
                 f"  - {h['month']}: income ${h['income']:,.0f}, spending ${h['spending']:,.0f}, "
-                f"savings ${h['savings']:,.0f} ({h['savings_rate']}%) — top: {tops}"
+                f"savings ${h['savings']:,.0f} ({h['savings_rate']}%) — top spend: {tops}"
             )
+
+    # Year-by-year summary with full income AND spending category breakdown.
+    # This is the authoritative source for "how much X did I earn/spend in YEAR?" queries.
+    yearly = _gather_yearly_summary(users, db, years=3)
+    if yearly:
+        ctx_lines += [
+            "",
+            "ANNUAL SUMMARY — income and spending broken down by category per year.",
+            "Use these for any question about a specific year (e.g. 'total side income in 2026').",
+            "These are complete year-to-date figures for the current year and full-year for prior years:",
+        ]
+        for yr_data in yearly:
+            yr = yr_data["year"]
+            ctx_lines.append(
+                f"\n  {yr} — Total income: ${yr_data['income']:,.0f}, Total spending: ${yr_data['spending']:,.0f}"
+            )
+            if yr_data["income_by_cat"]:
+                ctx_lines.append(f"  {yr} Income by category:")
+                for cat, amt in yr_data["income_by_cat"].items():
+                    ctx_lines.append(f"    - {cat}: ${amt:,.0f}")
+            if yr_data["spending_by_cat"]:
+                ctx_lines.append(f"  {yr} Spending by category:")
+                for cat, amt in yr_data["spending_by_cat"].items():
+                    ctx_lines.append(f"    - {cat}: ${amt:,.0f}")
 
     # All-time, merged across users.
     merged_spend: dict[str, float] = {}
