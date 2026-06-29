@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -100,6 +100,30 @@ class PaystubOut(PaystubIn):
     salary_rule_action: Optional[str] = None   # "created" | "updated_raise" | "updated_change" | "unchanged" | None
     salary_rule_amount: Optional[float] = None  # the monthly amount in the rule after save
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_null_numerics(cls, data):
+        """A single DB row with a NULL in a non-optional numeric column (e.g. ytd_net)
+        used to fail serialization with ResponseValidationError and blank the ENTIRE
+        paystub list (GET /paystubs returns an array). Coerce None -> 0.0 on the
+        required float fields so one bad row can never take down the whole list."""
+        if data is None:
+            return data
+        # Works for both ORM objects (from_attributes) and dicts.
+        is_obj = not isinstance(data, dict)
+        for name, field in cls.model_fields.items():
+            if field.annotation is float:  # only the required (non-Optional) floats
+                cur = getattr(data, name, None) if is_obj else data.get(name)
+                if cur is None:
+                    if is_obj:
+                        # don't mutate the ORM instance; shallow-copy into a dict
+                        data = {k: getattr(data, k, None) for k in cls.model_fields}
+                        is_obj = False
+                        data[name] = 0.0
+                    else:
+                        data[name] = 0.0
+        return data
 
 
 class ParsedPaystub(BaseModel):
