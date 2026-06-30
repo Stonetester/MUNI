@@ -347,11 +347,22 @@ def _resolve_contribution_source(
     return {"source": "none", "label": "none", "basis": ""}
 
 
-def _hysa_contributing_user_ids(account: Account, db: Session) -> List[int]:
-    """Users who deposit into this HYSA. Joint HYSA → every household user (so both
-    Keaton and Katherine's EverBank deposits are measured ONCE into the shared
-    account). Solo HYSA → just the owner."""
+def _hysa_contributing_user_ids(
+    account: Account, db: Session, solo_user_id: Optional[int] = None
+) -> List[int]:
+    """Users who deposit into this HYSA.
+
+    Joint HYSA → every household user (so both Keaton and Katherine's EverBank
+    deposits are measured ONCE into the shared account) — this is correct for the
+    JOINT forecast. Solo HYSA → just the owner.
+
+    `solo_user_id` scopes a JOINT HYSA down to a single person for the per-individual
+    (solo) forecast: in solo view only the logged-in user's cash outflow leaves their
+    checking, so only that user's HYSA deposits may grow the balance — otherwise the
+    partner's half inflates solo net worth (cash down by one half, HYSA up by both)."""
     if account.is_joint:
+        if solo_user_id is not None:
+            return [solo_user_id]
         return [u.id for u in db.query(User).all()]
     ids = [account.user_id]
     if account.joint_user_id and account.joint_user_id not in ids:
@@ -363,6 +374,7 @@ def _build_compound_account_config(
     accounts: List[Account],
     db: Session,
     user_id: int,
+    solo_hysa_user_id: Optional[int] = None,
 ) -> tuple[Dict[int, float], Dict[int, float], Dict[int, dict]]:
     """
     Returns (monthly_rate_map, monthly_contrib_map, hysa_detail_map) for each account.
@@ -373,6 +385,10 @@ def _build_compound_account_config(
     average for HYSA). `hysa_detail_map[account_id]` carries the measured-vs-manual
     source label and the current-month actual so the forecast loop can apply $0 for the
     current month when no EverBank deposit has landed yet.
+
+    `solo_hysa_user_id`: when set (the per-individual / solo forecast), a JOINT HYSA's
+    contribution is measured from ONLY this user's deposits, matching their solo cash
+    outflow. Left None for the joint forecast, where both partners' deposits are summed.
     """
     from app.models.investment_holding import InvestmentHolding
     from app.models.financial_profile import FinancialProfile
@@ -448,7 +464,7 @@ def _build_compound_account_config(
     for acc in accounts:
         if acc.account_type != "hysa":
             continue
-        contributing_ids = _hysa_contributing_user_ids(acc, db)
+        contributing_ids = _hysa_contributing_user_ids(acc, db, solo_hysa_user_id)
         detail = hysa_contribution_for_account(
             db,
             contributing_ids,
@@ -642,7 +658,11 @@ def compute_estimated_balances(
         if snap.account_id not in latest_snapshot:
             latest_snapshot[snap.account_id] = snap
 
-    monthly_rate, monthly_contrib, hysa_detail = _build_compound_account_config(accounts, db, user_id)
+    # Per-user estimation: scope a joint HYSA to this user's deposits only (same
+    # asymmetry fix as the solo forecast — the projection here only sees this user's data).
+    monthly_rate, monthly_contrib, hysa_detail = _build_compound_account_config(
+        accounts, db, user_id, solo_hysa_user_id=user_id
+    )
 
     # Infer pay schedule and historical expense rate once for this user
     pay_schedule = _infer_pay_schedule(user_id, db)
@@ -831,8 +851,11 @@ def run_forecast(
     }
 
     # ── Compound interest config ───────────────────────────────────────────────
+    # solo_hysa_user_id scopes a joint HYSA's contribution to THIS user's deposits only,
+    # so the per-individual forecast doesn't grow the HYSA by the partner's half while
+    # only the logged-in user's cash outflow leaves checking (would inflate solo net worth).
     account_monthly_rate, account_monthly_contrib, hysa_detail = _build_compound_account_config(
-        accounts, db, user.id
+        accounts, db, user.id, solo_hysa_user_id=user.id
     )
     # HYSA accounts get a current-month override: contribution is the actual deposits
     # recorded so far this month (often $0 until an EverBank deposit lands). Future
