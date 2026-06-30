@@ -204,9 +204,9 @@ export const DEMO_FORECAST: ForecastResponse = {
   total_income: FORECAST_POINTS.reduce((s, p) => s + p.income, 0),
   total_expenses: FORECAST_POINTS.reduce((s, p) => s + p.expenses, 0),
   account_forecasts: [
-    { account_id: 1, account_name: 'Chase Checking', account_type: 'checking', starting_balance: 4820, ending_balance: 6400, monthly_balances: FORECAST_POINTS.map((_, i) => 4820 + i * 30), annual_return_pct: 0, monthly_contribution: 0 },
-    { account_id: 3, account_name: 'EverBank HYSA', account_type: 'hysa', starting_balance: 18750, ending_balance: 36200, monthly_balances: FORECAST_POINTS.map((_, i) => 18750 + i * 300), annual_return_pct: 4.75, monthly_contribution: 500 },
-    { account_id: 4, account_name: 'Fidelity 401k', account_type: '401k', starting_balance: 52400, ending_balance: 98700, monthly_balances: FORECAST_POINTS.map((_, i) => 52400 + i * 780), annual_return_pct: 7.0, monthly_contribution: 650 },
+    { account_id: 1, account_name: 'Chase Checking', account_type: 'checking', starting_balance: 4820, ending_balance: 6400, monthly_balances: FORECAST_POINTS.map((_, i) => 4820 + i * 30), annual_return_pct: 0, monthly_contribution: 0, contribution_source: 'none', contribution_label: '', contribution_basis: '' },
+    { account_id: 3, account_name: 'EverBank HYSA', account_type: 'hysa', starting_balance: 18750, ending_balance: 36200, monthly_balances: FORECAST_POINTS.map((_, i) => 18750 + i * 300), annual_return_pct: 4.75, monthly_contribution: 500, contribution_source: 'measured', contribution_label: 'measured avg (6 mo)', contribution_basis: 'trailing average of real EverBank deposits from the last 6 months' },
+    { account_id: 4, account_name: 'Fidelity 401k', account_type: '401k', starting_balance: 52400, ending_balance: 98700, monthly_balances: FORECAST_POINTS.map((_, i) => 52400 + i * 780), annual_return_pct: 7.0, monthly_contribution: 650, contribution_source: 'statement_parsed', contribution_label: 'from statements (4 snapshots)', contribution_basis: 'avg of contributions across 4 uploaded statement snapshots' },
   ],
 }
 

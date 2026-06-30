@@ -145,35 +145,60 @@ export default function MonthDetailModal({ point, accountForecasts, onClose }: M
             </div>
           )}
 
-          {accountForecasts && accountForecasts.filter((a) => a.monthly_contribution > 0).length > 0 && (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-1.5">
-                <PiggyBank size={13} className="text-primary" />
-                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Contribution Estimates</p>
-              </div>
-              <div className="divide-y divide-white/10 rounded-xl border border-white/10 px-3">
-                {accountForecasts
-                  .filter((a) => a.monthly_contribution > 0)
-                  .sort((a, b) => b.monthly_contribution - a.monthly_contribution)
-                  .map((a) => (
-                    <div key={a.account_id} className="flex items-center justify-between gap-3 py-2.5">
-                      <div className="min-w-0">
+          {accountForecasts && accountForecasts.filter((a) => a.monthly_contribution > 0).length > 0 && (() => {
+            const contributing = accountForecasts
+              .filter((a) => a.monthly_contribution > 0)
+              .sort((a, b) => b.monthly_contribution - a.monthly_contribution)
+            const total = contributing.reduce((s, a) => s + a.monthly_contribution, 0)
+            const hasHysa = contributing.some((a) => a.account_type === 'hysa')
+
+            const sourceColor = (src: string) => {
+              if (src === 'measured') return 'text-green-400'
+              if (src === 'statement_parsed') return 'text-blue-400'
+              if (src === 'paycheck') return 'text-yellow-400'
+              if (src === 'manual_fallback' || src === 'holding' || src === 'profile') return 'text-orange-400'
+              return 'text-muted'
+            }
+
+            return (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-1.5">
+                  <PiggyBank size={13} className="text-primary" />
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Projected Contributions</p>
+                </div>
+                <div className="divide-y divide-white/10 rounded-xl border border-white/10 px-3">
+                  {contributing.map((a) => (
+                    <div key={a.account_id} className="flex items-start justify-between gap-3 py-2.5">
+                      <div className="min-w-0 flex-1">
                         <p className="truncate text-sm text-text-primary">{a.account_name}</p>
-                        <p className="text-[10px] text-muted capitalize">{a.account_type.replace(/_/g, ' ')}</p>
+                        <p className={`text-[10px] mt-0.5 ${sourceColor(a.contribution_source)}`}>
+                          {a.contribution_label || a.account_type.replace(/_/g, ' ')}
+                        </p>
+                        {a.contribution_basis && (
+                          <p className="text-[10px] text-muted leading-4 mt-0.5">{a.contribution_basis}</p>
+                        )}
                       </div>
-                      <p className="shrink-0 text-sm font-semibold text-primary">+{formatCurrency(a.monthly_contribution)}/mo</p>
+                      <p className="shrink-0 text-sm font-semibold text-primary mt-0.5">+{formatCurrency(a.monthly_contribution)}/mo</p>
                     </div>
                   ))}
-                <div className="flex items-center justify-between gap-3 py-2.5">
-                  <p className="text-sm text-text-secondary">Total contributions</p>
-                  <p className="text-sm font-bold text-primary">
-                    +{formatCurrency(accountForecasts.filter((a) => a.monthly_contribution > 0).reduce((s, a) => s + a.monthly_contribution, 0))}/mo
+                  <div className="flex items-center justify-between gap-3 py-2.5">
+                    <p className="text-sm text-text-secondary">Total projected</p>
+                    <p className="text-sm font-bold text-primary">+{formatCurrency(total)}/mo</p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <p className="text-[10px] leading-4 text-muted">
+                    These are the fixed monthly rates the forecast engine applies to each account — the same pace projected every month, not what actually moved in {formatMonth(point.month)} specifically.
                   </p>
+                  {hasHysa && (
+                    <p className="text-[10px] leading-4 text-muted">
+                      The HYSA contribution and the Savings Transfer in spending are the same money: cash moves from checking → savings. Net worth is unchanged by the transfer itself.
+                    </p>
+                  )}
                 </div>
               </div>
-              <p className="text-[10px] leading-4 text-muted">Projected monthly contributions based on your financial profile, statement history, and paycheck deductions. These flow into the account balances above.</p>
-            </div>
-          )}
+            )
+          })()}
 
           {expenseEntries.length > 0 && (
             <div className="flex flex-col gap-1.5">

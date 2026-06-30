@@ -307,6 +307,46 @@ def _statement_monthly_contribution(account_id: int, db: Session) -> Optional[fl
     return round(total / months, 2)
 
 
+def _resolve_contribution_source(
+    acc: "Account",
+    contrib: float,
+    hysa_detail: Dict[int, dict],
+    db: Session,
+) -> Dict[str, str]:
+    """Return contribution_source / contribution_label / contribution_basis for one account."""
+    if acc.account_type == "hysa":
+        d = hysa_detail.get(acc.id)
+        if d:
+            return {"source": d["source"], "label": d["label"], "basis": d["basis"]}
+        return {"source": "none", "label": "none", "basis": "no EverBank deposits and no manual contribution set"}
+
+    if acc.account_type in CASH_POOL_TYPES:
+        if contrib > 0:
+            return {"source": "paycheck", "label": "from paycheck", "basis": "net pay from detected pay schedule"}
+        return {"source": "none", "label": "none", "basis": ""}
+
+    if acc.account_type in XIRR_FORECAST_TYPES:
+        measured = _statement_monthly_contribution(acc.id, db)
+        if measured is not None:
+            snaps = (
+                db.query(BalanceSnapshot)
+                .filter(BalanceSnapshot.account_id == acc.id)
+                .order_by(BalanceSnapshot.date.asc())
+                .all()
+            )
+            n = len([s for s in snaps if s.contributions is not None])
+            return {
+                "source": "statement_parsed",
+                "label": f"from statements ({n} snapshot{'s' if n != 1 else ''})",
+                "basis": f"avg of contributions across {n} uploaded statement snapshot{'s' if n != 1 else ''}",
+            }
+
+    if contrib > 0:
+        return {"source": "holding", "label": "from holdings/profile", "basis": "manual monthly contribution from holdings or financial profile"}
+
+    return {"source": "none", "label": "none", "basis": ""}
+
+
 def _hysa_contributing_user_ids(account: Account, db: Session) -> List[int]:
     """Users who deposit into this HYSA. Joint HYSA → every household user (so both
     Keaton and Katherine's EverBank deposits are measured ONCE into the shared
@@ -1039,6 +1079,7 @@ def run_forecast(
         history = account_balance_history[acc.id]
         annual_return = account_monthly_rate.get(acc.id, 0.0) * 12.0 * 100.0
         contrib = account_monthly_contrib.get(acc.id, 0.0)
+        src = _resolve_contribution_source(acc, contrib, hysa_detail, db)
         account_forecasts.append(
             AccountForecast(
                 account_id=acc.id,
@@ -1049,6 +1090,9 @@ def run_forecast(
                 monthly_balances=history,
                 annual_return_pct=round(annual_return, 2),
                 monthly_contribution=round(contrib, 2),
+                contribution_source=src["source"],
+                contribution_label=src["label"],
+                contribution_basis=src["basis"],
             )
         )
 
@@ -1096,6 +1140,7 @@ def run_joint_forecast(
     account_monthly_contrib: Dict[int, float] = {}
     # HYSA current-month actuals (apply $0-or-actual for i==0, trailing avg after).
     hysa_current_month_contrib: Dict[int, float] = {}
+    joint_hysa_detail: Dict[int, dict] = {}  # merged hysa_detail across users for source labeling
 
     for u in users:
         owned = [a for a in all_accounts if a.user_id == u.id]
@@ -1110,6 +1155,7 @@ def run_joint_forecast(
         # non-owner doesn't own the account so won't double-add. Record current-month.
         for acc_id, d in hysa_detail.items():
             hysa_current_month_contrib[acc_id] = d["current_month"]
+            joint_hysa_detail[acc_id] = d
 
     # For users without their own savings account, add their savings-transfer avg
     # to the joint compound account (e.g. a joint brokerage).
@@ -1299,6 +1345,7 @@ def run_joint_forecast(
         history = account_balance_history[a.id]
         annual_return = account_monthly_rate.get(a.id, 0.0) * 12.0 * 100.0
         contrib = account_monthly_contrib.get(a.id, 0.0)
+        src = _resolve_contribution_source(a, contrib, joint_hysa_detail, db)
         account_forecasts.append(
             AccountForecast(
                 account_id=a.id,
@@ -1309,6 +1356,9 @@ def run_joint_forecast(
                 monthly_balances=history,
                 annual_return_pct=round(annual_return, 2),
                 monthly_contribution=round(contrib, 2),
+                contribution_source=src["source"],
+                contribution_label=src["label"],
+                contribution_basis=src["basis"],
             )
         )
 
