@@ -157,6 +157,48 @@ def _rule_monthly_amount(rule: RecurringRule, month_start: date, month_end: date
     return rule.amount * multiplier
 
 
+def _paid_off_liability_category_ids(user_id: int, db: Session) -> set:
+    """Category ids whose payments should STOP being projected because the underlying
+    liability is paid off.
+
+    A liability account (student_loan/car_loan/mortgage/credit_card) with a zero balance
+    is done — its historical payment average would otherwise keep projecting payments that
+    will never happen, understating net-worth growth. We match the loan to its payment
+    category by keyword (account "Student loan" -> category "Student Loans"). Conservative:
+    only fires for liability accounts that are actually at $0 AND a same-keyword category.
+    """
+    from app.models.account import Account as _Account
+
+    paid_off = (
+        db.query(_Account)
+        .filter(
+            _Account.is_active == True,
+            _Account.account_type.in_(LIABILITY_TYPES),
+        )
+        .all()
+    )
+    paid_off = [a for a in paid_off if abs(float(a.balance or 0.0)) < 1.0]
+    if not paid_off:
+        return set()
+
+    def _keywords(name: str) -> set:
+        return {w for w in (name or "").lower().replace("/", " ").split() if len(w) > 2}
+
+    loan_keywords: set = set()
+    for a in paid_off:
+        # singularize a trailing 's' so "loans" matches "loan"
+        loan_keywords |= {w.rstrip("s") for w in _keywords(a.name)}
+
+    matched: set = set()
+    cats = db.query(Category).filter(Category.user_id == user_id).all()
+    for c in cats:
+        cat_kw = {w.rstrip("s") for w in _keywords(c.name)}
+        # require a meaningful overlap (e.g. "student" & "loan")
+        if len(cat_kw & loan_keywords) >= 2 or (cat_kw & loan_keywords and "loan" in cat_kw):
+            matched.add(c.id)
+    return matched
+
+
 def _get_historical_category_averages(
     user_id: int,
     db: Session,
@@ -1082,6 +1124,21 @@ def run_forecast(
     hist_avgs = _get_historical_category_averages(user.id, db, today)
     variance_pct = _get_historical_variance(user.id, db, today)
 
+    # Savings-kind categories (e.g. "Savings Transfer" / EverBank). These outflows still
+    # roll cash forward (money leaves checking), but they are NOT shown as spending — the
+    # money is saved, not consumed, and it's already tracked as account contributions.
+    # Counting them as expenses would (a) double the displayed spending vs the dashboard
+    # and (b) look like a confusing red expense line for money you actually saved.
+    savings_cat_ids = {
+        c.id for c in db.query(Category).filter(
+            Category.user_id == user.id, Category.kind == "savings"
+        ).all()
+    }
+
+    # Categories tied to a PAID-OFF liability (e.g. student loans at $0) — stop projecting
+    # their payments forward; they're done.
+    paid_off_cat_ids = _paid_off_liability_category_ids(user.id, db)
+
     # For joint compound accounts that this user contributes to but doesn't own,
     # derive their monthly contribution from their Savings Transfer (savings-kind)
     # historical average.
@@ -1144,13 +1201,26 @@ def run_forecast(
 
         month_income = 0.0
         month_expenses = 0.0
+        # Savings-kind outflows (money moved to savings, not consumed). Kept OUT of the
+        # displayed expenses + by_category, but still rolled into cash via `net` below.
+        month_savings_outflow = 0.0
         by_category: Dict[str, float] = {}
 
         # All projections are based on weighted historical category averages
         # (3-month avg weighted 50%, 6-month 30%, 12-month 20%) from real transactions.
         # Income categories (positive avg) and expense categories (negative avg) both included.
         for cat_id, avgs in hist_avgs.items():
+            # Paid-off liabilities: their payment category is done — don't project it.
+            if cat_id in paid_off_cat_ids:
+                continue
+
             hist_amount = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
+
+            if cat_id in savings_cat_ids:
+                # Money saved, not spent: rolls cash forward but is not shown as spending.
+                if hist_amount < 0:
+                    month_savings_outflow += hist_amount
+                continue
 
             if hist_amount < 0:
                 month_expenses += hist_amount
@@ -1166,6 +1236,10 @@ def run_forecast(
                 continue  # already covered by historical data
             if _rule_applies_to_month(rule, ms, me):
                 rule_amount = _rule_monthly_amount(rule, ms, me)
+                if rule.category_id in savings_cat_ids:
+                    if rule_amount < 0:
+                        month_savings_outflow += rule_amount
+                    continue
                 if rule_amount > 0:
                     month_income += rule_amount
                 elif rule_amount < 0:
@@ -1177,8 +1251,10 @@ def run_forecast(
         # Life event impacts
         event_impact = _event_impact_for_month(all_events, month_str)
 
+        # Cash roll-forward includes savings outflows (money still leaves checking), but
+        # the DISPLAYED `net`/expenses exclude them (saved, not spent).
         net = month_income + month_expenses  # expenses are negative
-        running_cash += net + event_impact
+        running_cash += net + month_savings_outflow + event_impact
 
         # ── Compound growth on investment/savings accounts ─────────────────
         for acc_id in list(running_compound.keys()):
@@ -1408,19 +1484,31 @@ def run_joint_forecast(
 
     # ── Combined historical averages (merged by category name across all users) ──
     combined_monthly: Dict[str, float] = {}
+    # Savings-kind outflows across the household. Kept OUT of displayed expenses (saved,
+    # not consumed; already tracked as account contributions) but rolled into cash below.
+    combined_savings_outflow = 0.0
 
     for u in users:
         user_hist = _get_historical_category_averages(u.id, db, today)
         cats_map = {c.id: c for c in db.query(CategoryModel).filter(CategoryModel.user_id == u.id).all()}
         savings_cats = {c.id for c in cats_map.values() if c.kind == "savings"}
+        paid_off_cats = _paid_off_liability_category_ids(u.id, db)
         user_has_savings = any(
             a.account_type in ("hysa", "savings") for a in all_accounts if a.user_id == u.id
         )
 
         for cat_id, avgs in user_hist.items():
+            # Paid-off liabilities (e.g. student loans at $0): payments are done.
+            if cat_id in paid_off_cats:
+                continue
             hist_amount = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
-            # Skip savings-kind outflows from non-owners — captured in HYSA contrib above
-            if cat_id in savings_cats and not user_has_savings and hist_amount < 0:
+            # Savings-kind outflows: never shown as spending. A non-owner's savings outflow
+            # is already captured as the owner's HYSA/account contribution, so it must NOT
+            # also roll cash here (would double-count). An owner's own savings outflow does
+            # roll cash forward (their money leaving checking) but stays out of expenses.
+            if cat_id in savings_cats:
+                if hist_amount < 0 and user_has_savings:
+                    combined_savings_outflow += hist_amount
                 continue
             cat = cats_map.get(cat_id)
             label = cat.name if cat else "Uncategorized"
@@ -1458,8 +1546,10 @@ def run_joint_forecast(
                 by_category[label] = by_category.get(label, 0.0) + hist_amount
 
         event_impact = _event_impact_for_month(all_events, month_str)
+        # Cash roll-forward includes household savings outflows (money leaves checking);
+        # displayed net/expenses exclude them (saved, not spent).
         net = month_income + month_expenses
-        running_cash += net + event_impact
+        running_cash += net + combined_savings_outflow + event_impact
 
         for acc_id in list(running_compound.keys()):
             rate = account_monthly_rate.get(acc_id, 0.0)

@@ -45,6 +45,12 @@ HYSA_KEYWORDS = {"hysa", "everbank", "ever bank", "high yield"}
 # How many completed months to average for the forward-looking figure.
 DEFAULT_LOOKBACK_MONTHS = 6
 
+# Shorter recent window used for the GO-FORWARD contribution. A single anomalous low
+# month (e.g. a partner skipping a deposit) inside the 6-month window drags the mean
+# down and understates the real ongoing pace, so the forward figure uses the most
+# recent few completed months, which track current behavior.
+RECENT_FORWARD_MONTHS = 3
+
 
 def is_hysa_transfer(description: Optional[str]) -> bool:
     """True if a transaction description looks like an EverBank/HYSA deposit."""
@@ -136,12 +142,20 @@ def measured_hysa_contributions(
     n_with_deposits = sum(1 for v in completed_vals if v > 0)
     avg_monthly = round(sum(completed_vals) / len(completed_vals), 2) if completed_vals else 0.0
 
+    # Recent forward figure: mean of the last RECENT_FORWARD_MONTHS completed months.
+    # Tracks current pace and isn't dragged down by an older skipped-deposit month.
+    recent_keys = _completed_month_keys(today, RECENT_FORWARD_MONTHS)
+    recent_vals = [by_month.get(k, 0.0) for k in recent_keys]
+    recent_avg_monthly = round(sum(recent_vals) / len(recent_vals), 2) if recent_vals else 0.0
+
     current_key = _month_key(today)
     current_month = by_month.get(current_key, 0.0)
 
     return {
         "by_month": by_month,
         "avg_monthly": avg_monthly,
+        "recent_avg_monthly": recent_avg_monthly,
+        "recent_months": RECENT_FORWARD_MONTHS,
         "current_month": current_month,
         "current_month_key": current_key,
         "n_completed_months_with_deposits": n_with_deposits,
@@ -181,15 +195,19 @@ def hysa_contribution_for_account(
     if measured["has_data"]:
         n = measured["n_completed_months_with_deposits"]
         lb = measured["lookback_months"]
+        rm = measured["recent_months"]
+        # Forward figure prefers the recent few months (current pace). Fall back to the
+        # longer-window mean only if the recent window happens to have no deposits.
+        forward = measured["recent_avg_monthly"] or measured["avg_monthly"]
         return {
-            "avg_monthly": measured["avg_monthly"],
+            "avg_monthly": forward,
             "current_month": measured["current_month"],
             "source": "measured",
-            "label": f"measured avg ({lb} mo)",
+            "label": f"measured avg ({rm} mo)",
             "basis": (
-                f"averaged real EverBank deposits over the last {lb} completed months "
-                f"({n} of them had a deposit); current month counts only deposits "
-                f"already recorded"
+                f"averaged real EverBank deposits over the last {rm} completed months "
+                f"to track your current pace (the {lb}-month window had deposits in "
+                f"{n} months); current month counts only deposits already recorded"
             ),
             "measured": measured,
         }

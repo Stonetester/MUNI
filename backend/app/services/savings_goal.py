@@ -70,22 +70,94 @@ def _net_saved(db: Session, user_id: int, start: date, end: date) -> tuple[float
     return round(income, 2), round(spending, 2), round(income - spending, 2)
 
 
-def _k401_monthly(profile: Optional[FinancialProfile]) -> tuple[float, float]:
-    """(employee, employer) monthly 401k contribution from the profile."""
-    if not profile:
-        return 0.0, 0.0
-    per_paycheck = profile.employee_401k_per_paycheck or 0.0
-    periods_per_month = {
+def _periods_per_month(freq: Optional[str]) -> float:
+    return {
         "weekly": 52 / 12,
         "bi_weekly": 26 / 12,
         "biweekly": 26 / 12,
         "semi_monthly": 2.0,
         "monthly": 1.0,
-    }.get(profile.pay_frequency or "semi_monthly", 2.0)
-    k401_employee = round(per_paycheck * periods_per_month, 2)
-    employer_pct = profile.employer_401k_percent or 0.0
-    gross = profile.gross_annual_salary or 0.0
-    k401_employer = round((employer_pct / 100.0) * gross / 12.0, 2)
+    }.get(freq or "semi_monthly", 2.0)
+
+
+def _paystub_401k_and_salary(db: Session, user_id: int) -> Optional[dict]:
+    """Recent monthly employee 401k, employer 401k, and gross salary, from paystubs.
+
+    Paystubs are the truth for the EMPLOYEE side (both people) and for the EMPLOYER side
+    when the employer match is printed on the stub (Keaton). They are also the truth for
+    gross SALARY (both people). Returns None when there aren't enough regular paystubs.
+    """
+    import statistics
+    from app.models.paystub import Paystub
+
+    stubs = (
+        db.query(Paystub)
+        .filter(Paystub.user_id == user_id, Paystub.pay_type != "bonus")
+        .order_by(Paystub.pay_date.desc())
+        .limit(6)
+        .all()
+    )
+    if len(stubs) < 2:
+        return None
+
+    # Infer frequency from the stub dates (same logic the forecast uses).
+    from app.services.forecasting import _infer_pay_schedule
+    sched = _infer_pay_schedule(user_id, db)
+    ppm = _periods_per_month(sched["frequency"] if sched else "semi_monthly")
+
+    med = lambda vals: statistics.median(vals) if vals else 0.0
+    ee = med([s.deduction_401k or 0.0 for s in stubs])
+    er = med([s.employer_401k or 0.0 for s in stubs])
+    gross = med([s.gross_pay or 0.0 for s in stubs])
+    return {
+        "employee_monthly": round(ee * ppm, 2),
+        "employer_monthly": round(er * ppm, 2),
+        "salary_monthly": round(gross * ppm, 2),
+        "periods_per_month": ppm,
+    }
+
+
+def _k401_monthly(
+    profile: Optional[FinancialProfile],
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
+) -> tuple[float, float]:
+    """(employee, employer) monthly 401k contribution.
+
+    Truth hierarchy:
+      - EMPLOYEE: recent paystubs (deduction_401k × pay frequency) when available, else
+        the profile's employee_401k_per_paycheck × frequency.
+      - EMPLOYER: recent paystubs (employer_401k × frequency) when the match is printed on
+        the stub (Keaton). When it's NOT on the stub (Katherine), fall back to
+        employer_401k_percent × SALARY, where salary is derived from paystubs (gross ×
+        frequency) and only falls back to the stale profile gross_annual_salary if there
+        are no paystubs.
+    """
+    if not profile:
+        return 0.0, 0.0
+
+    pay = _paystub_401k_and_salary(db, user_id) if (db is not None and user_id is not None) else None
+
+    # Employee side — paystubs win.
+    if pay and pay["employee_monthly"] > 0:
+        k401_employee = pay["employee_monthly"]
+    else:
+        ppm = _periods_per_month(profile.pay_frequency)
+        k401_employee = round((profile.employee_401k_per_paycheck or 0.0) * ppm, 2)
+
+    # Employer side — paystub match wins when present.
+    if pay and pay["employer_monthly"] > 0:
+        k401_employer = pay["employer_monthly"]
+    else:
+        # Not on the paystub: employer_401k_percent × monthly salary (salary from paystubs
+        # when possible, else the profile's stored annual gross).
+        employer_pct = profile.employer_401k_percent or 0.0
+        if pay and pay["salary_monthly"] > 0:
+            monthly_salary = pay["salary_monthly"]
+        else:
+            monthly_salary = (profile.gross_annual_salary or 0.0) / 12.0
+        k401_employer = round((employer_pct / 100.0) * monthly_salary, 2)
+
     return k401_employee, k401_employer
 
 
@@ -94,15 +166,17 @@ def _retirement_contributions(
     hysa_per_person: float,
     hysa_source: str,
     hysa_is_joint: bool,
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
 ) -> dict:
     """Monthly retirement/savings contributions.
 
     HYSA is passed in already measured + split per person (joint, no double-count);
-    IRA + 401k come from the profile. `hysa_source`/`hysa_is_joint` label the HYSA value
-    so the UI can show "measured (joint)" vs "manual estimate".
+    IRA comes from the profile; 401k (employee + employer) prefers paystubs. `hysa_source`/
+    `hysa_is_joint` label the HYSA value so the UI can show "measured (joint)" vs "manual".
     """
     ira = (profile.ira_monthly_contribution or 0.0) if profile else 0.0
-    k401_employee, k401_employer = _k401_monthly(profile)
+    k401_employee, k401_employer = _k401_monthly(profile, db, user_id)
 
     hysa = round(hysa_per_person, 2)
     total = round(hysa + ira + k401_employee + k401_employer, 2)
@@ -158,14 +232,15 @@ def _contributions_history(
     n_people: int,
     today: date,
     months: int = CONTRIB_HISTORY_MONTHS,
+    user_id: Optional[int] = None,
 ) -> list[dict]:
     """Last `months` COMPLETED months of total monthly contributions, for the pace check.
 
     HYSA per-month comes from the measured EverBank deposits (split per person); IRA + 401k
-    are the steady profile estimate (same every month). Returned newest-last.
+    are the steady estimate (401k prefers paystubs, same every month). Returned newest-last.
     """
     ira = (profile.ira_monthly_contribution or 0.0) if profile else 0.0
-    k401_employee, k401_employer = _k401_monthly(profile)
+    k401_employee, k401_employer = _k401_monthly(profile, db, user_id)
     steady = round(ira + k401_employee + k401_employer, 2)
 
     measured = measured_hysa_contributions(db, household_user_ids, today=today)
@@ -246,9 +321,11 @@ def _person_block(db: Session, user: User, today: date, household_user_ids: list
     hysa_per_person, hysa_source, hysa_is_joint, _ = _resolve_hysa(
         db, profile, household_user_ids, n_people, today
     )
-    contributions = _retirement_contributions(profile, hysa_per_person, hysa_source, hysa_is_joint)
+    contributions = _retirement_contributions(
+        profile, hysa_per_person, hysa_source, hysa_is_joint, db, user.id
+    )
     contributions_history = _contributions_history(
-        db, profile, household_user_ids, n_people, today
+        db, profile, household_user_ids, n_people, today, user_id=user.id
     )
 
     # total_saved kept for display only — the GOAL is measured against net_saved.

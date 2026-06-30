@@ -96,5 +96,17 @@ class ForecastingMathTests(TestCase):
         self.assertAlmostEqual(result.total_expenses, point.expenses, places=2)
         self.assertNotIn("Transfer", point.by_category)
         self.assertAlmostEqual(point.income, 233.33, places=2)
-        self.assertAlmostEqual(point.expenses, 93.33, places=2)
-        self.assertAlmostEqual(point.net_worth, result.starting_net_worth + point.net, places=2)
+        # Savings-kind outflow ($100 "Savings contribution") is NO LONGER counted as a
+        # displayed expense (it's saved, not consumed; it still rolls cash forward).
+        # Expenses = the two expense-kind txns only: ($300 + $600 one-off) weighted-avg
+        # = 900 * (0.5/3 + 0.3/6 + 0.2/12) = 900 * 0.0777... = 70.00.
+        self.assertAlmostEqual(point.expenses, 70.0, places=2)
+        # Net worth change = displayed net MINUS the savings outflow that left cash. In
+        # production that outflow lands in a tracked savings/HYSA account (net worth
+        # unchanged by the move); in this fixture there's no receiving account configured,
+        # so cash simply drops by the savings outflow. The savings weighted-avg outflow is
+        # $100 * (0.5/3 + 0.3/6 + 0.2/12) = 23.33.
+        savings_outflow = 23.33
+        self.assertAlmostEqual(
+            point.net_worth, result.starting_net_worth + point.net - savings_outflow, places=2
+        )
