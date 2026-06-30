@@ -110,16 +110,22 @@ def _txns_for_period(user: User, db: Session, start: date, end: date):
 
 # ── Factual query handlers (no LLM) ──────────────────────────────────────────
 
+_CAT_STOP = {
+    "the", "and", "for", "out", "my", "all", "any", "but", "not", "are", "was",
+    "has", "had", "its", "get", "got", "put", "run", "set", "let", "say", "did",
+    "per", "how", "now", "top", "big", "new", "old", "own", "add", "try",
+}
+
 def _find_category_in_query(q: str, cats_map: dict) -> Optional[int]:
     """Find which category the user is asking about by matching against real category names."""
     # Exact match first
     for cid, cat in cats_map.items():
         if cat.name.lower() == q or cat.name.lower() in q:
             return cid
-    # Partial: any word in the category name appears as a whole word in the query
+    # Partial: any non-stop word (>=4 chars) in the category name appears in the query
     for cid, cat in cats_map.items():
         for word in cat.name.lower().split():
-            if len(word) >= 3 and re.search(rf"\b{re.escape(word)}\b", q):
+            if len(word) >= 4 and word not in _CAT_STOP and re.search(rf"\b{re.escape(word)}\b", q):
                 return cid
     return None
 
