@@ -164,9 +164,12 @@ export interface AccountForecast {
   monthly_balances: number[]       // one per forecast month
   annual_return_pct: number        // blended annual return used
   monthly_contribution: number
-  contribution_source: string      // "measured" | "manual_fallback" | "statement_parsed" | "holding" | "paycheck" | "profile" | "none"
+  contribution_source: string      // "paystub" | "measured" | "statement_recent" | "manual_fallback" | "statement_parsed" | "holding" | "paycheck" | "profile" | "none"
   contribution_label: string       // short human label
   contribution_basis: string       // one-line explanation
+  // Informational all-time statement average — shown for comparison, NOT projected.
+  lifetime_monthly_contribution?: number | null
+  lifetime_contribution_basis?: string
 }
 
 // Matches backend ForecastResponse schema exactly

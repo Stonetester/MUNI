@@ -153,8 +153,8 @@ export default function MonthDetailModal({ point, accountForecasts, onClose }: M
             const hasHysa = contributing.some((a) => a.account_type === 'hysa')
 
             const sourceColor = (src: string) => {
-              if (src === 'measured') return 'text-green-400'
-              if (src === 'statement_parsed') return 'text-blue-400'
+              if (src === 'measured' || src === 'paystub') return 'text-green-400'
+              if (src === 'statement_parsed' || src === 'statement_recent') return 'text-blue-400'
               if (src === 'paycheck') return 'text-yellow-400'
               if (src === 'manual_fallback' || src === 'holding' || src === 'profile') return 'text-orange-400'
               return 'text-muted'
@@ -176,6 +176,13 @@ export default function MonthDetailModal({ point, accountForecasts, onClose }: M
                         </p>
                         {a.contribution_basis && (
                           <p className="text-[10px] text-muted leading-4 mt-0.5">{a.contribution_basis}</p>
+                        )}
+                        {a.lifetime_monthly_contribution != null &&
+                          Math.abs(a.lifetime_monthly_contribution - a.monthly_contribution) >= 1 && (
+                          <p className="text-[10px] text-muted leading-4 mt-0.5">
+                            Lifetime avg {formatCurrency(a.lifetime_monthly_contribution)}/mo
+                            {' '}(all statements — not used for the estimate)
+                          </p>
                         )}
                       </div>
                       <p className="shrink-0 text-sm font-semibold text-primary mt-0.5">+{formatCurrency(a.monthly_contribution)}/mo</p>

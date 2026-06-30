@@ -275,14 +275,31 @@ def _event_impact_for_month(events: List[LifeEvent], month_str: str) -> float:
     return total
 
 
-def _statement_monthly_contribution(account_id: int, db: Session) -> Optional[float]:
-    """Measured monthly contribution from this account's statement snapshots.
+# How many months back counts as the "recent" window for contribution pace. Old,
+# high-contribution periods buried in a lifetime average overstate the future when the
+# user has since cut back (e.g. 401k lowered as life expenses rose), so the forecast uses
+# the recent window. The lifetime figure is kept separately for informational display.
+RECENT_CONTRIBUTION_WINDOW_MONTHS = 12
+
+
+def _statement_monthly_contribution(
+    account_id: int,
+    db: Session,
+    recent_months: Optional[int] = RECENT_CONTRIBUTION_WINDOW_MONTHS,
+) -> Optional[float]:
+    """Measured monthly contribution pace from this account's statement snapshots.
 
     Statements (the `balance_snapshots.contributions` rows parsed from JH/Schwab/Fidelity
-    PDFs) are the TRUTH for how much was actually contributed. We total the recorded
-    contributions over the statement-backed window and divide by its length in months.
-    Returns None when there isn't enough real contribution data to measure (caller then
-    falls back to the manual holding/profile estimate).
+    PDFs) record how much was actually contributed over each period. We total the recorded
+    contributions over a window and divide by its length in months.
+
+    `recent_months`: when set (default), only snapshots whose contribution period falls in
+    roughly the last `recent_months` are counted — so a recent slowdown is reflected and an
+    old high-contribution stretch doesn't inflate the future estimate. Pass None for the
+    all-time (lifetime) figure used for informational display only.
+
+    Returns None when there isn't enough real contribution data in the window to measure
+    (caller then falls back to the next source).
     """
     snaps = (
         db.query(BalanceSnapshot)
@@ -292,19 +309,113 @@ def _statement_monthly_contribution(account_id: int, db: Session) -> Optional[fl
     )
     if len(snaps) < 2:
         return None
-    # Window: first snapshot through the last one that recorded contributions.
     recorded = [s for s in snaps if s.contributions is not None]
     if len(recorded) < 1:
         return None
-    first, last = snaps[0], recorded[-1]
-    days = (last.date - first.date).days
+
+    if recent_months is not None:
+        cutoff = date.today() - relativedelta(months=recent_months)
+        # Keep snapshots that recorded a contribution on/after the cutoff. Anchor the
+        # window start at the snapshot immediately BEFORE the first kept one (the period
+        # boundary), so dividing by the spanned days gives the right monthly pace.
+        recent_recorded = [s for s in recorded if s.date >= cutoff]
+        if not recent_recorded:
+            return None  # nothing recent enough — caller falls back / uses lifetime
+        first_recent = recent_recorded[0]
+        idx = snaps.index(first_recent)
+        window_start = snaps[idx - 1] if idx > 0 else first_recent
+        last = recent_recorded[-1]
+        window_snaps = [s for s in snaps if window_start.date <= s.date <= last.date]
+        contributing = recent_recorded
+    else:
+        window_start, last = snaps[0], recorded[-1]
+        window_snaps = snaps
+        contributing = recorded
+
+    days = (last.date - window_start.date).days
     if days < 60:
         return None  # too short to derive a monthly pace
-    total = sum(float(s.contributions) for s in snaps if s.contributions)
+    total = sum(float(s.contributions) for s in window_snaps if s.contributions)
     if total <= 0:
         return None
     months = days / 30.44
     return round(total / months, 2)
+
+
+def _paystub_monthly_401k(user_id: int, db: Session) -> Optional[Dict[str, float]]:
+    """Recent per-month 401k contribution (employee + employer) derived from paystubs.
+
+    Paystubs are the most current, most precise truth for 401k contributions — far better
+    than dividing a multi-year statement total by months. Uses the median employee + employer
+    401k deduction across the most recent regular (non-bonus) paystubs, multiplied by the
+    inferred pay frequency to get a monthly pace.
+
+    Returns {"monthly": float, "n_stubs": int, "per_check": float, "frequency": str} or None
+    when there aren't enough recent regular paystubs to measure.
+    """
+    from app.models.paystub import Paystub
+    import statistics
+
+    stubs = (
+        db.query(Paystub)
+        .filter(
+            Paystub.user_id == user_id,
+            Paystub.pay_type != "bonus",
+        )
+        .order_by(Paystub.pay_date.desc())
+        .limit(6)
+        .all()
+    )
+    if len(stubs) < 2:
+        return None
+
+    per_check = [
+        (s.deduction_401k or 0.0) + (s.employer_401k or 0.0)
+        for s in stubs
+    ]
+    median_check = statistics.median(per_check)
+    if median_check <= 0:
+        return None
+
+    schedule = _infer_pay_schedule(user_id, db)
+    freq = schedule["frequency"] if schedule else "semi_monthly"
+    # Paychecks per month by frequency.
+    checks_per_month = {
+        "biweekly": 26.0 / 12.0,   # 26 paychecks/yr
+        "semi_monthly": 2.0,        # 24 paychecks/yr
+        "monthly": 1.0,
+    }.get(freq, 2.0)
+
+    return {
+        "monthly": round(median_check * checks_per_month, 2),
+        "n_stubs": len(stubs),
+        "per_check": round(median_check, 2),
+        "frequency": freq,
+    }
+
+
+def _lifetime_statement_contribution(acc: "Account", db: Session) -> Dict[str, object]:
+    """All-time statement contribution figure for INFORMATIONAL display only (never used
+    to project). Returns {"monthly": float|None, "basis": str}."""
+    if acc.account_type not in XIRR_FORECAST_TYPES:
+        return {"monthly": None, "basis": ""}
+    lifetime = _statement_monthly_contribution(acc.id, db, recent_months=None)
+    if lifetime is None:
+        return {"monthly": None, "basis": ""}
+    snaps = (
+        db.query(BalanceSnapshot)
+        .filter(BalanceSnapshot.account_id == acc.id)
+        .order_by(BalanceSnapshot.date.asc())
+        .all()
+    )
+    n = len([s for s in snaps if s.contributions is not None])
+    return {
+        "monthly": lifetime,
+        "basis": (
+            f"all-time average across {n} statement snapshot{'s' if n != 1 else ''} "
+            f"(informational — not used for the future estimate)"
+        ),
+    }
 
 
 def _resolve_contribution_source(
@@ -312,39 +423,56 @@ def _resolve_contribution_source(
     contrib: float,
     hysa_detail: Dict[int, dict],
     db: Session,
-) -> Dict[str, str]:
-    """Return contribution_source / contribution_label / contribution_basis for one account."""
+) -> Dict[str, object]:
+    """Return contribution_source / contribution_label / contribution_basis for one account,
+    plus lifetime_monthly / lifetime_basis (informational all-time figure, not projected)."""
+    lifetime = _lifetime_statement_contribution(acc, db)
+    base = {"lifetime_monthly": lifetime["monthly"], "lifetime_basis": lifetime["basis"]}
+
     if acc.account_type == "hysa":
         d = hysa_detail.get(acc.id)
         if d:
-            return {"source": d["source"], "label": d["label"], "basis": d["basis"]}
-        return {"source": "none", "label": "none", "basis": "no EverBank deposits and no manual contribution set"}
+            return {**base, "source": d["source"], "label": d["label"], "basis": d["basis"]}
+        return {**base, "source": "none", "label": "none", "basis": "no EverBank deposits and no manual contribution set"}
 
     if acc.account_type in CASH_POOL_TYPES:
         if contrib > 0:
-            return {"source": "paycheck", "label": "from paycheck", "basis": "net pay from detected pay schedule"}
-        return {"source": "none", "label": "none", "basis": ""}
+            return {**base, "source": "paycheck", "label": "from paycheck", "basis": "net pay from detected pay schedule"}
+        return {**base, "source": "none", "label": "none", "basis": ""}
 
     if acc.account_type in XIRR_FORECAST_TYPES:
-        measured = _statement_monthly_contribution(acc.id, db)
-        if measured is not None:
-            snaps = (
-                db.query(BalanceSnapshot)
-                .filter(BalanceSnapshot.account_id == acc.id)
-                .order_by(BalanceSnapshot.date.asc())
-                .all()
-            )
-            n = len([s for s in snaps if s.contributions is not None])
+        # 401k: recent paystubs are the truth and take priority.
+        if acc.account_type == "401k":
+            pay = _paystub_monthly_401k(acc.user_id, db)
+            if pay is not None:
+                return {
+                    **base,
+                    "source": "paystub",
+                    "label": f"from recent paystubs ({pay['n_stubs']})",
+                    "basis": (
+                        f"${pay['per_check']:,.2f}/paycheck (employee + employer) "
+                        f"× {pay['frequency'].replace('_', '-')} pay, from your "
+                        f"{pay['n_stubs']} most recent paystubs"
+                    ),
+                }
+        # Recent statement window.
+        recent = _statement_monthly_contribution(acc.id, db)
+        if recent is not None:
             return {
-                "source": "statement_parsed",
-                "label": f"from statements ({n} snapshot{'s' if n != 1 else ''})",
-                "basis": f"avg of contributions across {n} uploaded statement snapshot{'s' if n != 1 else ''}",
+                **base,
+                "source": "statement_recent",
+                "label": f"recent statements ({RECENT_CONTRIBUTION_WINDOW_MONTHS} mo)",
+                "basis": (
+                    f"average of statement contributions over roughly the last "
+                    f"{RECENT_CONTRIBUTION_WINDOW_MONTHS} months — reflects your recent "
+                    f"pace, not older periods"
+                ),
             }
 
     if contrib > 0:
-        return {"source": "holding", "label": "from holdings/profile", "basis": "manual monthly contribution from holdings or financial profile"}
+        return {**base, "source": "holding", "label": "from holdings/profile", "basis": "manual monthly contribution from holdings or financial profile"}
 
-    return {"source": "none", "label": "none", "basis": ""}
+    return {**base, "source": "none", "label": "none", "basis": ""}
 
 
 def _hysa_contributing_user_ids(
@@ -443,14 +571,22 @@ def _build_compound_account_config(
                 monthly_rate[acc.id] = blended_annual / 100.0 / 12.0
             monthly_contrib[acc.id] = sum(h.monthly_contribution or 0.0 for h in acc_holdings)
 
-    # 1b. STATEMENTS ARE THE TRUTH for investment-account contributions (401k/IRA/
-    #     brokerage/HSA). When a statement-backed monthly contribution can be measured
-    #     from balance_snapshots.contributions, it OVERRIDES the manual holding/profile
-    #     value (which is only an estimate for future prediction). Past real data beats
-    #     a typed-in number. HYSA is handled separately below from EverBank deposits.
+    # 1b. RECENT real data is the truth for investment-account contributions (401k/IRA/
+    #     brokerage/HSA), and it OVERRIDES the manual holding/profile value (only a guess
+    #     for the future). The future estimate must reflect the RECENT pace, not an old
+    #     high-contribution stretch the user has since cut back from. Source priority:
+    #       1. 401k → recent PAYSTUBS (employee + employer) — most current + precise.
+    #       2. Recent STATEMENT window (last RECENT_CONTRIBUTION_WINDOW_MONTHS).
+    #       3. (else) keep the holding/profile value already set above.
+    #     HYSA is handled separately below from EverBank deposits.
     for acc in accounts:
         if acc.account_type not in XIRR_FORECAST_TYPES:
             continue
+        if acc.account_type == "401k":
+            pay = _paystub_monthly_401k(acc.user_id, db)
+            if pay is not None:
+                monthly_contrib[acc.id] = pay["monthly"]
+                continue
         measured = _statement_monthly_contribution(acc.id, db)
         if measured is not None:
             monthly_contrib[acc.id] = measured
@@ -538,15 +674,36 @@ def _infer_pay_schedule(user_id: int, db: Session) -> Optional[Dict]:
     gaps = [(pay_dates[i + 1] - pay_dates[i]).days for i in range(len(pay_dates) - 1)]
     median_gap = statistics.median(gaps)
 
-    if median_gap <= 16:
-        frequency = "biweekly"
-        interval_days = 14
-    elif median_gap <= 20:
-        frequency = "semi_monthly"
-        interval_days = 0  # not fixed-interval; use DOM pattern
-    else:
+    # Day-of-month signal: SEMI-MONTHLY pay lands on two fixed days each month (e.g. the
+    # 7th & 22nd) → pay dates cluster into exactly two day-of-month groups (one in the
+    # first half, one in the second). True BIWEEKLY drifts across the calendar → many
+    # distinct days-of-month. This disambiguates the 14-16 day gap zone, where the raw
+    # gap median for semi-monthly (~15) otherwise looks biweekly. Semi-monthly = 24
+    # pays/yr; biweekly = 26 — only semi-monthly holds two tight DOM clusters.
+    first_half_doms = [d.day for d in pay_dates if d.day <= 16]
+    second_half_doms = [d.day for d in pay_dates if d.day > 16]
+    dom_spread_first = (max(first_half_doms) - min(first_half_doms)) if first_half_doms else 99
+    dom_spread_second = (max(second_half_doms) - min(second_half_doms)) if second_half_doms else 99
+    # Two populated halves, each tightly clustered (≤4 days of drift) → semi-monthly.
+    looks_semi_monthly = (
+        len(first_half_doms) >= 2
+        and len(second_half_doms) >= 2
+        and dom_spread_first <= 4
+        and dom_spread_second <= 4
+    )
+
+    if median_gap >= 20:
         frequency = "monthly"
         interval_days = 30
+    elif looks_semi_monthly:
+        frequency = "semi_monthly"
+        interval_days = 0  # not fixed-interval; use DOM pattern
+    elif median_gap <= 16:
+        frequency = "biweekly"
+        interval_days = 14
+    else:
+        frequency = "semi_monthly"
+        interval_days = 0
 
     # For semi_monthly: extract the two consistent days-of-month
     pay_days_of_month: List[int] = []
@@ -1116,6 +1273,8 @@ def run_forecast(
                 contribution_source=src["source"],
                 contribution_label=src["label"],
                 contribution_basis=src["basis"],
+                lifetime_monthly_contribution=src.get("lifetime_monthly"),
+                lifetime_contribution_basis=src.get("lifetime_basis", ""),
             )
         )
 
@@ -1382,6 +1541,8 @@ def run_joint_forecast(
                 contribution_source=src["source"],
                 contribution_label=src["label"],
                 contribution_basis=src["basis"],
+                lifetime_monthly_contribution=src.get("lifetime_monthly"),
+                lifetime_contribution_basis=src.get("lifetime_basis", ""),
             )
         )
 
