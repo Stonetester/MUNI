@@ -1,17 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { X, TrendingUp, TrendingDown, Minus } from 'lucide-react'
-import { ForecastPoint, Category } from '@/lib/types'
+import { X, TrendingUp, TrendingDown, Minus, PiggyBank } from 'lucide-react'
+import { ForecastPoint, AccountForecast, Category } from '@/lib/types'
 import { formatCurrency, formatMonth } from '@/lib/utils'
 import { getCategories } from '@/lib/api'
 
 interface MonthDetailModalProps {
   point: ForecastPoint
+  accountForecasts?: AccountForecast[]
   onClose: () => void
 }
 
-export default function MonthDetailModal({ point, onClose }: MonthDetailModalProps) {
+export default function MonthDetailModal({ point, accountForecasts, onClose }: MonthDetailModalProps) {
   const [categories, setCategories] = useState<Category[]>([])
 
   useEffect(() => {
@@ -141,6 +142,36 @@ export default function MonthDetailModal({ point, onClose }: MonthDetailModalPro
                   {missingAccounts.length} account{missingAccounts.length === 1 ? '' : 's'} had no balance recorded by this month and count as $0.
                 </p>
               )}
+            </div>
+          )}
+
+          {accountForecasts && accountForecasts.filter((a) => a.monthly_contribution > 0).length > 0 && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1.5">
+                <PiggyBank size={13} className="text-primary" />
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Contribution Estimates</p>
+              </div>
+              <div className="divide-y divide-white/10 rounded-xl border border-white/10 px-3">
+                {accountForecasts
+                  .filter((a) => a.monthly_contribution > 0)
+                  .sort((a, b) => b.monthly_contribution - a.monthly_contribution)
+                  .map((a) => (
+                    <div key={a.account_id} className="flex items-center justify-between gap-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-text-primary">{a.account_name}</p>
+                        <p className="text-[10px] text-muted capitalize">{a.account_type.replace(/_/g, ' ')}</p>
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold text-primary">+{formatCurrency(a.monthly_contribution)}/mo</p>
+                    </div>
+                  ))}
+                <div className="flex items-center justify-between gap-3 py-2.5">
+                  <p className="text-sm text-text-secondary">Total contributions</p>
+                  <p className="text-sm font-bold text-primary">
+                    +{formatCurrency(accountForecasts.filter((a) => a.monthly_contribution > 0).reduce((s, a) => s + a.monthly_contribution, 0))}/mo
+                  </p>
+                </div>
+              </div>
+              <p className="text-[10px] leading-4 text-muted">Projected monthly contributions based on your financial profile, statement history, and paycheck deductions. These flow into the account balances above.</p>
             </div>
           )}
 

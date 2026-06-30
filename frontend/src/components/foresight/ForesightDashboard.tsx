@@ -283,7 +283,7 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
         />
       )}
 
-      {selectedPoint && <MonthDetailModal point={selectedPoint} onClose={() => setSelectedPoint(null)} />}
+      {selectedPoint && <MonthDetailModal point={selectedPoint} accountForecasts={forecast.account_forecasts} onClose={() => setSelectedPoint(null)} />}
       {calculation && <CalculationDetailModal detail={calculation} onClose={() => setCalculation(null)} />}
     </div>
   )
