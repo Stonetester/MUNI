@@ -33,6 +33,7 @@ from app.routers import ai_report, notifications, coin
 from app.routers import home_buying
 from app.routers import statements
 from app.routers import savings_goal
+from app.routers import connected
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,22 @@ def _start_scheduler():
     """Start APScheduler background jobs."""
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
+        from app.config import settings as app_settings
         from app.services.google_sheets_sync import sync_all_users
         from app.services.email_service import send_weekly_digest_all, send_snapshot_reminders_all
+        from app.services.spend_digest import send_daily_spend_digest
 
         scheduler = BackgroundScheduler()
         scheduler.add_job(sync_all_users, "interval", minutes=30, id="sheets_sync")
+        # End-of-day card-spend digest → Slack (SimpleFIN feed; no-op until connected)
+        scheduler.add_job(
+            send_daily_spend_digest,
+            "cron",
+            hour=app_settings.SPEND_DIGEST_HOUR,
+            minute=app_settings.SPEND_DIGEST_MINUTE,
+            timezone=app_settings.DIGEST_TIMEZONE,
+            id="spend_digest",
+        )
         # Weekly digest — every Monday at 8:00 AM
         scheduler.add_job(
             send_weekly_digest_all,
@@ -81,7 +93,11 @@ def _start_scheduler():
             id="snapshot_reminder",
         )
         scheduler.start()
-        logger.info("Scheduler started: Sheets sync (30 min) + weekly digest (Mon 8am) + snapshot reminder (Sun 10am)")
+        logger.info(
+            "Scheduler started: Sheets sync (30 min) + weekly digest (Mon 8am) + snapshot reminder (Sun 10am) "
+            "+ spend digest (%02d:%02d %s)",
+            app_settings.SPEND_DIGEST_HOUR, app_settings.SPEND_DIGEST_MINUTE, app_settings.DIGEST_TIMEZONE,
+        )
         return scheduler
     except ImportError:
         logger.warning("APScheduler not installed — scheduled jobs disabled. Run: pip install apscheduler")
@@ -144,6 +160,7 @@ app.include_router(notifications.router, prefix=PREFIX)
 app.include_router(home_buying.router, prefix=PREFIX)
 app.include_router(statements.router, prefix=PREFIX)
 app.include_router(savings_goal.router, prefix=PREFIX)
+app.include_router(connected.router, prefix=PREFIX)
 
 # Serve Next.js static export if it exists
 FRONTEND_BUILD = os.path.join(

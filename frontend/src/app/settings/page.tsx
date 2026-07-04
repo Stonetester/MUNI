@@ -12,6 +12,7 @@ import { formatCurrency } from '@/lib/utils'
 import { Settings, User, Info, RefreshCw, CheckCircle, AlertCircle, ExternalLink, ArrowLeftRight, ChevronDown, ChevronUp, Home, Monitor, Trash2, FlaskConical } from 'lucide-react'
 import { switchProfiles, getAltUser } from '@/lib/auth'
 import { useDemoMode } from '@/lib/demoMode'
+import ConnectedCards from '@/components/settings/ConnectedCards'
 
 function fmtDate(s?: string | null) {
   if (!s) return 'Never'
@@ -259,6 +260,9 @@ export default function SettingsPage() {
             </div>
           </div>
         </Card>
+
+        {/* Connected cards + daily spend digest (SimpleFIN → Slack) */}
+        <ConnectedCards />
 
         {/* Data Management */}
         <Card title="Data Management">

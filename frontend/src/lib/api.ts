@@ -1008,3 +1008,91 @@ export async function inferSalaryFromPaystubs(): Promise<{
   const res = await api.get('/financial-profile/infer-salary')
   return res.data
 }
+
+// ── Connected cards/checking (SimpleFIN) + daily spend digest ──
+// Feed data is digest/preview only — never written into transactions.
+// Google Sheets stay the source of truth.
+
+export interface ConnectedAccountInfo {
+  id: number
+  name: string
+  nickname: string | null
+  org_name: string | null
+  user_id: number | null
+  owner: string | null // username, or null = joint
+  enabled: boolean
+  balance: string | null
+  balance_date: string | null
+  currency: string | null
+}
+
+export interface ConnectedStatus {
+  connected: boolean
+  claimed_at?: string
+  last_synced_at?: string | null
+  last_error?: string | null
+  digest_enabled?: boolean
+  last_digest_at?: string | null
+  digest_channel?: string
+  digest_time?: string
+  slack_configured?: boolean
+  accounts?: ConnectedAccountInfo[]
+}
+
+export interface SpendDigestTxn {
+  description: string
+  amount: number
+  account: string
+  pending: boolean
+  date: string
+  is_today: boolean
+}
+
+export interface SpendDigestPreview {
+  connected: boolean
+  groups: { label: string; spend: number; txns: SpendDigestTxn[] }[]
+  errors: string[]
+  total_spend: number
+  credits: SpendDigestTxn[]
+  preview_message?: string
+}
+
+export async function getConnectedStatus(): Promise<ConnectedStatus> {
+  if (isDemoModeActive()) return { connected: false }
+  const res = await api.get('/connected/status')
+  return res.data
+}
+
+export async function claimSimplefinToken(setupToken: string): Promise<ConnectedStatus> {
+  const res = await api.post('/connected/claim', { setup_token: setupToken })
+  return res.data
+}
+
+export async function updateConnectedAccount(
+  id: number,
+  data: { owner?: string; enabled?: boolean; nickname?: string },
+): Promise<{ ok: boolean }> {
+  const res = await api.patch(`/connected/accounts/${id}`, data)
+  return res.data
+}
+
+export async function updateDigestSettings(digestEnabled: boolean): Promise<{ ok: boolean; digest_enabled: boolean }> {
+  const res = await api.patch('/connected/settings', { digest_enabled: digestEnabled })
+  return res.data
+}
+
+export async function getConnectedToday(): Promise<SpendDigestPreview> {
+  if (isDemoModeActive()) return { connected: false, groups: [], errors: [], total_spend: 0, credits: [] }
+  const res = await api.get('/connected/today')
+  return res.data
+}
+
+export async function sendSpendDigestNow(): Promise<{ sent: boolean; message?: string }> {
+  const res = await api.post('/connected/send-digest')
+  return res.data
+}
+
+export async function disconnectSimplefin(): Promise<{ ok: boolean }> {
+  const res = await api.delete('/connected')
+  return res.data
+}

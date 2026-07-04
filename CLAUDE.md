@@ -63,6 +63,12 @@ Every `AccountForecast` row carries `contribution_source` / `contribution_label`
   detection, HYSA keyword auto-categorize ("hysa"/"everbank"/"high yield" → Savings Transfer).
   Katherine's sheet has its own column format.
 - **CSV/XLSX import** (`Transactions → Import`, `backend/import/` utility for bulk backfill).
+- **SimpleFIN card feed** (Settings → Connected Cards): read-only bank/card feed powering the
+  end-of-day Slack spend digest (`services/simplefin.py`, `services/spend_digest.py`,
+  `routers/connected.py`, migration 013). **Feed data is NEVER written into `transactions`** —
+  it exists so Keaton & Katherine see the day's purchases and hand-enter them into their sheets.
+  Digest posts to `SLACK_SPEND_CHANNEL` (#coin) at 20:45 America/New_York via `SLACK_BOT_TOKEN`
+  (same token as the athena-agents scripts; native `*bold*` mrkdwn, direct chat.postMessage).
 
 ## Key files
 
@@ -113,6 +119,10 @@ Every `AccountForecast` row carries `contribution_source` / `contribution_label`
   `suggested_goal_stretch` alternate. Don't swap them back.
 - Bulk re-upload of statements/paystubs is idempotent and enriching (2026-07-04) —
   never reintroduce a 409-reject on re-import; see `docs/DATA-IMPORT.md`.
+- Google Sheets stay the transaction source of truth (2026-07-04): the SimpleFIN feed is
+  digest/display only. Never build an auto-importer from it — hand-entry is intentional.
+- AI chat + reports always state the active profile and Solo/Joint mode in their prompts
+  (2026-07-04) — keep the ACTIVE PROFILE / Report scope lines when editing prompts.
 
 ## User financial context (verify against paystubs/statements before trusting)
 

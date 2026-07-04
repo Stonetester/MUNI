@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     # "can't see" data that is right there. Keep this comfortably above prompt size.
     OLLAMA_NUM_CTX: int = 24576
 
+    # ── Daily spend digest (SimpleFIN feed → Slack) ──
+    # Bot token shared with the athena-agents Slack automations (direct
+    # chat.postMessage path, native *bold* mrkdwn).
+    SLACK_BOT_TOKEN: str = ""
+    SLACK_SPEND_CHANNEL: str = "#coin"
+    SPEND_DIGEST_HOUR: int = 20  # 8:45 PM local — after the day's spending, before daily_brief at 21:00
+    SPEND_DIGEST_MINUTE: int = 45
+    DIGEST_TIMEZONE: str = "America/New_York"
+
     class Config:
         env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
         env_file_encoding = "utf-8"

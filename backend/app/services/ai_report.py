@@ -410,8 +410,22 @@ def generate_monthly_report(
     extra = _report_type_context(report_type, user, users, db)
     financial_context = context + ("\n" + extra if extra else "")
 
+    # Explicit scope statement so the model always knows WHOSE view this is —
+    # the requesting profile and the Solo/Joint toggle state.
+    if joint:
+        scope_desc = (
+            f"JOINT HOUSEHOLD mode — cover both partners and the combined totals. "
+            f"Requested from {user.username.capitalize()}'s profile."
+        )
+    else:
+        scope_desc = (
+            f"SOLO mode — this report is about {user.username.capitalize()} only; "
+            f"the data below is scoped to them. Do not speculate about the partner's numbers."
+        )
     system_prompt = (
         "You are a personal financial advisor generating a written report. "
+        f"Report scope: {scope_desc} Open the report by naming this scope in one short line "
+        "(e.g. 'Household report' or a solo report for the named person) so the reader knows whose view it is. "
         "Your tone is warm, encouraging, and honest — like a trusted advisor who knows this household well. "
         "You write in clear prose with markdown formatting (## headers, bullets, tables for comparisons). "
         "Be specific with numbers and cite them exactly from the data. Distinguish measured numbers from "
@@ -882,12 +896,15 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
     savings_rate = round((month_income - month_spending) / month_income * 100, 1) if month_income > 0 else 0
 
     partner_names = " & ".join(u.username.capitalize() for u in users)
-    focus = "the combined household" if joint else f"{user.username.capitalize()} (but household data is fully available)"
+    mode = "JOINT (household view)" if joint else f"SOLO ({user.username.capitalize()}'s view)"
     scope_line = (
-        f"You are the household finance tutor for {partner_names}. You are talking to "
-        f"{user.username.capitalize()}; the current view focus is {focus}. You have COMPLETE data for "
-        "BOTH partners AND the combined household below — per-person lines are labeled by owner. "
-        "Answer solo questions, partner questions, and joint/'our' questions directly from this data. "
+        f"You are the household finance tutor for {partner_names}. "
+        f"ACTIVE PROFILE: {user.username.capitalize()}. VIEW MODE: {mode}. "
+        f"If asked who you're talking to or which mode is on, state exactly that. "
+        f"Default your emphasis to {'the combined household' if joint else user.username.capitalize()}, "
+        "but you have COMPLETE data for BOTH partners AND the combined household below — "
+        "per-person lines are labeled by owner. Answer solo questions, partner questions, and "
+        "joint/'our' questions directly from this data. "
         "NEVER say you cannot see partner, joint, or household data — you can, it is all below."
     )
 
