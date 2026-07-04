@@ -48,6 +48,23 @@ class AccountForecast(BaseModel):
     # NOT used to project future balances. None when there's no statement data.
     lifetime_monthly_contribution: Optional[float] = None
     lifetime_contribution_basis: str = ""
+    # ── Full provenance so every projected balance is explainable in the UI ──
+    rate_source: str = "none"          # "measured_xirr" | "holdings_assumed" | "profile_apy" | "type_default" | "none"
+    rate_basis: str = ""               # plain-language: where the growth rate came from + the math
+    starting_balance_source: str = ""  # "latest statement snapshot (date)" vs "manually set account balance"
+    projection_formula: str = ""       # the exact month-step formula applied to this account
+
+
+class SpendingModelRow(BaseModel):
+    """One category of the projected-spending model — the exact inputs behind every
+    forecast month's income/expense lines, so 'predicted spending' is auditable."""
+    category: str
+    kind: str            # "income" | "expense" | "savings" (cash-rolled, not shown as spending) | "excluded"
+    avg3: float = 0.0    # trailing 3-month average (per month)
+    avg6: float = 0.0
+    avg12: float = 0.0
+    monthly: float = 0.0  # the number actually projected = avg3*0.5 + avg6*0.3 + avg12*0.2
+    note: str = ""
 
 
 class ForecastResponse(BaseModel):
@@ -59,3 +76,8 @@ class ForecastResponse(BaseModel):
     total_income: float
     total_expenses: float  # positive magnitude
     account_forecasts: List[AccountForecast] = []
+    # The spending/income model behind every projected month, with the blend math.
+    spending_model: List[SpendingModelRow] = []
+    spending_model_formula: str = "projected monthly amount = 3-mo avg × 50% + 6-mo avg × 30% + 12-mo avg × 20% (from real transactions)"
+    variance_pct: float = 0.0
+    variance_basis: str = ""

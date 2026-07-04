@@ -204,10 +204,18 @@ export const DEMO_FORECAST: ForecastResponse = {
   total_income: FORECAST_POINTS.reduce((s, p) => s + p.income, 0),
   total_expenses: FORECAST_POINTS.reduce((s, p) => s + p.expenses, 0),
   account_forecasts: [
-    { account_id: 1, account_name: 'Chase Checking', account_type: 'checking', starting_balance: 4820, ending_balance: 6400, monthly_balances: FORECAST_POINTS.map((_, i) => 4820 + i * 30), annual_return_pct: 0, monthly_contribution: 0, contribution_source: 'none', contribution_label: '', contribution_basis: '' },
-    { account_id: 3, account_name: 'EverBank HYSA', account_type: 'hysa', starting_balance: 18750, ending_balance: 36200, monthly_balances: FORECAST_POINTS.map((_, i) => 18750 + i * 300), annual_return_pct: 4.75, monthly_contribution: 500, contribution_source: 'measured', contribution_label: 'measured avg (6 mo)', contribution_basis: 'trailing average of real EverBank deposits from the last 6 months' },
-    { account_id: 4, account_name: 'Fidelity 401k', account_type: '401k', starting_balance: 52400, ending_balance: 98700, monthly_balances: FORECAST_POINTS.map((_, i) => 52400 + i * 780), annual_return_pct: 7.0, monthly_contribution: 650, contribution_source: 'statement_parsed', contribution_label: 'from statements (4 snapshots)', contribution_basis: 'avg of contributions across 4 uploaded statement snapshots' },
+    { account_id: 1, account_name: 'Chase Checking', account_type: 'checking', starting_balance: 4820, ending_balance: 6400, monthly_balances: FORECAST_POINTS.map((_, i) => 4820 + i * 30), annual_return_pct: 0, monthly_contribution: 0, contribution_source: 'none', contribution_label: '', contribution_basis: '', rate_source: 'none', rate_basis: '', starting_balance_source: 'manually set account balance (no statement snapshots yet)', projection_formula: 'share of the household cash pool' },
+    { account_id: 3, account_name: 'EverBank HYSA', account_type: 'hysa', starting_balance: 18750, ending_balance: 36200, monthly_balances: FORECAST_POINTS.map((_, i) => 18750 + i * 300), annual_return_pct: 4.75, monthly_contribution: 500, contribution_source: 'measured', contribution_label: 'measured avg (6 mo)', contribution_basis: 'trailing average of real EverBank deposits from the last 6 months', rate_source: 'profile_apy', rate_basis: 'the 4.75% APY set in the financial profile', starting_balance_source: 'latest statement snapshot (2026-06-30)', projection_formula: 'each month: balance × (1 + 4.75%/12) + $500.00 contribution' },
+    { account_id: 4, account_name: 'Fidelity 401k', account_type: '401k', starting_balance: 52400, ending_balance: 98700, monthly_balances: FORECAST_POINTS.map((_, i) => 52400 + i * 780), annual_return_pct: 7.0, monthly_contribution: 650, contribution_source: 'statement_parsed', contribution_label: 'from statements (4 snapshots)', contribution_basis: 'avg of contributions across 4 uploaded statement snapshots', rate_source: 'measured_xirr', rate_basis: 'your measured return 8.1%/yr (XIRR over 4 statements), blended toward the 10% market anchor = 7.0%/yr', starting_balance_source: 'latest statement snapshot (2026-06-30)', projection_formula: 'each month: balance × (1 + 7.00%/12) + $650.00 contribution' },
   ],
+  spending_model: [
+    { category: 'Rent', kind: 'expense', avg3: -1850, avg6: -1850, avg12: -1850, monthly: -1850, note: '' },
+    { category: 'Groceries', kind: 'expense', avg3: -340, avg6: -320, avg12: -310, monthly: -328, note: '' },
+    { category: 'Salary', kind: 'income', avg3: 7350, avg6: 7350, avg12: 7200, monthly: 7320, note: '' },
+  ],
+  spending_model_formula: 'projected monthly amount = 3-mo avg × 50% + 6-mo avg × 30% + 12-mo avg × 20% (from real transactions)',
+  variance_pct: 0.15,
+  variance_basis: 'cash range = ±15% of each month\'s projected spending',
 }
 
 // ── dashboard ────────────────────────────────────────────────────────────────

@@ -170,6 +170,22 @@ export interface AccountForecast {
   // Informational all-time statement average — shown for comparison, NOT projected.
   lifetime_monthly_contribution?: number | null
   lifetime_contribution_basis?: string
+  // Full provenance so every projected balance is explainable (tap-to-see-the-math)
+  rate_source: string              // "measured_xirr" | "holdings_assumed" | "profile_apy" | "type_default" | "none"
+  rate_basis: string               // where the growth rate came from + the math
+  starting_balance_source: string  // statement snapshot (dated) vs manual balance
+  projection_formula: string       // the exact month-step formula applied
+}
+
+// One category of the projected-spending model — the inputs behind predicted spending
+export interface SpendingModelRow {
+  category: string
+  kind: string   // "income" | "expense" | "savings" | "excluded"
+  avg3: number
+  avg6: number
+  avg12: number
+  monthly: number // = avg3*0.5 + avg6*0.3 + avg12*0.2
+  note: string
 }
 
 // Matches backend ForecastResponse schema exactly
@@ -182,6 +198,10 @@ export interface ForecastResponse {
   total_income: number
   total_expenses: number // positive spending magnitude
   account_forecasts: AccountForecast[]
+  spending_model: SpendingModelRow[]
+  spending_model_formula: string
+  variance_pct: number
+  variance_basis: string
 }
 
 export interface AccountBalanceSummary {
@@ -335,7 +355,10 @@ export interface SavingsGoalPerson {
   contributions: SavingsContributions
   contributions_history: ContributionHistoryMonth[]
   total_saved: number             // net_saved + contributions; display only, NOT the goal
-  suggested_goal: number
+  suggested_goal: number                  // MAIN suggestion: median of trailing months (typical month)
+  suggested_goal_basis: string            // plain-language math behind it
+  suggested_goal_stretch: number          // optimistic alternate: positive-months mean x 1.10
+  suggested_goal_stretch_basis: string    // plain-language math + why it differs
   user_goal: number | null
   goal: number
   using_suggestion: boolean
@@ -351,6 +374,7 @@ export interface SavingsGoalJoint {
   contributions_history: ContributionHistoryMonth[]
   total_saved: number
   suggested_goal: number
+  suggested_goal_stretch: number
   goal: number
   pct_of_goal: number
   on_track: boolean

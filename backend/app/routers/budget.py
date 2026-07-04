@@ -55,7 +55,10 @@ def get_budget_summary(
         .group_by(Transaction.category_id)
         .all()
     )
-    spend_map = {row.category_id: abs(row.total) for row in spending if row.total}
+    # Net spend per category = -(sum of signed amounts); expenses are negative so this is
+    # positive for real spending. Clamped at 0 so a refund-heavy month (net positive)
+    # reads as $0 spent — abs() used to flip it into phantom spending.
+    spend_map = {row.category_id: max(0.0, -row.total) for row in spending if row.total}
 
     result = []
     for cat in categories:
@@ -159,6 +162,10 @@ def get_spending_estimates(
             "category_name": cat.name,
             "avg_monthly": conservative,
             "months_sampled": months_sampled,
+            "basis": (
+                f"median of the {months_sampled} month{'s' if months_sampled != 1 else ''} with spending "
+                f"in the last 18 (${median:,.2f}) × 0.90 savings haircut"
+            ),
         })
 
     result.sort(key=lambda x: -x["avg_monthly"])
