@@ -328,6 +328,7 @@ def _statement_monthly_contribution(
     account_id: int,
     db: Session,
     recent_months: Optional[int] = RECENT_CONTRIBUTION_WINDOW_MONTHS,
+    field: str = "contributions",
 ) -> Optional[float]:
     """Measured monthly contribution pace from this account's statement snapshots.
 
@@ -340,6 +341,10 @@ def _statement_monthly_contribution(
     old high-contribution stretch doesn't inflate the future estimate. Pass None for the
     all-time (lifetime) figure used for informational display only.
 
+    `field`: which snapshot column to measure — "contributions" (total) or
+    "employer_contributions" (the employer-paid subset, used to measure an employer 401k
+    match that isn't printed on the paystub).
+
     Returns None when there isn't enough real contribution data in the window to measure
     (caller then falls back to the next source).
     """
@@ -351,7 +356,7 @@ def _statement_monthly_contribution(
     )
     if len(snaps) < 2:
         return None
-    recorded = [s for s in snaps if s.contributions is not None]
+    recorded = [s for s in snaps if getattr(s, field) is not None]
     if len(recorded) < 1:
         return None
 
@@ -377,7 +382,15 @@ def _statement_monthly_contribution(
     days = (last.date - window_start.date).days
     if days < 60:
         return None  # too short to derive a monthly pace
-    total = sum(float(s.contributions) for s in window_snaps if s.contributions)
+    # The boundary snapshot only anchors the window START — its own recorded
+    # contributions belong to the period BEFORE the window (same convention as the
+    # XIRR cash-flow construction, which never counts the first snapshot's
+    # contributions). Including it overstated the measured monthly pace.
+    total = sum(
+        float(getattr(s, field))
+        for s in window_snaps
+        if getattr(s, field) and s is not window_start
+    )
     if total <= 0:
         return None
     months = days / 30.44
@@ -428,12 +441,56 @@ def _paystub_monthly_401k(user_id: int, db: Session) -> Optional[Dict[str, float
         "monthly": 1.0,
     }.get(freq, 2.0)
 
+    # Split + gross figures so callers can tell whether the EMPLOYER match is actually
+    # printed on the stubs (Keaton: yes / Katherine: no) and estimate it when it isn't.
+    employer_median = statistics.median([s.employer_401k or 0.0 for s in stubs])
+    gross_median = statistics.median([s.gross_pay or 0.0 for s in stubs])
+
     return {
         "monthly": round(median_check * checks_per_month, 2),
         "n_stubs": len(stubs),
         "per_check": round(median_check, 2),
         "frequency": freq,
+        "employer_monthly": round(employer_median * checks_per_month, 2),
+        "gross_monthly": round(gross_median * checks_per_month, 2),
     }
+
+
+def _employer_401k_monthly_estimate(
+    acc: "Account", db: Session, paystub_gross_monthly: float
+) -> tuple[float, str]:
+    """Employer 401k match for accounts whose PAYSTUBS don't print it (Katherine).
+
+    Truth hierarchy, consistent with the savings-goal card:
+      1. MEASURED employer contributions from statement snapshots (Fidelity/JH itemize
+         the employer side; stored in balance_snapshots.employer_contributions).
+      2. employer_401k_percent × paystub-derived monthly salary.
+      3. employer_401k_percent × the profile's stored annual salary (stalest source).
+
+    Returns (monthly_amount, basis_note) — (0.0, "") when nothing is available.
+    """
+    measured = _statement_monthly_contribution(
+        acc.id, db, field="employer_contributions"
+    )
+    if measured is not None:
+        return measured, f"+ ${measured:,.2f}/mo employer match measured from statements"
+
+    from app.models.financial_profile import FinancialProfile
+    profile = (
+        db.query(FinancialProfile)
+        .filter(FinancialProfile.user_id == acc.user_id)
+        .first()
+    )
+    pct = (profile.employer_401k_percent or 0.0) if profile else 0.0
+    if pct <= 0:
+        return 0.0, ""
+    if paystub_gross_monthly > 0:
+        est = round(pct / 100.0 * paystub_gross_monthly, 2)
+        return est, f"+ {pct:g}% employer match × paystub salary (${est:,.2f}/mo)"
+    if profile and (profile.gross_annual_salary or 0) > 0:
+        est = round(pct / 100.0 * profile.gross_annual_salary / 12.0, 2)
+        return est, f"+ {pct:g}% employer match × profile salary (${est:,.2f}/mo)"
+    return 0.0, ""
 
 
 def _lifetime_statement_contribution(acc: "Account", db: Session) -> Dict[str, object]:
@@ -487,15 +544,23 @@ def _resolve_contribution_source(
         if acc.account_type == "401k":
             pay = _paystub_monthly_401k(acc.user_id, db)
             if pay is not None:
+                basis = (
+                    f"${pay['per_check']:,.2f}/paycheck (employee + employer) "
+                    f"× {pay['frequency'].replace('_', '-')} pay, from your "
+                    f"{pay['n_stubs']} most recent paystubs"
+                )
+                # Match the number built in _build_compound_account_config: when the
+                # stubs don't print the employer match, the estimate that was added on
+                # top must show up in the label too.
+                if pay["employer_monthly"] <= 0:
+                    er_est, er_basis = _employer_401k_monthly_estimate(acc, db, pay["gross_monthly"])
+                    if er_est > 0:
+                        basis += f"; {er_basis}"
                 return {
                     **base,
                     "source": "paystub",
                     "label": f"from recent paystubs ({pay['n_stubs']})",
-                    "basis": (
-                        f"${pay['per_check']:,.2f}/paycheck (employee + employer) "
-                        f"× {pay['frequency'].replace('_', '-')} pay, from your "
-                        f"{pay['n_stubs']} most recent paystubs"
-                    ),
+                    "basis": basis,
                 }
         # Recent statement window.
         recent = _statement_monthly_contribution(acc.id, db)
@@ -627,7 +692,14 @@ def _build_compound_account_config(
         if acc.account_type == "401k":
             pay = _paystub_monthly_401k(acc.user_id, db)
             if pay is not None:
-                monthly_contrib[acc.id] = pay["monthly"]
+                monthly = pay["monthly"]
+                # Paystubs that don't PRINT the employer match (Katherine's G&P stubs)
+                # measure it as $0 — add the estimate so her projection doesn't silently
+                # omit employer money the savings-goal card already counts.
+                if pay["employer_monthly"] <= 0:
+                    er_est, _ = _employer_401k_monthly_estimate(acc, db, pay["gross_monthly"])
+                    monthly += er_est
+                monthly_contrib[acc.id] = round(monthly, 2)
                 continue
         measured = _statement_monthly_contribution(acc.id, db)
         if measured is not None:

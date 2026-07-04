@@ -55,7 +55,9 @@ def create_balance_snapshot(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
-    # Dedup: if a snapshot already exists for this account + date, return it unchanged
+    # Dedup: if a snapshot already exists for this account + date, return it — but let a
+    # re-upload BACKFILL contribution data the original save didn't carry (pre-2026-07
+    # UI uploads stored NULL contributions, which drops the row from the XIRR window).
     existing = (
         db.query(BalanceSnapshot)
         .filter(
@@ -65,6 +67,16 @@ def create_balance_snapshot(
         .first()
     )
     if existing:
+        changed = False
+        if snapshot_in.contributions is not None and existing.contributions is None:
+            existing.contributions = snapshot_in.contributions
+            changed = True
+        if snapshot_in.employer_contributions is not None and existing.employer_contributions is None:
+            existing.employer_contributions = snapshot_in.employer_contributions
+            changed = True
+        if changed:
+            db.commit()
+            db.refresh(existing)
         return existing
 
     # Check if this snapshot is more recent than any existing one before adding

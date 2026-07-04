@@ -36,6 +36,8 @@ class ParsedStatement:
     personal_rate_of_return: Optional[float] = None  # stated PRR for the period, if any (Fidelity)
     period_contributions: Optional[float] = None     # money added THIS period (deposits + employer);
                                                      # netted out of returns so deposits aren't "gains"
+    employer_contributions: Optional[float] = None   # employer-paid subset of period_contributions,
+                                                     # when the statement itemizes it (Fidelity/JH)
 
     def __post_init__(self):
         if self.holdings is None:
@@ -78,6 +80,36 @@ def _sum_period_contributions(text: str, institution: str) -> Optional[float]:
         # Each line: '<LABEL> <period> <ytd> <inception>' -> period = first number.
         for label in (r"EE ELECTIVE DEFERRAL", r"SAFE HARBOR NON-ELECTIVE CONTR",
                       r"ER PROFIT SHARING", r"Transfers into the plan"):
+            m = re.search(label + r"\s+([\d,]+\.\d{2})", text)
+            if m:
+                total += _parse_money(m.group(1)) or 0.0
+                found = True
+
+    return round(total, 2) if found else None
+
+
+def _sum_employer_contributions(text: str, institution: str) -> Optional[float]:
+    """The EMPLOYER-paid portion of this period's contributions, when itemized.
+
+    Fidelity prints an explicit "Employer Contributions" line; John Hancock itemizes the
+    employer side as SAFE HARBOR / PROFIT SHARING lines. Schwab (IRA/brokerage) and
+    EverBank have no employer money — return None, not 0, so callers can tell "statement
+    doesn't itemize it" apart from "employer contributed nothing".
+
+    Storing this on the snapshot is what lets the app MEASURE the employer 401k match for
+    someone whose paystub doesn't print it, instead of trusting a manual profile percent.
+    """
+    total = 0.0
+    found = False
+
+    if institution == "Fidelity":
+        m = re.search(r"Employer Contributions\s+\$([\d,]+\.\d{2})", text)
+        if m:
+            total += _parse_money(m.group(1)) or 0.0
+            found = True
+
+    elif institution == "John Hancock":
+        for label in (r"SAFE HARBOR NON-ELECTIVE CONTR", r"ER PROFIT SHARING"):
             m = re.search(label + r"\s+([\d,]+\.\d{2})", text)
             if m:
                 total += _parse_money(m.group(1)) or 0.0
@@ -236,6 +268,7 @@ def _parse_john_hancock(text: str) -> Optional[ParsedStatement]:
         account_number_hint=None,
         holdings=_john_hancock_holdings(text),
         period_contributions=_sum_period_contributions(text, "John Hancock"),
+        employer_contributions=_sum_employer_contributions(text, "John Hancock"),
     )
 
 
@@ -471,6 +504,7 @@ def _parse_fidelity(text: str) -> Optional[ParsedStatement]:
         holdings=_fidelity_holdings(text),
         personal_rate_of_return=prr,
         period_contributions=_sum_period_contributions(text, "Fidelity"),
+        employer_contributions=_sum_employer_contributions(text, "Fidelity"),
     )
 
 

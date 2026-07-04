@@ -27,6 +27,7 @@ interface QueueItem {
   selectedAccountId?: number
   editedDate?: string
   editedBalance?: string
+  editedContributions?: string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -205,6 +206,25 @@ function ReviewCard({
             )}
           </div>
 
+          {/* Period contributions — keeps this snapshot inside the measured-return (XIRR) window */}
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-text-secondary w-24 shrink-0">Contributions</label>
+            <Input
+              type="number"
+              step="0.01"
+              value={item.editedContributions ?? (item.parsed.period_contributions != null ? String(item.parsed.period_contributions) : '')}
+              onChange={e => onChange(item.id, { editedContributions: e.target.value })}
+              disabled={isDone || isWorking}
+              placeholder="added this period (deposits + employer)"
+              className="flex-1 py-1.5 text-sm"
+            />
+            {item.parsed.employer_contributions != null && (
+              <span className="text-xs text-text-secondary shrink-0">
+                incl. {fmt(item.parsed.employer_contributions)} employer
+              </span>
+            )}
+          </div>
+
           <div className="pt-1">
             <Button
               onClick={() => onSave(item.id)}
@@ -335,12 +355,21 @@ export default function StatementsPage() {
       return
     }
 
+    // Contributions: user-edited value wins, else the parsed figure. Sending them is
+    // what keeps this snapshot inside the XIRR return window.
+    const contribRaw = item.editedContributions ?? (
+      item.parsed.period_contributions != null ? String(item.parsed.period_contributions) : ''
+    )
+    const contributions = contribRaw !== '' && !isNaN(parseFloat(contribRaw)) ? parseFloat(contribRaw) : null
+
     setQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'saving' } : q))
     try {
       await createBalanceSnapshot({
         account_id: item.selectedAccountId!,
         date: dateStr,
         balance,
+        contributions,
+        employer_contributions: item.parsed.employer_contributions,
         notes: `Imported from ${item.parsed.institution} statement`,
       })
       setQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'saved' } : q))

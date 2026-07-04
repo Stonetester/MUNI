@@ -26,6 +26,11 @@ class ParsedStatementOut(BaseModel):
     statement_date: Optional[str]   # ISO date string or None
     ending_balance: Optional[float]
     account_number_hint: Optional[str]
+    # Period contributions MUST flow back to the client so the save step can persist
+    # them on the snapshot — a NULL-contributions snapshot falls out of the XIRR
+    # return window and the measured return silently stops updating.
+    period_contributions: Optional[float] = None
+    employer_contributions: Optional[float] = None
 
 
 @router.post("/parse", response_model=ParsedStatementOut)
@@ -70,6 +75,8 @@ def _to_out(result) -> "ParsedStatementFullOut":
         statement_date=result.statement_date.isoformat() if result.statement_date else None,
         ending_balance=result.ending_balance,
         account_number_hint=result.account_number_hint,
+        period_contributions=result.period_contributions,
+        employer_contributions=result.employer_contributions,
         holdings=[
             HoldingOut(ticker=h.ticker, fund_name=h.fund_name, value=h.value, weight_percent=h.weight_percent)
             for h in (result.holdings or [])
@@ -108,6 +115,8 @@ class ApplyStatementIn(BaseModel):
     account_id: int
     statement_date: str            # ISO date
     ending_balance: Optional[float] = None
+    contributions: Optional[float] = None            # period contributions (deposits + employer)
+    employer_contributions: Optional[float] = None   # employer-paid subset, when itemized
     holdings: list[ApplyHoldingIn] = []
 
 
@@ -127,4 +136,6 @@ def apply_statement(
     return apply_parsed_statement(
         db, current_user, data.account_id, data.statement_date,
         data.ending_balance, [h.model_dump() for h in data.holdings],
+        contributions=data.contributions,
+        employer_contributions=data.employer_contributions,
     )

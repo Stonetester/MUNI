@@ -30,6 +30,52 @@ class HomeBuyingGoalSchema(BaseModel):
         from_attributes = True
 
 
+def _measured_defaults(db: Session) -> dict:
+    """Seed a brand-new default profile from MEASURED data instead of the hardcoded
+    schema constants (which froze March-2026 salaries): paystub-derived incomes, the
+    real HYSA balance as current savings, and the measured HYSA deposit pace as the
+    monthly contribution. Anything unmeasurable falls back to the model default."""
+    from app.models.account import Account
+    from app.models.paystub import Paystub
+    from app.models.user import User as UserModel
+    from app.services.forecasting import _infer_pay_schedule
+    import statistics
+
+    out: dict = {}
+    try:
+        users = db.query(UserModel).order_by(UserModel.id).all()
+        ppy = {"weekly": 52, "biweekly": 26, "bi_weekly": 26, "semi_monthly": 24, "monthly": 12}
+        for u in users:
+            uname = (u.username or "").lower()
+            field = "keaton_income" if "keaton" in uname else "katherine_income" if "katherine" in uname else None
+            if not field:
+                continue
+            stubs = (
+                db.query(Paystub)
+                .filter(Paystub.user_id == u.id, Paystub.pay_type != "bonus", Paystub.gross_pay.isnot(None))
+                .order_by(Paystub.pay_date.desc())
+                .limit(6)
+                .all()
+            )
+            sched = _infer_pay_schedule(u.id, db)
+            if stubs and sched:
+                gross = statistics.median([s.gross_pay for s in stubs])
+                out[field] = round(gross * ppy.get(sched["frequency"], 24), 2)
+
+        hysa = db.query(Account).filter(Account.account_type == "hysa").first()
+        if hysa and (hysa.balance or 0) > 0:
+            out["current_savings"] = round(hysa.balance, 2)
+
+        from app.services.hysa_contributions import measured_hysa_contributions
+        measured = measured_hysa_contributions(db, [u.id for u in users])
+        if measured["has_data"] and measured["recent_avg_monthly"] > 0:
+            out["monthly_savings_contribution"] = measured["recent_avg_monthly"]
+    except Exception:
+        # Seeding is best-effort — a brand-new empty DB must still get a default profile.
+        pass
+    return out
+
+
 def _get_or_create_default(db: Session) -> HomeBuyingGoal:
     """Return the active profile, or create a default one if none exist."""
     # Prefer active profile
@@ -43,8 +89,8 @@ def _get_or_create_default(db: Session) -> HomeBuyingGoal:
         db.commit()
         db.refresh(goal)
         return goal
-    # Create initial default
-    goal = HomeBuyingGoal(name="Default", is_active=True)
+    # Create initial default, seeded from measured data where available
+    goal = HomeBuyingGoal(name="Default", is_active=True, **_measured_defaults(db))
     db.add(goal)
     db.commit()
     db.refresh(goal)
@@ -99,7 +145,9 @@ def update_goal(
     goal = db.query(HomeBuyingGoal).filter(HomeBuyingGoal.id == goal_id).first()
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
-    for k, v in data.model_dump(exclude={"id"}).items():
+    # exclude_unset: fields the caller didn't send must keep their stored values —
+    # dumping schema defaults here silently reset them to hardcoded constants.
+    for k, v in data.model_dump(exclude={"id"}, exclude_unset=True).items():
         setattr(goal, k, v)
     db.commit()
     db.refresh(goal)
@@ -115,7 +163,7 @@ def update_active_goal(
     current_user: User = Depends(get_current_user),
 ):
     goal = _get_or_create_default(db)
-    for k, v in data.model_dump(exclude={"id"}).items():
+    for k, v in data.model_dump(exclude={"id"}, exclude_unset=True).items():
         setattr(goal, k, v)
     db.commit()
     db.refresh(goal)

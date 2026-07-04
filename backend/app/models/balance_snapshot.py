@@ -14,6 +14,7 @@ class BalanceSnapshot(Base):
     date = Column(Date, nullable=False, index=True)
     balance = Column(Float, nullable=False)
     contributions = Column(Float, nullable=True)  # money added during this statement's period
+    employer_contributions = Column(Float, nullable=True)  # employer-paid portion of contributions (subset)
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
