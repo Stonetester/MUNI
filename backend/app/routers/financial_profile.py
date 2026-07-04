@@ -174,24 +174,38 @@ def infer_salary_from_paystubs(
     if not stubs:
         return {"found": 0, "avg_net_per_paycheck": None, "avg_gross_per_paycheck": None, "pay_frequency": None}
 
-    avg_net = round(sum(s.net_pay for s in stubs) / len(stubs), 2)
-    avg_gross = round(sum(s.gross_pay for s in stubs if s.gross_pay) / len(stubs), 2) if any(s.gross_pay for s in stubs) else None
+    # Average only over stubs that carry the value — a NULL row must neither crash the
+    # endpoint nor silently drag the average down by inflating the denominator.
+    nets = [s.net_pay for s in stubs if s.net_pay]
+    grosses = [s.gross_pay for s in stubs if s.gross_pay]
+    avg_net = round(sum(nets) / len(nets), 2) if nets else None
+    avg_gross = round(sum(grosses) / len(grosses), 2) if grosses else None
 
-    # Detect pay frequency from the most recent stub
+    # Detect pay frequency from PAY-DATE GAPS + day-of-month clustering across stubs
+    # (the same inference the forecast uses). Period LENGTH can't tell semi-monthly
+    # (13-16 day periods, 24 pays/yr) from bi-weekly (14 days, 26 pays/yr) — that
+    # ambiguity used to overstate annual salary by ~8% for semi-monthly earners.
     latest = stubs[0]
-    pay_frequency = "semi_monthly"  # default
-    if latest.period_start and latest.period_end:
-        days = (latest.period_end - latest.period_start).days
-        if days <= 8:
-            pay_frequency = "weekly"
-        elif days <= 16:
-            pay_frequency = "bi_weekly"
-        elif days <= 17:
-            pay_frequency = "semi_monthly"
-        else:
-            pay_frequency = "monthly"
+    from app.services.forecasting import _infer_pay_schedule
+    schedule = _infer_pay_schedule(current_user.id, db)
+    if schedule:
+        pay_frequency = schedule["frequency"]  # "semi_monthly" | "biweekly" | "monthly"
+    else:
+        # Single stub — fall back to period length, biased toward semi-monthly in the
+        # ambiguous 13-17 day zone since it can't be distinguished from one period.
+        pay_frequency = "semi_monthly"
+        if latest.period_start and latest.period_end:
+            days = (latest.period_end - latest.period_start).days
+            if days <= 8:
+                pay_frequency = "weekly"
+            elif days <= 17:
+                pay_frequency = "semi_monthly"
+            else:
+                pay_frequency = "monthly"
 
-    periods_per_year = {"weekly": 52, "bi_weekly": 26, "semi_monthly": 24, "monthly": 12}.get(pay_frequency, 24)
+    periods_per_year = {
+        "weekly": 52, "bi_weekly": 26, "biweekly": 26, "semi_monthly": 24, "monthly": 12,
+    }.get(pay_frequency, 24)
     gross_annual = round(avg_gross * periods_per_year, 2) if avg_gross else None
 
     return {
@@ -263,20 +277,31 @@ def delete_loan(loan_id: int, current_user: User = Depends(get_current_user), db
 
 # ── Investment Holdings ────────────────────────────────────────────────────────
 
-@router.get("/holdings", response_model=List[HoldingOut])
-def list_holdings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def _user_account_ids(current_user: User, db: Session) -> list[int]:
+    """Accounts this user owns or co-owns (joint) — the scope for holding writes too,
+    not just reads; a holding must never be attached to or edited through an account
+    the requester can't see."""
     from app.models.account import Account
     from sqlalchemy import or_
-    user_account_ids = [
+    return [
         a.id for a in db.query(Account).filter(
             or_(Account.user_id == current_user.id, Account.joint_user_id == current_user.id)
         ).all()
     ]
-    return db.query(InvestmentHolding).filter(InvestmentHolding.account_id.in_(user_account_ids)).all()
+
+
+@router.get("/holdings", response_model=List[HoldingOut])
+def list_holdings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(InvestmentHolding).filter(
+        InvestmentHolding.account_id.in_(_user_account_ids(current_user, db))
+    ).all()
 
 
 @router.post("/holdings", response_model=HoldingOut, status_code=201)
 def create_holding(data: HoldingIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+    if data.account_id not in _user_account_ids(current_user, db):
+        raise HTTPException(404, "Account not found")
     holding = InvestmentHolding(**data.model_dump())
     db.add(holding)
     db.commit()
@@ -286,11 +311,18 @@ def create_holding(data: HoldingIn, current_user: User = Depends(get_current_use
 
 @router.put("/holdings/{holding_id}", response_model=HoldingOut)
 def update_holding(holding_id: int, data: HoldingIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    h = db.query(InvestmentHolding).filter(InvestmentHolding.id == holding_id).first()
+    from fastapi import HTTPException
+    scope = _user_account_ids(current_user, db)
+    h = db.query(InvestmentHolding).filter(
+        InvestmentHolding.id == holding_id,
+        InvestmentHolding.account_id.in_(scope),
+    ).first()
     if not h:
-        from fastapi import HTTPException
         raise HTTPException(404, "Holding not found")
-    for k, v in data.model_dump(exclude_unset=True).items():
+    payload = data.model_dump(exclude_unset=True)
+    if payload.get("account_id") is not None and payload["account_id"] not in scope:
+        raise HTTPException(404, "Account not found")
+    for k, v in payload.items():
         setattr(h, k, v)
     h.updated_at = datetime.utcnow()
     db.commit()
@@ -300,7 +332,10 @@ def update_holding(holding_id: int, data: HoldingIn, current_user: User = Depend
 
 @router.delete("/holdings/{holding_id}", status_code=204)
 def delete_holding(holding_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    h = db.query(InvestmentHolding).filter(InvestmentHolding.id == holding_id).first()
+    h = db.query(InvestmentHolding).filter(
+        InvestmentHolding.id == holding_id,
+        InvestmentHolding.account_id.in_(_user_account_ids(current_user, db)),
+    ).first()
     if h:
         db.delete(h)
         db.commit()
