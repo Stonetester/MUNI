@@ -391,18 +391,32 @@ def save_paystub(
 ):
     """Save a confirmed (reviewed) paystub and auto-create income transactions.
 
-    Duplicate handling (one paystub per pay_date per user):
-      - overwrite=False (default): if a stub for this pay_date exists, return 409
+    Duplicate handling (one paystub per pay_date + pay_type per user):
+      - overwrite=False (default): if a matching stub exists, return 409
         so the caller can decide. Preserves the original safety against blind dupes.
       - overwrite=True: update the existing stub in place with the new parsed data
         and regenerate its linked income transactions. This is what lets a user
-        re-submit a paystub through the app to refresh stale/incorrect data
-        (e.g. a parser fix) without manually deleting first.
+        bulk re-upload paystubs to refresh stale/incomplete data (e.g. a parser
+        that now captures fields it used to miss) without deleting first.
+
+    Matching prefers (pay_date, pay_type) so a bonus check and a regular check
+    on the same pay date are two different stubs and can never overwrite each
+    other. A date-only fallback still catches the same physical check when a
+    parser update reclassifies its pay_type — but only when net_pay matches,
+    so it really is the same check.
     """
     existing = db.query(Paystub).filter(
         Paystub.user_id == current_user.id,
         Paystub.pay_date == data.pay_date,
+        Paystub.pay_type == (data.pay_type or "regular"),
     ).first()
+    if existing is None:
+        candidate = db.query(Paystub).filter(
+            Paystub.user_id == current_user.id,
+            Paystub.pay_date == data.pay_date,
+        ).first()
+        if candidate is not None and abs((candidate.net_pay or 0.0) - (data.net_pay or 0.0)) < 0.01:
+            existing = candidate  # same check, reclassified pay_type
 
     if existing and not overwrite:
         raise HTTPException(

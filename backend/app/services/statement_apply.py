@@ -42,22 +42,14 @@ def apply_parsed_statement(
         raise HTTPException(404, "Account not found")
 
     stmt_date = _parse_iso(statement_date)
-    result = {"account_id": account_id, "snapshot": None,
+    result = {"account_id": account_id, "snapshot": None, "snapshot_action": None,
               "holdings_upserted": 0, "holdings_created": 0, "holdings_removed": 0}
 
-    # Reject re-import of a statement we already have data for.
-    if ending_balance is not None or holdings:
-        existing_snap = (
-            db.query(BalanceSnapshot)
-            .filter(BalanceSnapshot.account_id == account_id, BalanceSnapshot.date == stmt_date)
-            .first()
-        )
-        if existing_snap is not None:
-            raise HTTPException(
-                409,
-                f"A statement for account {account_id} on {stmt_date.isoformat()} already exists "
-                f"(balance ${existing_snap.balance:,.2f}). Delete it first if you want to replace it.",
-            )
+    # Re-importing a statement we already have is an ENRICH, not an error: the
+    # re-parse refreshes the balance, backfills contributions/employer split that
+    # older imports didn't carry, and (for the latest statement) reconciles
+    # holdings. This is what makes a bulk "re-upload everything" safe — nothing
+    # is duplicated (dedup is by account+date) and better-parsed data wins.
 
     # A statement is a full snapshot of what's held. Only let it rewrite the holdings
     # set if it is the LATEST statement for this account — otherwise importing an old
@@ -80,17 +72,20 @@ def apply_parsed_statement(
         )
         if existing:
             existing.balance = ending_balance
+            # Fresh parse wins when it carries a value; a None never erases data.
             if contributions is not None:
                 existing.contributions = contributions
             if employer_contributions is not None:
                 existing.employer_contributions = employer_contributions
             snap = existing
+            result["snapshot_action"] = "updated"
         else:
             snap = BalanceSnapshot(account_id=account_id, date=stmt_date, balance=ending_balance,
                                    contributions=contributions,
                                    employer_contributions=employer_contributions,
                                    notes="from statement import")
             db.add(snap)
+            result["snapshot_action"] = "created"
         # Keep Account.balance synced to the most recent snapshot.
         most_recent = (
             db.query(BalanceSnapshot)
