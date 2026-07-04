@@ -38,6 +38,7 @@ class TransactionOut(TransactionBase):
     id: int
     user_id: int
     import_source: Optional[str] = None
+    user_modified: bool = False
     created_at: datetime
     category_name: Optional[str] = None
     account_name: Optional[str] = None

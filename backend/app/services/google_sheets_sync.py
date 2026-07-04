@@ -469,10 +469,18 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
     existing_hashes = _load_existing_hashes(user_id, db)
     # Load existing sheets transactions for upsert (date+desc key → Transaction obj)
     sheets_by_key = _load_sheets_transactions(user_id, db)
+    # Tombstones: sheet rows the user deleted (or re-identified) through the app.
+    # Re-importing them would silently undo the user's action — skip them forever.
+    from app.models.import_tombstone import ImportTombstone
+
+    tombstones = db.query(ImportTombstone).filter(ImportTombstone.user_id == user_id).all()
+    tombstone_hashes = {t.dedup_hash for t in tombstones}
+    tombstone_keys = {t.desc_key for t in tombstones}
 
     imported = 0
     updated = 0
     skipped = 0
+    protected = 0
     errors = []
     duplicates: list[dict] = []
 
@@ -591,6 +599,12 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                     desc_key = _dedup_desc_key(txn_date, raw_desc)
                     if desc_key in sheets_by_key:
                         existing_txn = sheets_by_key[desc_key]
+                        # User edited this row in the app — the app version wins;
+                        # never clobber its amount/category back to sheet values.
+                        if getattr(existing_txn, "user_modified", False):
+                            protected += 1
+                            skipped += 1
+                            continue
                         changed = False
                         if existing_txn.amount != amount:
                             old_hash = _dedup_hash(existing_txn.date, existing_txn.description, existing_txn.amount)
@@ -616,8 +630,15 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
                             skipped += 1
                         continue
 
-                    # Dedup check — same hash used for CSV imports so no cross-source dupes
+                    # Tombstoned: the user deleted (or re-identified) this row in the
+                    # app — re-importing it would undo their action. Skip silently.
                     h = _dedup_hash(txn_date, raw_desc, amount)
+                    if h in tombstone_hashes or desc_key in tombstone_keys:
+                        protected += 1
+                        skipped += 1
+                        continue
+
+                    # Dedup check — same hash used for CSV imports so no cross-source dupes
                     if h in existing_hashes:
                         duplicates.append({
                             "date": str(txn_date),
@@ -654,7 +675,14 @@ def sync_user_sheet(user_id: int, sheet_id: str, db: Session) -> dict:
             errors.append(f"Tab '{tab}': {tab_err}")
             db.rollback()
 
-    return {"imported": imported, "updated": updated, "skipped": skipped, "errors": errors, "duplicates": duplicates}
+    return {
+        "imported": imported,
+        "updated": updated,
+        "skipped": skipped,
+        "protected": protected,  # rows left alone because the user edited/deleted them in the app
+        "errors": errors,
+        "duplicates": duplicates,
+    }
 
 
 def sync_all_users() -> None:

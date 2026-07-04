@@ -61,7 +61,11 @@ Every `AccountForecast` row carries `contribution_source` / `contribution_label`
   statement backfills NULL contributions on the existing snapshot).
 - **Google Sheets** (Settings): APScheduler 30-min sync, SHA-256 dedup, upsert, income-row
   detection, HYSA keyword auto-categorize ("hysa"/"everbank"/"high yield" → Savings Transfer).
-  Katherine's sheet has its own column format.
+  Katherine's sheet has its own column format. **App edits/deletes stick (2026-07-04):**
+  deleting a sheets row writes an `import_tombstones` row (sync skips it forever); editing one
+  sets `transactions.user_modified` (sync upsert leaves it alone) and identity edits tombstone
+  the original. Bulk "Clear Google Sheets transactions" wipes tombstones = clean resync.
+  Paystub-managed rows (`paystub:N`) reject direct edit/delete with a 409 → edit the paystub.
 - **CSV/XLSX import** (`Transactions → Import`, `backend/import/` utility for bulk backfill).
 - **SimpleFIN card feed** (Settings → Connected Cards): read-only bank/card feed powering the
   end-of-day Slack spend digest (`services/simplefin.py`, `services/spend_digest.py`,
@@ -123,6 +127,9 @@ Every `AccountForecast` row carries `contribution_source` / `contribution_label`
   digest/display only. Never build an auto-importer from it — hand-entry is intentional.
 - AI chat + reports always state the active profile and Solo/Joint mode in their prompts
   (2026-07-04) — keep the ACTIVE PROFILE / Report scope lines when editing prompts.
+- App-side transaction edits/deletes WIN over the Sheets sync (2026-07-04): tombstones +
+  `user_modified` (migration 015). Never remove those checks from `sync_user_sheet` — without
+  them the sync silently resurrects deletes and clobbers edits within 30 minutes.
 
 ## User financial context (verify against paystubs/statements before trusting)
 

@@ -56,8 +56,9 @@ export default function TransactionList({ transactions, onEdit, onDeleted, showO
     try {
       await deleteTransaction(id)
       onDeleted()
-    } catch {
-      alert('Failed to delete transaction.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(msg || 'Failed to delete transaction.')
     }
   }
 

@@ -35,6 +35,44 @@ def get_transaction_or_404(txn_id: int, user: User, db: Session) -> Transaction:
     return txn
 
 
+def _is_sheets_sourced(txn: Transaction) -> bool:
+    # NULL import_source = legacy pre-tagging sheets rows (paystub/CSV rows tag themselves).
+    return txn.import_source is None or txn.import_source.startswith("sheets:")
+
+
+def _reject_if_paystub_managed(txn: Transaction) -> None:
+    """Paystub-created income rows are owned by their paystub — the paystub's
+    update/delete recreates/removes them, which would silently undo any direct
+    edit here. Point the user at the paystub instead of desyncing."""
+    if txn.import_source and txn.import_source.startswith("paystub:"):
+        paystub_id = txn.import_source.split(":", 1)[1]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This transaction is managed by paystub #{paystub_id}. "
+                "Edit or delete that paystub on the Paystubs page instead — "
+                "direct changes here would be overwritten the next time the paystub is touched."
+            ),
+        )
+
+
+def _tombstone(txn: Transaction, db: Session, reason: str) -> None:
+    """Remember a deleted/renamed imported row so the 30-min Sheets sync can't
+    re-import it from the sheet (which would silently undo the user's action)."""
+    from app.models.import_tombstone import ImportTombstone
+    from app.services.google_sheets_sync import _dedup_desc_key, _dedup_hash
+
+    db.add(ImportTombstone(
+        user_id=txn.user_id,
+        dedup_hash=_dedup_hash(txn.date, txn.description, txn.amount),
+        desc_key=_dedup_desc_key(txn.date, txn.description),
+        date=txn.date,
+        description=txn.description,
+        amount=txn.amount,
+        reason=reason,
+    ))
+
+
 @router.get("", response_model=TransactionPage)
 def list_transactions(
     account_id: Optional[int] = None,
@@ -96,8 +134,27 @@ def update_transaction(
     db: Session = Depends(get_db),
 ):
     txn = get_transaction_or_404(txn_id, current_user, db)
-    for field, value in txn_in.model_dump(exclude_unset=True).items():
+    _reject_if_paystub_managed(txn)
+
+    changes = txn_in.model_dump(exclude_unset=True)
+    sheets_row = _is_sheets_sourced(txn)
+    # If the row's identity (date/description/amount) changes, the original sheet
+    # row would no longer match anything in the DB and the sync would re-import it
+    # as a duplicate — tombstone the ORIGINAL identity before applying the edit.
+    identity_changed = sheets_row and any(
+        field in changes and changes[field] != getattr(txn, field)
+        for field in ("date", "description", "amount")
+    )
+    anything_changed = any(changes.get(f) != getattr(txn, f) for f in changes)
+    if identity_changed:
+        _tombstone(txn, db, reason="edited")
+
+    for field, value in changes.items():
         setattr(txn, field, value)
+    # App edits take ownership: the Sheets sync will no longer clobber this row's
+    # amount or category back to the sheet values.
+    if sheets_row and anything_changed:
+        txn.user_modified = True
     db.commit()
     db.refresh(txn)
     return txn
@@ -112,7 +169,12 @@ def delete_all_sheets_transactions(
     Matches rows tagged 'sheets:*' plus NULL import_source rows (legacy rows
     synced before tagging was introduced — paystubs tag themselves so NULL
     rows are safely assumed to be sheets imports).
+
+    Bulk clear = "start over and resync": it also wipes the user's import
+    tombstones so the next sync re-imports the whole sheet cleanly.
     """
+    from app.models.import_tombstone import ImportTombstone
+
     result = (
         db.query(Transaction)
         .filter(
@@ -124,6 +186,9 @@ def delete_all_sheets_transactions(
         )
         .delete(synchronize_session=False)
     )
+    db.query(ImportTombstone).filter(ImportTombstone.user_id == current_user.id).delete(
+        synchronize_session=False
+    )
     db.commit()
     return {"deleted": result}
 
@@ -133,11 +198,17 @@ def delete_all_transactions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete ALL transactions for the current user (sheets + manual + CSV)."""
+    """Delete ALL transactions for the current user (sheets + manual + CSV).
+    Also wipes import tombstones — a full clear means a clean slate."""
+    from app.models.import_tombstone import ImportTombstone
+
     result = (
         db.query(Transaction)
         .filter(Transaction.user_id == current_user.id)
         .delete(synchronize_session=False)
+    )
+    db.query(ImportTombstone).filter(ImportTombstone.user_id == current_user.id).delete(
+        synchronize_session=False
     )
     db.commit()
     return {"deleted": result}
@@ -150,6 +221,9 @@ def delete_transaction(
     db: Session = Depends(get_db),
 ):
     txn = get_transaction_or_404(txn_id, current_user, db)
+    _reject_if_paystub_managed(txn)
+    if _is_sheets_sourced(txn):
+        _tombstone(txn, db, reason="deleted")
     db.delete(txn)
     db.commit()
 

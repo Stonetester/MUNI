@@ -57,6 +57,7 @@ export interface Transaction {
   payment_method?: string
   is_verified: boolean
   import_source?: string     // e.g. "paystub:42", "sheets:JAN2025", "csv"
+  user_modified?: boolean    // edited in-app: Sheets sync leaves this row alone
   scenario_id?: number
   owner?: string
   created_at: string

@@ -24,6 +24,9 @@ class Transaction(Base):
     payment_method = Column(String, nullable=True)  # debit_card/credit_card/transfer/other
     is_verified = Column(Boolean, default=False, nullable=False)
     import_source = Column(String, nullable=True)
+    # True once the user edits an imported row through the app — the Sheets
+    # sync then leaves it alone (no amount/category clobber on upsert).
+    user_modified = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships

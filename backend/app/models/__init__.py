@@ -16,6 +16,7 @@ from app.models.home_buying import HomeBuyingGoal
 from app.models.event_line_item import EventLineItem
 from app.models.chat_session import ChatSession, ChatMessageRow
 from app.models.connected_account import SimplefinConnection, ConnectedAccount
+from app.models.import_tombstone import ImportTombstone
 
 __all__ = [
     "User",
@@ -38,4 +39,5 @@ __all__ = [
     "ChatMessageRow",
     "SimplefinConnection",
     "ConnectedAccount",
+    "ImportTombstone",
 ]

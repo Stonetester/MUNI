@@ -96,8 +96,9 @@ export default function TransactionForm({
         await createTransaction(payload)
       }
       onSuccess()
-    } catch {
-      setError('Failed to save transaction. Please try again.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg || 'Failed to save transaction. Please try again.')
     } finally {
       setLoading(false)
     }
