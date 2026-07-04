@@ -23,11 +23,12 @@ from app.models.account import Account
 from app.models.category import Category
 from app.models.transaction import Transaction
 from app.models.user import User
+from app.config import settings
 from app.services.transaction_math import counts_as_expense
 
 ASSET_TYPES = {"checking", "savings", "hysa", "brokerage", "ira", "401k", "hsa", "other"}
 LIABILITY_TYPES = {"credit_card", "student_loan", "car_loan", "mortgage"}
-COIN_MODEL = "deepseek-r1:8b"
+COIN_MODEL = settings.OLLAMA_CHAT_MODEL
 
 MONTH_NAMES = {
     "january": 1, "february": 2, "march": 3, "april": 4,
