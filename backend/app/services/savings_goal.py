@@ -128,10 +128,11 @@ def _k401_monthly(
       - EMPLOYEE: recent paystubs (deduction_401k × pay frequency) when available, else
         the profile's employee_401k_per_paycheck × frequency.
       - EMPLOYER: recent paystubs (employer_401k × frequency) when the match is printed on
-        the stub (Keaton). When it's NOT on the stub (Katherine), fall back to
-        employer_401k_percent × SALARY, where salary is derived from paystubs (gross ×
-        frequency) and only falls back to the stale profile gross_annual_salary if there
-        are no paystubs.
+        the stub (Keaton). When it's NOT on the stub (Katherine), prefer the MEASURED
+        employer contributions from statement snapshots (Fidelity/JH itemize the employer
+        side), then fall back to employer_401k_percent × SALARY, where salary is derived
+        from paystubs (gross × frequency) and only falls back to the stale profile
+        gross_annual_salary if there are no paystubs.
     """
     if not profile:
         return 0.0, 0.0
@@ -149,16 +150,40 @@ def _k401_monthly(
     if pay and pay["employer_monthly"] > 0:
         k401_employer = pay["employer_monthly"]
     else:
-        # Not on the paystub: employer_401k_percent × monthly salary (salary from paystubs
-        # when possible, else the profile's stored annual gross).
-        employer_pct = profile.employer_401k_percent or 0.0
-        if pay and pay["salary_monthly"] > 0:
-            monthly_salary = pay["salary_monthly"]
+        # Not on the paystub: measured statement employer contributions win next.
+        measured_er = _statement_employer_monthly(db, user_id) if (db is not None and user_id is not None) else None
+        if measured_er:
+            k401_employer = measured_er
         else:
-            monthly_salary = (profile.gross_annual_salary or 0.0) / 12.0
-        k401_employer = round((employer_pct / 100.0) * monthly_salary, 2)
+            # Last resort: employer_401k_percent × monthly salary (salary from paystubs
+            # when possible, else the profile's stored annual gross).
+            employer_pct = profile.employer_401k_percent or 0.0
+            if pay and pay["salary_monthly"] > 0:
+                monthly_salary = pay["salary_monthly"]
+            else:
+                monthly_salary = (profile.gross_annual_salary or 0.0) / 12.0
+            k401_employer = round((employer_pct / 100.0) * monthly_salary, 2)
 
     return k401_employee, k401_employer
+
+
+def _statement_employer_monthly(db: Session, user_id: int) -> Optional[float]:
+    """Measured monthly EMPLOYER 401k pace across the user's 401k accounts, from the
+    employer_contributions recorded on statement snapshots. None when no data."""
+    from app.models.account import Account
+    from app.services.forecasting import _statement_monthly_contribution
+
+    accs = (
+        db.query(Account)
+        .filter(Account.user_id == user_id, Account.account_type == "401k")
+        .all()
+    )
+    vals = [
+        _statement_monthly_contribution(a.id, db, field="employer_contributions")
+        for a in accs
+    ]
+    vals = [v for v in vals if v]
+    return round(sum(vals), 2) if vals else None
 
 
 def _retirement_contributions(
@@ -374,16 +399,21 @@ def compute_savings_goals(db: Session, current_user: User, joint: bool = False) 
     users = db.query(User).order_by(User.id).all()
     household_user_ids = [u.id for u in users]
 
-    people = [_person_block(db, u, today, household_user_ids) for u in users]
+    # Every person's block is needed to build the joint roll-up either way; `joint`
+    # controls how much of that detail is RETURNED (joint=False → only the caller's
+    # own block, matching the documented contract).
+    all_people = [_person_block(db, u, today, household_user_ids) for u in users]
+    people = all_people if joint else [p for p in all_people if p["user_id"] == current_user.id]
 
-    # Joint roll-up. Goal = sum of each person's effective goal; progress = sum of net cash.
-    joint_net_saved = round(sum(p["net_saved"] for p in people), 2)
-    joint_total_saved = round(sum(p["total_saved"] for p in people), 2)
-    joint_contrib = round(sum(p["contributions"]["total"] for p in people), 2)
-    joint_goal = round(sum(p["goal"] for p in people), 2)
-    joint_suggested = round(sum(p["suggested_goal"] for p in people), 2)
+    # Joint roll-up — always across the WHOLE household, regardless of `joint`.
+    # Goal = sum of each person's effective goal; progress = sum of net cash.
+    joint_net_saved = round(sum(p["net_saved"] for p in all_people), 2)
+    joint_total_saved = round(sum(p["total_saved"] for p in all_people), 2)
+    joint_contrib = round(sum(p["contributions"]["total"] for p in all_people), 2)
+    joint_goal = round(sum(p["goal"] for p in all_people), 2)
+    joint_suggested = round(sum(p["suggested_goal"] for p in all_people), 2)
     joint_pct = round((joint_net_saved / joint_goal) * 100, 1) if joint_goal > 0 else 0.0
-    joint_history = _sum_history([p["contributions_history"] for p in people])
+    joint_history = _sum_history([p["contributions_history"] for p in all_people])
 
     joint_block = {
         "name": "Joint",
