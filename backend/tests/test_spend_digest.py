@@ -3,7 +3,7 @@ import base64
 import unittest
 
 from app.services import simplefin
-from app.services.spend_digest import build_slack_message
+from app.services.spend_digest import build_slack_message, build_personal_message, split_digest_messages
 
 
 class TestSimplefinHelpers(unittest.TestCase):
@@ -36,6 +36,7 @@ class TestBuildSlackMessage(unittest.TestCase):
             "groups": [
                 {
                     "label": "Keaton",
+                    "username": "keaton",
                     "spend": 43.12,
                     "txns": [
                         {"description": "Wawa", "amount": 12.40, "account": "BofA Visa",
@@ -46,6 +47,7 @@ class TestBuildSlackMessage(unittest.TestCase):
                 },
                 {
                     "label": "Joint",
+                    "username": None,
                     "spend": 18.50,
                     "txns": [
                         {"description": "Target", "amount": 18.50, "account": "Checking",
@@ -84,6 +86,46 @@ class TestBuildSlackMessage(unittest.TestCase):
                                              errors=["Connection to BofA may need attention"]))
         self.assertIn("⚠️ Feed notice: Connection to BofA may need attention", msg)
         self.assertNotIn("No card activity", msg)
+
+    # ── per-person channel routing ──
+
+    def test_split_no_personal_channels_is_single_household_message(self):
+        msgs = split_digest_messages(self._data(), {}, "#coin")
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0][0], "#coin")
+        self.assertEqual(msgs[0][1], build_slack_message(self._data()))
+
+    def test_split_routes_owner_to_personal_channel(self):
+        msgs = split_digest_messages(self._data(), {"keaton": "#spend-keaton"}, "#coin")
+        self.assertEqual(len(msgs), 2)
+        channels = dict(msgs)
+        # Personal message: only Keaton's purchases, personal header + sheet reminder.
+        personal = channels["#spend-keaton"]
+        self.assertIn("*💳 Keaton's spend —", personal)
+        self.assertIn("Wawa", personal)
+        self.assertNotIn("Target", personal)  # joint purchase not in personal channel
+        self.assertNotIn("Household total", personal)
+        # Household message: joint detail stays, Keaton collapses to a routed total line.
+        household = channels["#coin"]
+        self.assertIn("Target", household)
+        self.assertNotIn("Wawa", household)
+        self.assertIn("*Keaton — $43.12* → details in #spend-keaton", household)
+        self.assertIn("*Household total: $61.62*", household)  # still the FULL day total
+
+    def test_split_all_routed_household_keeps_summary(self):
+        data = self._data()
+        data["groups"] = [g for g in data["groups"] if g["username"] == "keaton"]
+        data["total_spend"] = 43.12
+        msgs = split_digest_messages(data, {"keaton": "#spend-keaton"}, "#coin")
+        household = dict(msgs)["#coin"]
+        self.assertIn("→ details in #spend-keaton", household)
+        self.assertIn("*Household total: $43.12*", household)
+        self.assertNotIn("No card activity", household)
+
+    def test_personal_message_uses_single_asterisk_bold(self):
+        msg = build_personal_message(self._data()["groups"][0])
+        self.assertNotIn("**", msg)
+        self.assertIn("source of truth", msg)
 
 
 if __name__ == "__main__":

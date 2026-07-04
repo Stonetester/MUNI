@@ -5,7 +5,7 @@ import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import {
   getConnectedStatus, claimSimplefinToken, updateConnectedAccount, updateDigestSettings,
-  getConnectedToday, sendSpendDigestNow, disconnectSimplefin,
+  updateSpendChannels, getConnectedToday, sendSpendDigestNow, disconnectSimplefin,
   ConnectedStatus, SpendDigestPreview,
 } from '@/lib/api'
 import { CreditCard, CheckCircle, AlertCircle, ExternalLink, RefreshCw, Send, Trash2, Eye } from 'lucide-react'
@@ -27,12 +27,20 @@ export default function ConnectedCards() {
   const [previewing, setPreviewing] = useState(false)
   const [sending, setSending] = useState(false)
   const [sentOk, setSentOk] = useState(false)
+  const [channels, setChannels] = useState<Record<string, string>>({})
+  const [channelsSaving, setChannelsSaving] = useState(false)
+  const [channelsSaved, setChannelsSaved] = useState(false)
 
-  const refresh = () => getConnectedStatus().then(setStatus).catch(() => setStatus({ connected: false }))
+  const applyStatus = (s: ConnectedStatus) => {
+    setStatus(s)
+    setChannels(Object.fromEntries(Object.entries(s.user_channels || {}).map(([u, c]) => [u, c || ''])))
+  }
+
+  const refresh = () => getConnectedStatus().then(applyStatus).catch(() => setStatus({ connected: false }))
 
   useEffect(() => {
     getConnectedStatus()
-      .then(setStatus)
+      .then(applyStatus)
       .catch(() => setStatus({ connected: false }))
       .finally(() => setLoading(false))
   }, [])
@@ -42,7 +50,7 @@ export default function ConnectedCards() {
     setError('')
     try {
       const s = await claimSimplefinToken(token.trim())
-      setStatus(s)
+      applyStatus(s)
       setToken('')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -195,6 +203,53 @@ export default function ConnectedCards() {
                   </div>
                 </div>
               ))}
+            </div>
+
+            {/* Personal channels: each person's purchases go to their own channel;
+                joint + household total stay in the main digest channel */}
+            <div className="flex flex-col gap-2">
+              <p className="text-xs font-semibold text-text-primary">Personal channels</p>
+              <p className="text-[11px] text-muted -mt-1">
+                Give each person their own Slack channel to get <em>only their</em> purchases.
+                Leave blank to keep them in {status.digest_channel}. Joint accounts and the
+                household total always post to {status.digest_channel}.
+              </p>
+              {Object.keys(channels).map(u => (
+                <div key={u} className="flex items-center gap-3">
+                  <span className="text-xs text-text-secondary capitalize w-20">{u}</span>
+                  <input
+                    value={channels[u]}
+                    onChange={e => setChannels(c => ({ ...c, [u]: e.target.value }))}
+                    placeholder={`#spend-${u === 'katherine' ? 'kat' : u}`}
+                    className="flex-1 rounded-lg bg-surface-2 border border-[#2d3748] px-3 py-1.5 text-xs text-text-primary font-mono focus:outline-none focus:border-primary/50"
+                  />
+                </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary" size="sm" loading={channelsSaving}
+                  onClick={async () => {
+                    setChannelsSaving(true)
+                    setError('')
+                    try {
+                      await updateSpendChannels(Object.fromEntries(Object.entries(channels).map(([u, c]) => [u, c.trim() || null])))
+                      await refresh()
+                      setChannelsSaved(true)
+                      setTimeout(() => setChannelsSaved(false), 2000)
+                    } catch {
+                      setError('Failed to save personal channels.')
+                    } finally {
+                      setChannelsSaving(false)
+                    }
+                  }}
+                >
+                  Save Channels
+                </Button>
+                {channelsSaved && <span className="text-xs text-green-400 flex items-center gap-1"><CheckCircle size={12} /> Saved</span>}
+              </div>
+              <p className="text-[10px] text-muted">
+                Remember to create each channel in Slack and <code className="font-mono">/invite</code> the bot to it, or the digest can&apos;t post there.
+              </p>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">

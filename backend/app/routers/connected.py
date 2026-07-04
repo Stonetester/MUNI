@@ -34,6 +34,11 @@ class DigestSettingsIn(BaseModel):
     digest_enabled: bool
 
 
+class UserChannelsIn(BaseModel):
+    # username → personal Slack channel ("#spend-kat"); empty/None = stay in household digest
+    channels: dict[str, Optional[str]]
+
+
 def _status_payload(db: Session, connection: Optional[SimplefinConnection]) -> dict:
     if connection is None:
         return {"connected": False}
@@ -47,6 +52,8 @@ def _status_payload(db: Session, connection: Optional[SimplefinConnection]) -> d
         "digest_channel": settings.SLACK_SPEND_CHANNEL,
         "digest_time": f"{settings.SPEND_DIGEST_HOUR:02d}:{settings.SPEND_DIGEST_MINUTE:02d} {settings.DIGEST_TIMEZONE}",
         "slack_configured": bool(settings.SLACK_BOT_TOKEN),
+        # username → personal channel (null = purchases stay in the household digest)
+        "user_channels": {u.username: u.spend_channel for u in db.query(User).order_by(User.id).all()},
         "accounts": [
             {
                 "id": a.id,
@@ -149,6 +156,25 @@ def patch_settings(
     return {"ok": True, "digest_enabled": connection.digest_enabled}
 
 
+@router.patch("/user-channels")
+def patch_user_channels(
+    body: UserChannelsIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set each partner's personal digest channel (empty = household digest only)."""
+    for username, channel in body.channels.items():
+        user = db.query(User).filter(User.username == username.lower()).first()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown user '{username}'.")
+        channel = (channel or "").strip()
+        if channel and not channel.startswith("#"):
+            channel = f"#{channel}"
+        user.spend_channel = channel or None
+    db.commit()
+    return {"ok": True, "user_channels": {u.username: u.spend_channel for u in db.query(User).all()}}
+
+
 @router.get("/today")
 def today_preview(
     current_user: User = Depends(get_current_user),
@@ -168,10 +194,8 @@ def send_digest_now(
     """Manually send the spend digest to Slack right now."""
     result = spend_digest.send_daily_spend_digest()
     if not result.get("sent"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=result.get("reason") or "Slack post failed — check SLACK_BOT_TOKEN.",
-        )
+        detail = result.get("reason") or "; ".join(result.get("errors", [])) or "Slack post failed — check SLACK_BOT_TOKEN."
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
     return result
 
 

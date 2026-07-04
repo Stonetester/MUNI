@@ -16,6 +16,9 @@ class User(Base):
     display_name = Column(String, nullable=True)
     date_of_birth = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # Personal Slack channel for the daily spend digest ("#spend-kat").
+    # NULL = this person's purchases stay in the household digest channel.
+    spend_channel = Column(String, nullable=True)
 
     @property
     def age(self) -> int | None:

@@ -1036,6 +1036,7 @@ export interface ConnectedStatus {
   digest_channel?: string
   digest_time?: string
   slack_configured?: boolean
+  user_channels?: Record<string, string | null>
   accounts?: ConnectedAccountInfo[]
 }
 
@@ -1078,6 +1079,13 @@ export async function updateConnectedAccount(
 
 export async function updateDigestSettings(digestEnabled: boolean): Promise<{ ok: boolean; digest_enabled: boolean }> {
   const res = await api.patch('/connected/settings', { digest_enabled: digestEnabled })
+  return res.data
+}
+
+export async function updateSpendChannels(
+  channels: Record<string, string | null>,
+): Promise<{ ok: boolean; user_channels: Record<string, string | null> }> {
+  const res = await api.patch('/connected/user-channels', { channels })
   return res.data
 }
 

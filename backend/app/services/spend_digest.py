@@ -107,6 +107,7 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
         row = by_sfid.get(acc.get("id"))
         if row is None or not row.enabled:
             continue
+        owner_username = row.user.username if row.user else None
         owner_label = (row.user.username.capitalize() if row.user else "Joint")
         acc_label = row.nickname or row.name
         for txn in acc.get("transactions", []):
@@ -122,7 +123,10 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
                 "is_today": when.date() == today_local,
             }
             if amount < 0:
-                g = groups.setdefault(owner_label, {"label": owner_label, "spend": 0.0, "txns": []})
+                g = groups.setdefault(
+                    owner_label,
+                    {"label": owner_label, "username": owner_username, "spend": 0.0, "txns": []},
+                )
                 g["spend"] += abs(amount)
                 g["txns"].append(entry)
                 total_spend += abs(amount)
@@ -144,8 +148,22 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
     }
 
 
-def build_slack_message(data: dict) -> str:
-    """Render digest data as Slack mrkdwn (native *bold* — direct-post path)."""
+def _txn_line(t: dict) -> str:
+    marks = ""
+    if t["pending"]:
+        marks += " ⏳"
+    if not t["is_today"]:
+        marks += f" ({t['date'][5:]})"
+    return f"• ${t['amount']:,.2f} — {t['description']} ({t['account']}){marks}"
+
+
+def build_slack_message(data: dict, routed: list[tuple[str, float, str]] | None = None) -> str:
+    """Render the household digest as Slack mrkdwn (native *bold* — direct-post path).
+
+    `routed` = (label, spend, channel) for groups whose details went to a
+    personal channel — they appear here as one-line totals so the household
+    view still adds up."""
+    routed = routed or []
     now = datetime.now(_tz())
     lines = [f"*💳 Daily Spend — {now:%a, %b} {now.day}*"]
 
@@ -153,7 +171,7 @@ def build_slack_message(data: dict) -> str:
         for e in data["errors"]:
             lines.append(f"⚠️ Feed notice: {e}")
 
-    if not data["groups"]:
+    if not data["groups"] and not routed:
         if not data.get("errors"):
             lines.append("No card activity today 🎉")
         return "\n".join(lines)
@@ -161,12 +179,10 @@ def build_slack_message(data: dict) -> str:
     for g in data["groups"]:
         lines.append(f"*{g['label']} — ${g['spend']:,.2f}*")
         for t in g["txns"]:
-            marks = ""
-            if t["pending"]:
-                marks += " ⏳"
-            if not t["is_today"]:
-                marks += f" ({t['date'][5:]})"
-            lines.append(f"• ${t['amount']:,.2f} — {t['description']} ({t['account']}){marks}")
+            lines.append(_txn_line(t))
+
+    for label, spend, channel in routed:
+        lines.append(f"*{label} — ${spend:,.2f}* → details in {channel}")
 
     lines.append(f"*Household total: ${data['total_spend']:,.2f}*")
 
@@ -178,27 +194,66 @@ def build_slack_message(data: dict) -> str:
     return "\n".join(lines)
 
 
-def send_slack_message(text: str) -> bool:
-    """Post to the spend channel via chat.postMessage. Returns True on success."""
+def build_personal_message(group: dict) -> str:
+    """One person's purchases only — for their personal spend channel."""
+    now = datetime.now(_tz())
+    lines = [f"*💳 {group['label']}'s spend — {now:%a, %b} {now.day} — ${group['spend']:,.2f}*"]
+    for t in group["txns"]:
+        lines.append(_txn_line(t))
+    lines.append("📝 Enter these in your sheet — Google Sheets stay the source of truth.")
+    return "\n".join(lines)
+
+
+def split_digest_messages(
+    data: dict, user_channels: dict[str, str], household_channel: str
+) -> list[tuple[str, str]]:
+    """Route each owner group to its channel. Returns [(channel, text), ...].
+
+    A group whose owner has a personal channel gets its own message there;
+    joint accounts and owners without a channel stay in the household digest,
+    which also carries one-line totals for the routed-away groups (so the
+    household channel always shows the full day). With no personal channels
+    configured this collapses to the original single household message."""
+    personal: list[tuple[str, str]] = []
+    routed: list[tuple[str, float, str]] = []
+    remaining: list[dict] = []
+    for g in data["groups"]:
+        channel = user_channels.get(g.get("username") or "")
+        if channel:
+            personal.append((channel, build_personal_message(g)))
+            routed.append((g["label"], g["spend"], channel))
+        else:
+            remaining.append(g)
+
+    household = dict(data)
+    household["groups"] = remaining
+    messages = personal + [(household_channel, build_slack_message(household, routed=routed))]
+    return messages
+
+
+def send_slack_message(text: str, channel: str | None = None) -> tuple[bool, str | None]:
+    """Post to a spend channel via chat.postMessage. Returns (ok, error)."""
     token = settings.SLACK_BOT_TOKEN
     if not token:
         logger.warning("SLACK_BOT_TOKEN not configured — spend digest not sent.")
-        return False
+        return False, "SLACK_BOT_TOKEN not configured"
+    channel = channel or settings.SLACK_SPEND_CHANNEL
     try:
         resp = requests.post(
             "https://slack.com/api/chat.postMessage",
             headers={"Authorization": f"Bearer {token}"},
-            json={"channel": settings.SLACK_SPEND_CHANNEL, "text": text, "unfurl_links": False},
+            json={"channel": channel, "text": text, "unfurl_links": False},
             timeout=15,
         )
         body = resp.json()
         if not body.get("ok"):
-            logger.error("Slack post failed: %s", body.get("error"))
-            return False
-        return True
+            err = body.get("error")
+            logger.error("Slack post to %s failed: %s", channel, err)
+            return False, f"{channel}: {err}"
+        return True, None
     except requests.RequestException as e:
         logger.error("Slack unreachable: %s", e)
-        return False
+        return False, str(e)
 
 
 def send_daily_spend_digest() -> dict:
@@ -214,11 +269,25 @@ def send_daily_spend_digest() -> dict:
         # Cover everything since the last digest so late-posting transactions
         # are never silently skipped (capped at _MAX_WINDOW_DAYS).
         data = gather_digest_data(db, since=connection.last_digest_at)
-        text = build_slack_message(data)
-        ok = send_slack_message(text)
-        if ok:
+
+        from app.models.user import User
+
+        user_channels = {
+            u.username: u.spend_channel for u in db.query(User).all() if u.spend_channel
+        }
+        messages = split_digest_messages(data, user_channels, settings.SLACK_SPEND_CHANNEL)
+
+        results = []
+        errors = []
+        for channel, text in messages:
+            ok, err = send_slack_message(text, channel=channel)
+            results.append({"channel": channel, "sent": ok})
+            if err:
+                errors.append(err)
+        any_sent = any(r["sent"] for r in results)
+        if any_sent:
             connection.last_digest_at = datetime.utcnow()
             db.commit()
-        return {"sent": ok, "message": text}
+        return {"sent": any_sent, "results": results, "errors": errors}
     finally:
         db.close()
