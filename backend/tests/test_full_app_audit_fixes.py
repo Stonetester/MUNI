@@ -134,7 +134,7 @@ class MeasuredEmployerMatchTests(TestCase):
 
     def test_forecast_401k_contribution_includes_employer_estimate(self):
         from app.services.forecasting import _build_compound_account_config
-        _, contrib, _ = _build_compound_account_config([self.acc], self.db, self.u.id)
+        _, contrib, _, _ = _build_compound_account_config([self.acc], self.db, self.u.id)
         ee_monthly = 192.94 * 2  # employee side from stubs
         # Before the fix the forecast used the employee side alone.
         self.assertGreater(contrib[self.acc.id], ee_monthly + 100.0)
@@ -143,7 +143,7 @@ class MeasuredEmployerMatchTests(TestCase):
         self.db.query(BalanceSnapshot).delete()
         self.db.commit()
         from app.services.forecasting import _build_compound_account_config
-        _, contrib, _ = _build_compound_account_config([self.acc], self.db, self.u.id)
+        _, contrib, _, _ = _build_compound_account_config([self.acc], self.db, self.u.id)
         ee_monthly = 192.94 * 2
         expected_er = 0.03 * (3215.62 * 2)  # 3% x paystub monthly salary
         self.assertAlmostEqual(contrib[self.acc.id], ee_monthly + expected_er, delta=2.0)
