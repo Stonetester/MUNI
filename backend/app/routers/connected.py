@@ -3,6 +3,7 @@
 Feed data is digest/preview only — never written into `transactions`.
 Google Sheets remain the source of truth for transactions.
 """
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -168,7 +169,9 @@ def patch_user_channels(
         if user is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown user '{username}'.")
         channel = (channel or "").strip()
-        if channel and not channel.startswith("#"):
+        # Accept "#name", bare "name", or a raw Slack channel ID (C…/G…) —
+        # private channels often only resolve by ID, so IDs must pass through untouched.
+        if channel and not channel.startswith("#") and not re.fullmatch(r"[CGD][A-Z0-9]{6,}", channel):
             channel = f"#{channel}"
         user.spend_channel = channel or None
     db.commit()

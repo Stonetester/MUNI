@@ -248,7 +248,9 @@ export default function ConnectedCards() {
                 {channelsSaved && <span className="text-xs text-green-400 flex items-center gap-1"><CheckCircle size={12} /> Saved</span>}
               </div>
               <p className="text-[10px] text-muted">
-                Remember to create each channel in Slack and <code className="font-mono">/invite</code> the bot to it, or the digest can&apos;t post there.
+                Create each channel in Slack and <code className="font-mono">/invite</code> the bot (Athena) to it, or the digest can&apos;t post there.
+                <strong className="text-text-secondary"> Private channel?</strong> Use its Channel ID instead of the name
+                (channel name → About tab → Channel ID, looks like <code className="font-mono">C0123ABCD</code>).
               </p>
             </div>
 
