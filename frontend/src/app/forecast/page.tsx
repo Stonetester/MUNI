@@ -73,7 +73,10 @@ export default function ForecastPage() {
 
   return (
     <AppLayout>
-      {loading ? (
+      {/* Spinner only on FIRST load. Refreshes (e.g. confirming a one-off) keep the
+          dashboard mounted — unmounting it wiped its tab state and dumped the user
+          back on Overview after every confirm. */}
+      {loading && !forecast ? (
         <div className="flex h-64 items-center justify-center"><LoadingSpinner size="lg" /></div>
       ) : forecast ? (
         <ForesightDashboard
