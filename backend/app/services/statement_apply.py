@@ -31,6 +31,7 @@ def apply_parsed_statement(
     ending_balance: float | None,
     holdings: list[dict],
     contributions: float | None = None,
+    employer_contributions: float | None = None,
 ) -> dict:
     account = (
         db.query(Account)
@@ -81,10 +82,14 @@ def apply_parsed_statement(
             existing.balance = ending_balance
             if contributions is not None:
                 existing.contributions = contributions
+            if employer_contributions is not None:
+                existing.employer_contributions = employer_contributions
             snap = existing
         else:
             snap = BalanceSnapshot(account_id=account_id, date=stmt_date, balance=ending_balance,
-                                   contributions=contributions, notes="from statement import")
+                                   contributions=contributions,
+                                   employer_contributions=employer_contributions,
+                                   notes="from statement import")
             db.add(snap)
         # Keep Account.balance synced to the most recent snapshot.
         most_recent = (

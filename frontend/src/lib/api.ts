@@ -885,10 +885,14 @@ export interface ParsedStatement {
   statement_date: string | null
   ending_balance: number | null
   account_number_hint: string | null
+  // period contributions parsed off the statement — must be saved with the snapshot
+  // or the XIRR return math can't separate deposits from gains
+  period_contributions: number | null
+  employer_contributions: number | null
 }
 
 export async function parseStatement(file: File): Promise<ParsedStatement> {
-  if (isDemoModeActive()) return { institution: 'Demo Bank', account_type_hint: 'checking', account_label: 'Demo Checking', statement_date: new Date().toISOString().slice(0, 10), ending_balance: 4820.55, account_number_hint: '****1234' }
+  if (isDemoModeActive()) return { institution: 'Demo Bank', account_type_hint: 'checking', account_label: 'Demo Checking', statement_date: new Date().toISOString().slice(0, 10), ending_balance: 4820.55, account_number_hint: '****1234', period_contributions: null, employer_contributions: null }
   const formData = new FormData()
   formData.append('file', file)
   const res = await api.post('/statements/parse', formData, {
@@ -920,6 +924,8 @@ export async function parseStatementFull(file: File): Promise<ParsedStatementFul
         { ticker: 'SWISX', fund_name: 'Schwab International Index', value: 4500, weight_percent: 36 },
       ],
       personal_rate_of_return: 8.4,
+      period_contributions: null,
+      employer_contributions: null,
     }
   }
   const formData = new FormData()
@@ -943,6 +949,8 @@ export async function applyStatement(data: {
   account_id: number
   statement_date: string
   ending_balance: number | null
+  contributions?: number | null
+  employer_contributions?: number | null
   holdings: { ticker: string; fund_name?: string; value: number; weight_percent?: number | null }[]
 }): Promise<ApplyStatementResult> {
   if (isDemoModeActive()) return { account_id: data.account_id, snapshot: data.ending_balance != null ? { date: data.statement_date, balance: data.ending_balance } : null, holdings_upserted: 0, holdings_created: data.holdings.length, holdings_removed: 0 }
@@ -954,6 +962,8 @@ export async function createBalanceSnapshot(data: {
   account_id: number
   date: string
   balance: number
+  contributions?: number | null
+  employer_contributions?: number | null
   notes?: string
 }): Promise<BalanceSnapshot> {
   if (isDemoModeActive()) return { id: 99, account_id: data.account_id, date: data.date, balance: data.balance, notes: data.notes }

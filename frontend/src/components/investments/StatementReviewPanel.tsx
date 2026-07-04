@@ -302,6 +302,9 @@ export default function StatementReviewPanel({
         account_id: item.selectedAccountId,
         statement_date: dateStr,
         ending_balance: balance,
+        // parsed period contributions keep the snapshot inside the XIRR return window
+        contributions: item.parsed.period_contributions,
+        employer_contributions: item.parsed.employer_contributions,
         holdings: item.parsed.holdings
           .filter((h) => h.value != null)
           .map((h) => ({ ticker: h.ticker, fund_name: h.fund_name, value: h.value as number, weight_percent: h.weight_percent })),
