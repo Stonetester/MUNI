@@ -17,10 +17,19 @@ class Settings(BaseSettings):
     ]
 
     ANTHROPIC_API_KEY: str = ""
+    # Preferred Claude model, with a fallback retried automatically if the account
+    # can't access the preferred one yet.
+    ANTHROPIC_MODEL: str = "claude-sonnet-5"
+    ANTHROPIC_FALLBACK_MODEL: str = "claude-sonnet-4-6"
     OPENAI_API_KEY: str = ""
     OLLAMA_HOST: str = "http://10.0.0.172:11434"
     OLLAMA_REPORT_MODEL: str = "qwen3:8b"
     OLLAMA_CHAT_MODEL: str = "qwen3:14b"
+    # Context window for local chat/report calls. The grounding prompt (accounts,
+    # history, forecasts) is large — Ollama's default ctx silently truncates the
+    # OLDEST tokens, which deletes the system prompt and makes the model claim it
+    # "can't see" data that is right there. Keep this comfortably above prompt size.
+    OLLAMA_NUM_CTX: int = 24576
 
     class Config:
         env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
