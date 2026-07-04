@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
-import { getAiReport, postAiChat, listChatSessions, getChatSession, deleteChatSession, ChatSessionSummary } from '@/lib/api'
+import { getAiReport, postAiChat, listChatSessions, getChatSession, deleteChatSession, ChatSessionSummary, ReportType, REPORT_TYPE_LABELS } from '@/lib/api'
 import { useViewMode } from '@/lib/viewMode'
 import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap, Users, User, History, Plus, Trash2, X } from 'lucide-react'
 
@@ -182,6 +182,7 @@ export default function AiReportPage() {
   // Report state
   const [year, setYear] = useState(defaultYear)
   const [month, setMonth] = useState(defaultMonth)
+  const [reportType, setReportType] = useState<ReportType>('monthly')
   const [activeProvider, setActiveProvider] = useState<string>('claude')
   const [report, setReport] = useState<string | null>(null)
   const [reportLoading, setReportLoading] = useState(false)
@@ -233,10 +234,10 @@ export default function AiReportPage() {
     setReportError('')
     setDebugInfo(null)
     try {
-      const data = await getAiReport(year, month, provider)
+      const data = await getAiReport(year, month, provider, reportType, isJoint)
       setReport(data.report)
       setActiveProvider(data.provider)
-      setLastFetchKey(`${year}-${month}-${provider}`)
+      setLastFetchKey(`${year}-${month}-${provider}-${reportType}-${isJoint}`)
     } catch (err: unknown) {
       const e = err as { response?: { status?: number; data?: unknown }; message?: string }
       const status = e?.response?.status
@@ -289,7 +290,7 @@ export default function AiReportPage() {
     if (month === 12) setYear(y => y + 1)
   }
 
-  const isDirty = lastFetchKey !== `${year}-${month}-${provider}`
+  const isDirty = lastFetchKey !== `${year}-${month}-${provider}-${reportType}-${isJoint}`
   const isAtCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1
 
   return (
@@ -315,7 +316,7 @@ export default function AiReportPage() {
             }`}
           >
             <FileText size={15} />
-            Monthly Report
+            Report
           </button>
           <button
             onClick={() => setTab('chat')}
@@ -342,7 +343,7 @@ export default function AiReportPage() {
                 : 'bg-surface-2 text-text-secondary border-border'
             }`}>
               {isJoint ? <Users size={11} /> : <User size={11} />}
-              {isJoint ? 'Using household numbers (both of you)' : 'Using just your numbers'}
+              {isJoint ? 'Household focus — both of you' : 'Personal focus — household data still available'}
             </span>
           </div>
         )}
@@ -363,6 +364,25 @@ export default function AiReportPage() {
                   <ChevronRight size={18} />
                 </button>
               </div>
+              {/* Report type picker — each type gets its own data pack + depth */}
+              <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+                {(Object.keys(REPORT_TYPE_LABELS) as ReportType[]).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setReportType(t)}
+                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                      reportType === t
+                        ? 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+                        : 'bg-surface-2 text-text-secondary border-border hover:text-text-primary'
+                    }`}
+                  >
+                    {REPORT_TYPE_LABELS[t]}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-center text-[11px] text-text-secondary">
+                {isJoint ? 'Household report — both of you plus combined totals' : 'Solo report — just your numbers'}
+              </p>
               <div className="mt-3 flex justify-center">
                 <Button variant="primary" size="sm" loading={reportLoading} onClick={fetchReport} className="gap-2">
                   <RefreshCw size={14} />

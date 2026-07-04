@@ -156,126 +156,98 @@ def _gather_financial_data(user: User, db: Session, year: int, month: int) -> di
     }
 
 
-def _build_prompt(data: dict) -> tuple[str, str]:
-    """Build the system + user prompts from gathered financial data."""
-    ctx_lines = [
-        f"# Financial Data for {data['report_month']} — {data['user'].capitalize()}",
-        "",
-        "## Net Worth Snapshot",
-        f"- Total Assets: ${data['total_assets']:,.2f}",
-        f"- Total Liabilities: ${data['total_liabilities']:,.2f}",
-        f"- Net Worth: ${data['net_worth']:,.2f}",
-        "",
-        "## Account Balances",
-    ]
-    for acc in data["accounts"]:
-        ctx_lines.append(f"  - {acc['name']} ({acc['type']}): ${acc['balance']:,.2f}")
-
-    ctx_lines += [
-        "",
-        f"## {data['report_month']} Summary",
-        f"- Income: ${data['this_month']['income']:,.2f}",
-        f"- Spending: ${data['this_month']['spending']:,.2f}",
-        f"- Net Savings: ${data['this_month']['savings']:,.2f}",
-        f"- Savings Rate: {data['this_month']['savings_rate']}%",
-        "",
-        "## Spending by Category (this month)",
-    ]
-    for cat, amt in data["this_month"]["by_category"].items():
-        ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
-
-    prev = data["prev_month"]
-    ctx_lines += [
-        "",
-        "## Previous Month Comparison",
-        f"- Income: ${prev['income']:,.2f}  (vs ${data['this_month']['income']:,.2f} this month)",
-        f"- Spending: ${prev['spending']:,.2f}  (vs ${data['this_month']['spending']:,.2f} this month)",
-        f"- Savings: ${prev['savings']:,.2f}  (vs ${data['this_month']['savings']:,.2f} this month)",
-        "",
-        "## Budget vs. Actual",
-    ]
-    for b in data["budget"]:
-        status = "🔴 OVER" if b["over"] else "✅ ok"
-        pct_str = f"{b['pct']}%" if b["pct"] is not None else "no budget set"
-        ctx_lines.append(f"  - {b['category']}: spent ${b['actual']:,.2f} of ${b['budget']:,.2f} budget ({pct_str}) {status}")
-
-    if data["upcoming_events"]:
-        ctx_lines += ["", "## Upcoming Life Events"]
-        for ev in data["upcoming_events"]:
-            ctx_lines.append(f"  - {ev['name']} on {ev['date']}: estimated ${ev['estimated_cost']:,.2f}")
-            if ev["notes"]:
-                ctx_lines.append(f"    Notes: {ev['notes']}")
-
-    financial_context = "\n".join(ctx_lines)
-
-    system_prompt = (
-        "You are a personal financial advisor generating a monthly financial report. "
-        "Your tone is warm, encouraging, and honest — like a trusted advisor who knows this person well. "
-        "You write in clear prose with markdown formatting (headers, bullet points where appropriate). "
-        "Be specific with numbers. Celebrate wins, flag concerns constructively, and give actionable advice. "
-        "Keep the report between 400-600 words. Do not use generic filler — every sentence should be specific to the data."
-    )
-
-    user_prompt = f"""Using the financial data below, write a comprehensive monthly financial report.
-
-Structure it as:
-1. **Month in Review** — 2-3 sentence overview of how the month went financially
-2. **Income & Savings** — Commentary on income, savings rate, and comparison to last month
-3. **Spending Breakdown** — Top spending categories, notable changes, anything concerning or commendable
-4. **Budget Performance** — Which categories were on track, over budget, or well under
-5. **Net Worth & Accounts** — Net worth position, notable account balances
-6. **Upcoming Events** — What to financially prepare for in the coming months
-7. **Action Items** — 3 specific, actionable recommendations for next month
-
-{financial_context}"""
-
-    return system_prompt, user_prompt
+# Report types the user can pick on the AI Report page. Each gets its own data pack
+# and structure so the report is DEEP on that topic instead of shallow on everything.
+REPORT_TYPES = {
+    "monthly": "Monthly Review",
+    "spending": "Spending Deep-Dive",
+    "investments": "Investments & Returns",
+    "goals": "Goals & Retirement",
+    "year": "Year in Review",
+}
 
 
-def _generate_with_claude(api_key: str, system_prompt: str, user_prompt: str) -> str:
+def _claude_messages(api_key: str, system_prompt: str, messages: list, max_tokens: int = 2048) -> str:
+    """Call Claude with the preferred model, falling back once if the account
+    can't access it (model-not-found)."""
     try:
         import anthropic
     except ImportError:
         raise RuntimeError("The `anthropic` package is not installed. Run `pip install anthropic` in the backend venv.")
+    from app.config import settings
 
     client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
+    for model in (settings.ANTHROPIC_MODEL, settings.ANTHROPIC_FALLBACK_MODEL):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=messages,
+            )
+            return "".join(block.text for block in response.content if block.type == "text")
+        except anthropic.NotFoundError:
+            continue  # model not available on this account — try the fallback
+    raise RuntimeError(
+        f"Neither {settings.ANTHROPIC_MODEL} nor {settings.ANTHROPIC_FALLBACK_MODEL} is available on this API key."
     )
-    return "".join(block.text for block in response.content if block.type == "text")
+
+
+def _generate_with_claude(api_key: str, system_prompt: str, user_prompt: str) -> str:
+    return _claude_messages(api_key, system_prompt, [{"role": "user", "content": user_prompt}], max_tokens=3000)
+
+
+def _ollama_chat_call(host: str, model: str, messages: list) -> str:
+    """POST to Ollama /api/chat with an explicit context window.
+
+    num_ctx matters: the grounding prompt is large, and Ollama's default context
+    silently drops the OLDEST tokens on overflow — which is the system prompt,
+    i.e. all the financial data. That is exactly the failure mode that made the
+    local chat claim it 'can't see' data that was in the prompt.
+    Thinking models (qwen3, deepseek-r1) get `think: false` so reasoning tokens
+    don't leak into the reply; retried without it for models that reject the flag.
+    """
+    import urllib.request
+    import urllib.error
+    import json as _json
+    from app.config import settings
+
+    base = {
+        "model": model,
+        "stream": False,
+        "messages": messages,
+        "options": {"num_ctx": settings.OLLAMA_NUM_CTX},
+    }
+
+    for body in ({**base, "think": False}, base):
+        payload = _json.dumps(body).encode()
+        req = urllib.request.Request(
+            f"{host}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                result = _json.loads(resp.read())
+                return result["message"]["content"]
+        except urllib.error.HTTPError as e:
+            if body is base:
+                raise RuntimeError(f"Ollama error {e.code}: {e.read().decode(errors='replace')[:300]}")
+            continue  # model rejected `think` — retry without it
+        except OSError as e:
+            raise RuntimeError(
+                f"Could not reach Mongol at {host} — it may be asleep or unreachable. "
+                f"Wake it up first, then try again. ({e})"
+            )
+    raise RuntimeError("Ollama call failed")
 
 
 def _generate_with_ollama(host: str, model: str, system_prompt: str, user_prompt: str) -> str:
-    import urllib.request
-    import json as _json
-
-    payload = _json.dumps({
-        "model": model,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    }).encode()
-
-    req = urllib.request.Request(
-        f"{host}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            result = _json.loads(resp.read())
-            return result["message"]["content"]
-    except OSError as e:
-        raise RuntimeError(
-            f"Could not reach Mongol at {host} — it may be asleep or unreachable. "
-            f"Wake it up first, then try again. ({e})"
-        )
+    return _ollama_chat_call(host, model, [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ])
 
 
 def _generate_with_openai(api_key: str, system_prompt: str, user_prompt: str) -> str:
@@ -296,12 +268,160 @@ def _generate_with_openai(api_key: str, system_prompt: str, user_prompt: str) ->
     return response.choices[0].message.content or ""
 
 
-def generate_monthly_report(user: User, db: Session, year: int, month: int, provider: str = "claude") -> str:
-    """Generate a financial advisor monthly report using Claude or ChatGPT."""
+def _core_report_context(user: User, users: list[User], db: Session, year: int, month: int) -> str:
+    """Shared context for every report type: this-month + net worth per person and household."""
+    per_user = [(u, _gather_financial_data(u, db, year, month)) for u in users]
+    lines = [f"# Financial data — {calendar.month_name[month]} {year} — household: "
+             + " & ".join(u.username.capitalize() for u in users), ""]
+    total_assets = sum(d["total_assets"] for _, d in per_user)
+    total_liab = sum(d["total_liabilities"] for _, d in per_user)
+    lines.append(f"HOUSEHOLD net worth: ${total_assets - total_liab:,.2f} "
+                 f"(assets ${total_assets:,.2f}, liabilities ${total_liab:,.2f})")
+    for u, d in per_user:
+        tm = d["this_month"]
+        lines += [
+            "",
+            f"## {u.username.capitalize()}",
+            f"- Net worth: ${d['net_worth']:,.2f}",
+            f"- This month: income ${tm['income']:,.2f}, spending ${tm['spending']:,.2f}, "
+            f"savings ${tm['savings']:,.2f} ({tm['savings_rate']}% rate)",
+            f"- Last month: income ${d['prev_month']['income']:,.2f}, spending ${d['prev_month']['spending']:,.2f}",
+            "- Accounts: " + "; ".join(f"{a['name']} ${a['balance']:,.0f}" for a in d["accounts"]),
+            "- Top spending this month: " + (", ".join(
+                f"{c} ${v:,.0f}" for c, v in list(tm["by_category"].items())[:8]) or "none"),
+        ]
+        if d["budget"]:
+            over = [b for b in d["budget"] if b["over"]]
+            if over:
+                lines.append("- OVER budget: " + ", ".join(
+                    f"{b['category']} ${b['actual']:,.0f}/{b['budget']:,.0f}" for b in over))
+        if d["upcoming_events"]:
+            lines.append("- Upcoming events: " + ", ".join(
+                f"{e['name']} {e['date']} ${e['estimated_cost']:,.0f}" for e in d["upcoming_events"]))
+    return "\n".join(lines)
+
+
+def _report_type_context(report_type: str, user: User, users: list[User], db: Session) -> str:
+    """Extra data pack per report type — this is what gives each report its depth."""
+    lines: list[str] = []
+    if report_type in ("spending", "year", "monthly"):
+        history = _gather_monthly_history(users, db, months=18)
+        if history:
+            lines += ["", "Monthly history, household (newest first):"]
+            for h in history:
+                tops = ", ".join(f"{c} ${v:,.0f}" for c, v in h["top_categories"]) or "no spending"
+                lines.append(f"  - {h['month']}: income ${h['income']:,.0f}, spending ${h['spending']:,.0f}, "
+                             f"savings ${h['savings']:,.0f} ({h['savings_rate']}%) — {tops}")
+    if report_type in ("spending", "year"):
+        for yr in _gather_yearly_summary(users, db, years=None):
+            lines += ["", f"Year {yr['year']}: income ${yr['income']:,.0f}, spending ${yr['spending']:,.0f}"]
+            lines.append("  Spending by category: " + (", ".join(
+                f"{c} ${v:,.0f}" for c, v in list(yr["spending_by_cat"].items())[:12]) or "none"))
+            lines.append("  Income by category: " + (", ".join(
+                f"{c} ${v:,.0f}" for c, v in list(yr["income_by_cat"].items())[:8]) or "none"))
+    if report_type in ("investments", "goals", "monthly", "year"):
+        lines += _gather_savings_goals_context(user, db)
+        lines += _gather_forecast_context(user, users, db)
+    if report_type in ("investments", "goals"):
+        from app.services.returns import all_account_returns
+        user_ids = [u.id for u in users]
+        returns = all_account_returns(user_ids, db)
+        lines += ["", "Measured investment returns (XIRR from statements, netted of contributions):"]
+        for r in returns:
+            if r["annualized_pct"] is not None:
+                lines.append(f"  - {r['account_name']} ({r['account_type']}): {r['annualized_pct']}%/yr "
+                             f"({r['period_start']}→{r['period_end']}; {r['basis']})")
+            else:
+                lines.append(f"  - {r['account_name']} ({r['account_type']}): not measurable yet — {r['basis']}")
+        coast = _gather_coast_fi(user, db, joint=True)
+        lines += [
+            "",
+            f"Coast FI (household): invested ${coast['invested']:,.0f}, FIRE number ${coast['fire_number']:,.0f}, "
+            f"Coast FI number ${coast['coast_fi_number']:,.0f} ({coast['pct_to_coast']}% there); "
+            f"retirement spend basis: ${coast['monthly_spend']:,.0f}/mo — {coast['spend_basis']}",
+        ]
+    return "\n".join(lines)
+
+
+_REPORT_STRUCTURES = {
+    "monthly": """Structure it as:
+1. **Month in Review** — how the month went for each person and the household
+2. **Income & Savings** — income, savings rate, savings-goal progress, vs last month
+3. **Spending Breakdown** — top categories, notable month-over-month changes, per person
+4. **Budget Performance** — on track / over / under, with numbers
+5. **Net Worth & Trajectory** — where net worth is and where the forecast says it's heading (12mo / 5yr)
+6. **Upcoming Events** — what to prepare for
+7. **Action Items** — 3-5 specific, measurable recommendations
+Aim for 700-900 words. Cover BOTH people and the household — never just one person.""",
+    "spending": """Structure it as:
+1. **Where the Money Goes** — the real spending picture by category, household and per person
+2. **Trends & Momentum** — which categories are growing/shrinking across the monthly history; call out anything accelerating
+3. **Outliers & One-offs** — unusual months or spikes in the history and what drove them
+4. **Year-over-Year** — how this year compares to prior years, category by category where notable
+5. **Efficiency Opportunities** — the 3-5 categories with the most realistic trim potential, with dollar estimates
+Aim for 800-1000 words. Use the monthly history heavily — cite specific months and numbers.""",
+    "investments": """Structure it as:
+1. **Portfolio Snapshot** — every investment account, balance, and owner
+2. **Measured Performance** — the XIRR of each account (these are real measured returns — explain what they mean); flag unmeasurable accounts and why
+3. **Contribution Engine** — what's flowing in monthly per account and from what source (paystubs, statements, deposits)
+4. **Growth Outlook** — the app's 12-month and 5-year projections per account, and what drives them
+5. **Retirement Trajectory** — Coast FI status and what it means in plain language
+6. **Considerations** — 3-4 things worth thinking about (NOT specific buy/sell advice)
+Aim for 800-1000 words. Be precise about which numbers are measured vs projected.""",
+    "goals": """Structure it as:
+1. **Savings Goals Scoreboard** — each person's goal vs actual this month, and the household roll-up
+2. **The Contribution Machine** — HYSA/IRA/401k monthly contributions per person, with sources
+3. **Coast FI & FIRE** — where the household stands, in plain language, with the math shown
+4. **Trajectory** — what the forecast says about savings and net worth at 12 months and 5 years
+5. **Levers** — the 3 most effective changes to hit goals faster, quantified
+Aim for 700-900 words. Show the math for every key number.""",
+    "year": """Structure it as:
+1. **The Year So Far / In Review** — the big picture: total income, spending, savings for the year
+2. **Month by Month** — the story of the year through the monthly history; best and worst months and why
+3. **Categories** — the year's biggest spending categories and how they compare to prior years
+4. **Net Worth Journey** — where net worth started, where it is, where the forecast puts it
+5. **Wins & Watch-outs** — what went well, what needs attention
+6. **Setting Up Next Year** — 3-5 concrete targets grounded in this year's real numbers
+Aim for 900-1100 words. This is the retrospective — use the full history.""",
+}
+
+
+def generate_monthly_report(
+    user: User,
+    db: Session,
+    year: int,
+    month: int,
+    provider: str = "claude",
+    report_type: str = "monthly",
+    joint: bool = True,
+) -> str:
+    """Generate a financial-advisor report using Claude / ChatGPT / local Ollama.
+
+    `report_type` picks the data pack + structure (see REPORT_TYPES). Reports are
+    household-scoped by default (`joint=True`) — both people plus combined totals;
+    pass joint=False for a single-person report."""
     from app.config import settings
 
-    data = _gather_financial_data(user, db, year, month)
-    system_prompt, user_prompt = _build_prompt(data)
+    if report_type not in REPORT_TYPES:
+        report_type = "monthly"
+    users = _scope_users(user, db, joint)
+
+    context = _core_report_context(user, users, db, year, month)
+    extra = _report_type_context(report_type, user, users, db)
+    financial_context = context + ("\n" + extra if extra else "")
+
+    system_prompt = (
+        "You are a personal financial advisor generating a written report. "
+        "Your tone is warm, encouraging, and honest — like a trusted advisor who knows this household well. "
+        "You write in clear prose with markdown formatting (## headers, bullets, tables for comparisons). "
+        "Be specific with numbers and cite them exactly from the data. Distinguish measured numbers from "
+        "projections when it matters. Celebrate wins, flag concerns constructively, give actionable advice. "
+        "Do not use generic filler — every sentence should be specific to this data."
+    )
+    user_prompt = (
+        f"Write a **{REPORT_TYPES[report_type]}** report using the financial data below.\n\n"
+        f"{_REPORT_STRUCTURES[report_type]}\n\n{financial_context}"
+    )
 
     if provider == "ollama":
         host = settings.OLLAMA_HOST or "http://10.0.0.172:11434"
@@ -384,7 +504,7 @@ def _scope_users(user: User, db: Session, joint: bool) -> list[User]:
     return [user]
 
 
-def _gather_yearly_summary(users: list[User], db: Session, years: int = 3) -> list[dict]:
+def _gather_yearly_summary(users: list[User], db: Session, years: Optional[int] = 3) -> list[dict]:
     """Per-year income and spending by category for the last `years` calendar years.
 
     This lets the model answer "how much side income did I make in 2026?" exactly —
@@ -400,6 +520,11 @@ def _gather_yearly_summary(users: list[User], db: Session, years: int = 3) -> li
     )
 
     today = date.today()
+    if years is None:
+        # Full history: every year present in the data (capped at 10 for prompt size).
+        all_years = {t.date.year for t in txns}
+        first = max(min(all_years), today.year - 9) if all_years else today.year
+        years = today.year - first + 1
     target_years = [today.year - i for i in range(years)]
 
     buckets: dict[int, dict] = {
@@ -601,6 +726,104 @@ def _gather_coast_fi(user: User, db: Session, joint: bool = False) -> dict:
     }
 
 
+def _gather_forecast_context(user: User, users: list[User], db: Session) -> list[str]:
+    """PREDICTION grounding for the chat/report prompts: the same 60-month Foresight
+    projection the app shows, summarized — household totals plus per-account projected
+    balances at +12 and +60 months WITH the provenance of each input (where the
+    contribution and growth-rate numbers came from), so the model can answer
+    'what will my 401k be worth in 5 years and why' from the app's own math."""
+    from app.services.forecasting import run_forecast, run_joint_forecast
+
+    try:
+        fc = run_joint_forecast(db, months=60) if len(users) > 1 else run_forecast(user, db, scenario_id=None, months=60)
+    except Exception as e:
+        return ["", f"(Forecast unavailable right now: {e})"]
+
+    lines = [
+        "",
+        "PREDICTIONS — the app's Foresight projection (household, next 60 months).",
+        "These are the SAME numbers the Foresight page shows. Method: projected spending/income",
+        "per category = weighted trailing average of real transactions (3-mo avg x 50% + 6-mo x 30%",
+        "+ 12-mo x 20%); investment/savings accounts compound monthly: balance x (1 + rate/12) +",
+        "monthly contribution. When asked about future/predicted values, use these — do not invent.",
+    ]
+    pts = fc.points
+    if pts:
+        # Average projected month over the first 12 months + trajectory waypoints.
+        n12 = min(12, len(pts))
+        avg_inc = sum(p.income for p in pts[:n12]) / n12
+        avg_exp = sum(p.expenses for p in pts[:n12]) / n12
+        lines += [
+            f"  - Projected average month (next 12 mo): income ${avg_inc:,.0f}, spending ${avg_exp:,.0f}, "
+            f"net ${avg_inc - avg_exp:,.0f}",
+            f"  - Projected net worth: now ${fc.starting_net_worth:,.0f} -> "
+            f"+12mo ${pts[n12 - 1].net_worth:,.0f} -> +60mo ${pts[-1].net_worth:,.0f}",
+        ]
+    if fc.account_forecasts:
+        lines.append("  Per-account projections (start -> +12mo -> +60mo; with the source of each input):")
+        for af in fc.account_forecasts:
+            if not af.monthly_balances:
+                continue
+            b12 = af.monthly_balances[min(11, len(af.monthly_balances) - 1)]
+            b60 = af.monthly_balances[-1]
+            src_bits = []
+            if af.monthly_contribution:
+                src_bits.append(f"contribution ${af.monthly_contribution:,.0f}/mo from {af.contribution_label} ({af.contribution_basis})")
+            if af.annual_return_pct:
+                src_bits.append(f"growth {af.annual_return_pct}%/yr")
+            src = "; ".join(src_bits) or "no contributions or growth applied"
+            lines.append(
+                f"    - {af.account_name} ({af.account_type}): ${af.starting_balance:,.0f} -> "
+                f"${b12:,.0f} -> ${b60:,.0f} [{src}]"
+            )
+    return lines
+
+
+def _gather_savings_goals_context(user: User, db: Session) -> list[str]:
+    """Current savings-goal status (per person + joint), same as the dashboard card."""
+    from app.services.savings_goal import compute_savings_goals
+
+    try:
+        goals = compute_savings_goals(db, user, joint=True)
+    except Exception as e:
+        return ["", f"(Savings goals unavailable right now: {e})"]
+
+    lines = ["", f"SAVINGS GOALS this month ({goals['month']}) — same numbers as the dashboard card.",
+             "The goal is measured against NET CASH saved (income - spending); retirement/savings",
+             "contributions (401k/IRA/HYSA) are tracked separately and are NOT part of the goal:"]
+    for p in goals["people"]:
+        c = p["contributions"]
+        lines.append(
+            f"  - {p['name']}: net cash saved ${p['net_saved']:,.0f} vs goal ${p['goal']:,.0f} "
+            f"({p['pct_of_goal']}%, {'on track' if p['on_track'] else 'behind'}); contributions "
+            f"${c['total']:,.0f}/mo (HYSA ${c['hysa']:,.0f} [{c['hysa_source']}], IRA ${c['ira']:,.0f}, "
+            f"401k ${c['k401_employee']:,.0f} employee + ${c['k401_employer']:,.0f} employer)"
+        )
+    j = goals["joint"]
+    lines.append(
+        f"  - Household: net cash saved ${j['net_saved']:,.0f} vs combined goal ${j['goal']:,.0f} "
+        f"({j['pct_of_goal']}%); combined contributions ${j['contributions_total']:,.0f}/mo"
+    )
+    return lines
+
+
+_PROVENANCE_GUIDE = [
+    "",
+    "WHERE THE NUMBERS COME FROM (use this to answer 'where does that value come from?'):",
+    "  - Transactions: imported from paystub PDFs, Google Sheets sync, statement PDFs, and CSV — every",
+    "    transaction carries an import_source tag.",
+    "  - Account balances: latest uploaded statement snapshot when one exists, else the manually set balance.",
+    "  - Investment returns: exact XIRR over statement snapshots, netted of recorded contributions — the same",
+    "    method brokers print. Accounts without enough statements ABSTAIN rather than guess.",
+    "  - Projected growth rates: measured XIRR blended toward a 10% market anchor by statement depth;",
+    "    holdings' assumed returns or per-type defaults when no measurement exists.",
+    "  - Contributions: recent paystubs (401k) > measured statement contributions > measured EverBank",
+    "    deposits (HYSA) > manual profile values, each labeled with its source.",
+    "  - Projected spending: weighted trailing category averages (3-mo x 50% + 6-mo x 30% + 12-mo x 20%).",
+    "  - Prefer measured data over assumptions, and say which one a number is when it matters.",
+]
+
+
 # Keywords / shapes that mark a question as conceptual/advisory → auto-escalate.
 # Deliberately NOT generic lookups like "what is my…"/"how much…" — those stay local.
 _HARD_KEYWORDS = (
@@ -641,10 +864,14 @@ def _reply_low_confidence(reply: str) -> bool:
 
 def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> str:
     today = date.today()
-    users = _scope_users(user, db, joint)
-    coast = _gather_coast_fi(user, db, joint)
+    # The chat ALWAYS sees the whole household — every account, both partners, and the
+    # combined totals — regardless of the joint toggle. The old solo mode instructed the
+    # model to REFUSE partner/household questions, which read as "the AI can't see my
+    # data" even though the data was one flag away. `joint` now only sets emphasis.
+    users = db.query(User).order_by(User.id).all()
+    coast = _gather_coast_fi(user, db, joint=True)
 
-    # Per-user financial data, so we can attribute accounts/spending by owner in joint mode.
+    # Per-user financial data, so we can attribute accounts/spending by owner.
     per_user = [(u, _gather_financial_data(u, db, today.year, today.month)) for u in users]
 
     total_assets = sum(d["total_assets"] for _, d in per_user)
@@ -654,19 +881,15 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
     month_spending = sum(d["this_month"]["spending"] for _, d in per_user)
     savings_rate = round((month_income - month_spending) / month_income * 100, 1) if month_income > 0 else 0
 
-    if joint:
-        scope_line = (
-            f"You are the household finance tutor for {user.username.capitalize()} and "
-            + " & ".join(u.username.capitalize() for u in users if u.id != user.id)
-            + ". The numbers below are the COMBINED household (both partners). Account and spending lines are"
-            " labeled by owner. When asked about 'our'/'we'/'the household', use the combined totals."
-        )
-    else:
-        scope_line = (
-            f"You are the personal finance tutor for {user.username.capitalize()}. The numbers below are"
-            f" {user.username.capitalize()}'s only — NOT the household. If asked about a partner or joint"
-            " totals, say those are only visible in the app's Joint (household) view."
-        )
+    partner_names = " & ".join(u.username.capitalize() for u in users)
+    focus = "the combined household" if joint else f"{user.username.capitalize()} (but household data is fully available)"
+    scope_line = (
+        f"You are the household finance tutor for {partner_names}. You are talking to "
+        f"{user.username.capitalize()}; the current view focus is {focus}. You have COMPLETE data for "
+        "BOTH partners AND the combined household below — per-person lines are labeled by owner. "
+        "Answer solo questions, partner questions, and joint/'our' questions directly from this data. "
+        "NEVER say you cannot see partner, joint, or household data — you can, it is all below."
+    )
 
     ctx_lines = [
         scope_line,
@@ -682,16 +905,28 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         "Rules: be concise and concrete. Prefer these real numbers over generic examples — that is the whole point.",
         "Show the formula and the substituted numbers when you calculate. If a figure isn't in the data, say so",
         "rather than inventing it. Use plain language; define a term before using it.",
-        "You DO have month-by-month history below (last 18 months) — use it to answer questions about past",
-        "months, trends, and comparisons; do not claim you only have the current month.",
+        "You DO have month-by-month history below (last 18 months) plus complete YEAR-BY-YEAR summaries",
+        "over the entire recorded history — use them for any question about past months, years, trends,",
+        "and comparisons; do not claim you only have the current month.",
+        "You ALSO have the app's Foresight PREDICTIONS below (next 60 months: projected spending, savings,",
+        "net worth, and per-account balances, with the source of every input) and the current savings-goal",
+        "status — use them for any question about the future; never claim you can't predict or can't see",
+        "forecasts, and never invent your own projection when the app's is provided.",
         "FORMATTING: write clean markdown. Use real markdown tables for comparisons (header row + |---| divider).",
         "Round dollars to whole numbers (e.g. $5,827 — no cents). Use short '##' headers for sections, '-' bullets,",
         "and '**bold**' for key numbers. Do NOT prefix lines with '>' for math; write equations inline on a normal",
         "line (e.g. 'FIRE = $69,924 / 0.04 = $1,748,094'). Avoid '^' notation — say 'grown for 35 years' instead.",
         "",
-        f"{'Household ' if joint else ''}Net Worth: ${net_worth:,.2f} (Assets: ${total_assets:,.2f}, Liabilities: ${total_liabilities:,.2f})",
+        f"HOUSEHOLD Net Worth: ${net_worth:,.2f} (Assets: ${total_assets:,.2f}, Liabilities: ${total_liabilities:,.2f})",
+    ]
+    for u, d in per_user:
+        ctx_lines.append(
+            f"  - {u.username.capitalize()} alone: net worth ${d['net_worth']:,.2f} "
+            f"(assets ${d['total_assets']:,.2f}, liabilities ${d['total_liabilities']:,.2f})"
+        )
+    ctx_lines += [
         "",
-        f"Coast FI / FIRE — {'HOUSEHOLD (both partners combined)' if joint else 'this person only'} "
+        "Coast FI / FIRE — HOUSEHOLD (both partners combined) "
         "(assumptions: 10% return, 3% inflation, 4% SWR, retire at 65). THESE ARE THE CANONICAL,",
         "PRE-COMPUTED FIGURES — use them directly; do NOT recompute the FIRE or Coast FI number from",
         "the monthly spend yourself (you'll get a different answer than the app's Coast FI tab):",
@@ -714,8 +949,7 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
     ]
     for u, d in per_user:
         for acc in d["accounts"]:
-            owner = f" [{u.username}]" if joint else ""
-            ctx_lines.append(f"  - {acc['name']} ({acc['type']}): ${acc['balance']:,.2f}{owner}")
+            ctx_lines.append(f"  - {acc['name']} ({acc['type']}): ${acc['balance']:,.2f} [{u.username}]")
 
     # ── Investments: holdings + MEASURED average return per account ──────────────
     # This is what lets the tutor answer "what funds do I own?" and "what was my
@@ -743,7 +977,7 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
             acc = accounts_by_id.get(acc_id)
             if not acc:
                 continue
-            owner = f" [{acc.user.username}]" if joint and acc.user else ""
+            owner = f" [{acc.user.username}]" if acc.user else ""
             ctx_lines.append(f"  {acc.name} ({acc.account_type}){owner}:")
             for h in sorted(hs, key=lambda x: -(x.current_value or 0)):
                 ret = f", assumed return {h.assumed_annual_return}%" if h.assumed_annual_return else ""
@@ -769,10 +1003,9 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         ]
         for r in measured:
             owner = ""
-            if joint:
-                acc = accounts_by_id.get(r["account_id"])
-                if acc and acc.user:
-                    owner = f" [{acc.user.username}]"
+            acc = accounts_by_id.get(r["account_id"])
+            if acc and acc.user:
+                owner = f" [{acc.user.username}]"
             ctx_lines.append(
                 f"  - {r['account_name']} ({r['account_type']}){owner}: "
                 f"{r['annualized_pct']}%/yr "
@@ -790,24 +1023,40 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
 
     ctx_lines += [
         "",
-        f"This month — Income: ${month_income:,.2f}, Spending: ${month_spending:,.2f}, Savings rate: {savings_rate}%",
-        "",
-        "Spending by category this month:",
+        f"This month, HOUSEHOLD — Income: ${month_income:,.2f}, Spending: ${month_spending:,.2f}, Savings rate: {savings_rate}%",
     ]
-    # Merge this-month category spend across users.
+    for u, d in per_user:
+        tm = d["this_month"]
+        ctx_lines.append(
+            f"  - {u.username.capitalize()} alone: income ${tm['income']:,.2f}, spending ${tm['spending']:,.2f}, "
+            f"savings rate {tm['savings_rate']}%"
+        )
+    ctx_lines += ["", "Spending by category this month (household; per-person figures in brackets when both spent):"]
+    # Merge this-month category spend across users, keeping the per-owner split.
     merged_month: dict[str, float] = {}
-    for _, d in per_user:
+    per_owner_month: dict[str, dict[str, float]] = {}
+    for u, d in per_user:
         for cat, amt in d["this_month"]["by_category"].items():
             merged_month[cat] = merged_month.get(cat, 0.0) + amt
+            per_owner_month.setdefault(cat, {})[u.username] = amt
     for cat, amt in sorted(merged_month.items(), key=lambda x: -x[1]):
-        ctx_lines.append(f"  - {cat}: ${amt:,.2f}")
+        owners = per_owner_month.get(cat, {})
+        split = (
+            " [" + ", ".join(f"{o} ${v:,.0f}" for o, v in owners.items()) + "]"
+            if len(owners) > 1 else f" [{next(iter(owners))}]" if owners else ""
+        )
+        ctx_lines.append(f"  - {cat}: ${amt:,.2f}{split}")
+
+    # Savings-goal status + the app's own forward projections (predictions).
+    ctx_lines += _gather_savings_goals_context(user, db)
+    ctx_lines += _gather_forecast_context(user, users, db)
 
     # Month-by-month history (last 18 months) so questions about PAST months can be answered.
     history = _gather_monthly_history(users, db, months=18)
     if history:
         ctx_lines += [
             "",
-            "Monthly history (most recent first) — income / spending / savings rate, top spend categories:",
+            "Monthly history, HOUSEHOLD combined (most recent first) — income / spending / savings rate, top spend categories:",
         ]
         for h in history:
             tops = ", ".join(f"{c} ${v:,.0f}" for c, v in h["top_categories"]) or "no spending"
@@ -816,9 +1065,10 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
                 f"savings ${h['savings']:,.0f} ({h['savings_rate']}%) — top spend: {tops}"
             )
 
-    # Year-by-year summary with full income AND spending category breakdown.
-    # This is the authoritative source for "how much X did I earn/spend in YEAR?" queries.
-    yearly = _gather_yearly_summary(users, db, years=3)
+    # Year-by-year summary with full income AND spending category breakdown, over the
+    # ENTIRE recorded history — the authoritative source for "how much X did I
+    # earn/spend in YEAR?" and any full-financial-history question.
+    yearly = _gather_yearly_summary(users, db, years=None)
     if yearly:
         ctx_lines += [
             "",
@@ -866,30 +1116,18 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
     event_lines = []
     for u, d in per_user:
         for ev in d["upcoming_events"]:
-            owner = f" [{u.username}]" if joint else ""
-            event_lines.append(f"  - {ev['name']} ({ev['date']}): ${ev['estimated_cost']:,.2f}{owner}")
+            event_lines.append(f"  - {ev['name']} ({ev['date']}): ${ev['estimated_cost']:,.2f} [{u.username}]")
     if event_lines:
         ctx_lines.append("\nUpcoming events:")
         ctx_lines += event_lines
+
+    ctx_lines += _PROVENANCE_GUIDE
 
     return "\n".join(ctx_lines)
 
 
 def _chat_with_claude(api_key: str, system_prompt: str, history: list, message: str) -> str:
-    try:
-        import anthropic
-    except ImportError:
-        raise RuntimeError("The `anthropic` package is not installed.")
-
-    messages = history + [{"role": "user", "content": message}]
-    client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=system_prompt,
-        messages=messages,
-    )
-    return "".join(block.text for block in response.content if block.type == "text")
+    return _claude_messages(api_key, system_prompt, history + [{"role": "user", "content": message}], max_tokens=1536)
 
 
 def _chat_with_openai(api_key: str, system_prompt: str, history: list, message: str) -> str:
@@ -909,25 +1147,8 @@ def _chat_with_openai(api_key: str, system_prompt: str, history: list, message: 
 
 
 def _chat_with_ollama(host: str, model: str, system_prompt: str, history: list, message: str) -> str:
-    import urllib.request
-    import json as _json
-
     messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": message}]
-    payload = _json.dumps({"model": model, "stream": False, "messages": messages}).encode()
-    req = urllib.request.Request(
-        f"{host}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            result = _json.loads(resp.read())
-            return result["message"]["content"]
-    except OSError as e:
-        raise RuntimeError(
-            f"Could not reach Mongol at {host} — it may be asleep. Wake it up and try again. ({e})"
-        )
+    return _ollama_chat_call(host, model, messages)
 
 
 def _chat_via_claude(settings, system_prompt: str, history: list, message: str) -> tuple[str, str]:

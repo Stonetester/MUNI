@@ -21,11 +21,20 @@ def _make_title(message: str) -> str:
     return (text[:57] + "…") if len(text) > 60 else (text or "New chat")
 
 
+@router.get("/types")
+def get_report_types():
+    """Report types the frontend can offer."""
+    from app.services.ai_report import REPORT_TYPES
+    return [{"id": k, "label": v} for k, v in REPORT_TYPES.items()]
+
+
 @router.get("")
 def get_ai_report(
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
     provider: str = Query(default="claude", description="AI provider: 'claude', 'openai', or 'ollama'"),
+    report_type: str = Query(default="monthly", description="monthly | spending | investments | goals | year"),
+    joint: bool = Query(default=True, description="Household report (both partners) vs just the current user"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -40,12 +49,17 @@ def get_ai_report(
         else:
             target_month = today.month - 1
 
-    report = generate_monthly_report(current_user, db, target_year, target_month, provider=provider)
+    report = generate_monthly_report(
+        current_user, db, target_year, target_month,
+        provider=provider, report_type=report_type, joint=joint,
+    )
     return {
         "year": target_year,
         "month": target_month,
         "report": report,
         "provider": provider,
+        "report_type": report_type,
+        "joint": joint,
     }
 
 

@@ -500,7 +500,11 @@ export async function getSavingsGoals(joint = false): Promise<SavingsGoalData> {
       income: netSaved + 2400, spending: 2400, net_saved: netSaved,
       contributions: { hysa: 300, hysa_source: 'measured', hysa_is_joint: true, ira: 200, k401_employee: 100, k401_employer: 0, total: 600 },
       contributions_history: histMonths(600),
-      total_saved: netSaved + 600, suggested_goal: goal, user_goal: null, goal,
+      total_saved: netSaved + 600, suggested_goal: goal,
+      suggested_goal_basis: 'median net cash saved over the last 6 completed months (demo)',
+      suggested_goal_stretch: Math.round(goal * 1.1),
+      suggested_goal_stretch_basis: 'optimistic stretch: mean of positive months × 1.10 (demo)',
+      user_goal: null, goal,
       using_suggestion: true, pct_of_goal: Math.round((netSaved / goal) * 1000) / 10,
       on_track: netSaved >= goal, remaining: Math.max(0, goal - netSaved),
     })
@@ -510,7 +514,8 @@ export async function getSavingsGoals(joint = false): Promise<SavingsGoalData> {
     return {
       month: new Date().toISOString().slice(0, 7), people,
       joint: { name: 'Joint', net_saved: net, contributions_total: 1200, contributions_history: histMonths(1200),
-        total_saved: net + 1200, suggested_goal: g, goal: g, pct_of_goal: Math.round((net / g) * 1000) / 10,
+        total_saved: net + 1200, suggested_goal: g, suggested_goal_stretch: Math.round(g * 1.1),
+        goal: g, pct_of_goal: Math.round((net / g) * 1000) / 10,
         on_track: net >= g, remaining: Math.max(0, g - net) },
       current_user_id: 1,
     }
@@ -732,8 +737,24 @@ export async function deleteHomeBuyingGoal(id: number): Promise<void> {
   await api.delete(`/home-buying/goals/${id}`)
 }
 
-// AI Monthly Report
-export async function getAiReport(year?: number, month?: number, provider: 'claude' | 'openai' | 'ollama' = 'claude'): Promise<{ year: number; month: number; report: string; provider: string }> {
+// AI Report
+export type ReportType = 'monthly' | 'spending' | 'investments' | 'goals' | 'year'
+
+export const REPORT_TYPE_LABELS: Record<ReportType, string> = {
+  monthly: 'Monthly Review',
+  spending: 'Spending Deep-Dive',
+  investments: 'Investments & Returns',
+  goals: 'Goals & Retirement',
+  year: 'Year in Review',
+}
+
+export async function getAiReport(
+  year?: number,
+  month?: number,
+  provider: 'claude' | 'openai' | 'ollama' = 'claude',
+  reportType: ReportType = 'monthly',
+  joint = true,
+): Promise<{ year: number; month: number; report: string; provider: string; report_type?: string; joint?: boolean }> {
   if (isDemoModeActive()) {
     const now = new Date()
     return {
@@ -747,6 +768,8 @@ export async function getAiReport(year?: number, month?: number, provider: 'clau
   if (year) params.append('year', String(year))
   if (month) params.append('month', String(month))
   params.append('provider', provider)
+  params.append('report_type', reportType)
+  params.append('joint', String(joint))
   const res = await api.get(`/ai-report?${params.toString()}`)
   return res.data
 }

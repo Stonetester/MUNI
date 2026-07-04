@@ -180,6 +180,11 @@ export default function ForesightDashboard({ forecast, transactions, holdings, b
       monthlyIncome, monthlySpending, projectedMonthlySavings, totalTargetSavings,
       currentMonthlySavings, annualInvestmentReturn, forecastInvestmentReturn, returnAccounts, holdings,
       forecastMonths: forecast.months, anomalies, transactions, forecastReferenceDate, forecastSourceStartDate,
+      // Backend-computed provenance: the exact blend inputs behind every projected
+      // category amount, so the drill-down shows the server's real math.
+      spendingModel: forecast.spending_model ?? [],
+      spendingModelFormula: forecast.spending_model_formula ?? '',
+      varianceBasis: forecast.variance_basis ?? '',
     }
   }, [forecast, transactions, holdings, budgetEstimates, intensity])
 
@@ -315,6 +320,14 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
   }))
   const categoryOriginDetail = (categoryName: string, amount: number, sign: 'income' | 'expense'): CalculationDetail => {
     const records = sourceTransactions(categoryName, sign)
+    // The backend's own blend inputs for this category — the authoritative math.
+    const modelRow = (analysis.spendingModel ?? []).find((r: { category: string }) => r.category === categoryName)
+    const blendInputs: CalculationInput[] = modelRow ? [
+      { label: 'Trailing 3-month average', value: formatCurrency(Math.abs(modelRow.avg3)), note: 'weighted 50% (backend-computed from real transactions)' },
+      { label: 'Trailing 6-month average', value: formatCurrency(Math.abs(modelRow.avg6)), note: 'weighted 30%' },
+      { label: 'Trailing 12-month average', value: formatCurrency(Math.abs(modelRow.avg12)), note: 'weighted 20%' },
+      { label: 'Projected monthly amount', value: formatCurrency(Math.abs(modelRow.monthly)), note: `= ${formatCurrency(Math.abs(modelRow.avg3))}×0.5 + ${formatCurrency(Math.abs(modelRow.avg6))}×0.3 + ${formatCurrency(Math.abs(modelRow.avg12))}×0.2` },
+    ] : []
     return {
       title: `${categoryName} forecast source`,
       value: formatCurrency(Math.abs(amount)),
@@ -325,7 +338,7 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
         ...(records.length ? [] : ['No matching source transaction is present in the loaded 2,000-record window; this value may come from an active recurring rule or older history.']),
         ...(records.length > 50 ? [`Showing the 50 most recent of ${records.length} loaded source transactions.`] : []),
       ],
-      inputs: sourceRecordInputs(records),
+      inputs: [...blendInputs, ...sourceRecordInputs(records)],
     }
   }
   const incomeDetail: CalculationDetail = {
@@ -435,24 +448,49 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
       label: formatMonth(point.month), value: formatCurrency(point.cash), note: point === analysis.lowest ? 'Lowest forecast record' : 'Range reference',
     })),
   }
+  // Full per-account provenance: growth rate origin, contribution origin, starting
+  // balance source, and the exact month-step formula — straight from the backend.
+  const accountProjectionDetail = (account: any): CalculationDetail => {
+    const monthlyRate = account.annual_return_pct / 100 / 12
+    const firstMonth = account.starting_balance * (1 + monthlyRate) + account.monthly_contribution
+    return {
+      title: `${account.account_name} projection`,
+      value: formatCurrency(account.ending_balance),
+      formula: account.projection_formula || 'each month: balance × (1 + rate/12) + contribution',
+      dateRange: forecastRange,
+      assumptions: [
+        `Growth rate: ${account.rate_basis || 'no growth applied'}`,
+        `Monthly contribution: ${account.monthly_contribution > 0 ? `${formatCurrency(account.monthly_contribution)} — ${account.contribution_basis || account.contribution_label}` : 'none applied'}`,
+        `Starting balance: ${formatCurrency(account.starting_balance)} from ${account.starting_balance_source || 'the account balance'}`,
+      ],
+      warnings: account.rate_source === 'type_default'
+        ? ['This account uses the app-default rate — upload statements to measure its real return.']
+        : ['This is modeled growth, not a guaranteed return.'],
+      inputs: [
+        { label: 'Starting balance', value: formatCurrency(account.starting_balance), note: account.starting_balance_source },
+        { label: 'First month worked out', value: formatCurrency(firstMonth), note: `${formatCurrency(account.starting_balance)} × (1 + ${account.annual_return_pct.toFixed(2)}%/12) + ${formatCurrency(account.monthly_contribution)}` },
+        { label: `Projected after ${analysis.forecastMonths} months`, value: formatCurrency(account.ending_balance), note: 'same step applied every month' },
+        ...(account.lifetime_monthly_contribution != null ? [{
+          label: 'Lifetime contribution average (comparison)',
+          value: `${formatCurrency(account.lifetime_monthly_contribution)}/mo`,
+          note: account.lifetime_contribution_basis,
+        }] : []),
+      ],
+    }
+  }
   const annualReturnDetail: CalculationDetail = {
     title: 'Estimated annual return',
     value: formatCurrency(analysis.annualInvestmentReturn),
     formula: 'Sum of each growth account starting balance x its annual return assumption.',
     dateRange: `One-year estimate using starting balances for ${formatMonth(analysis.first?.month ?? '')}.`,
-    assumptions: ['Rates come from configured holdings, profile settings, or forecast account-type defaults.', 'Contributions and market volatility are excluded.'],
-    warnings: [
-      'Forecast records do not expose the date of each starting balance; stale account snapshots may affect this estimate.',
-      ...(analysis.returnAccounts.length ? [] : ['No accounts with a non-zero return assumption were found.']),
-    ],
-    inputs: analysis.returnAccounts.map((account: any) => {
-      const matching = analysis.holdings.filter((holding: InvestmentHolding) => holding.account_id === account.account_id)
-      return {
-        label: account.account_name,
-        value: formatCurrency(account.starting_balance * account.annual_return_pct / 100),
-        note: `${formatCurrency(account.starting_balance)} x ${account.annual_return_pct.toFixed(2)}%${matching.length ? `; ${matching.length} holding record(s)` : '; estimated/default rate'}`,
-      }
-    }),
+    assumptions: ['Each rate is labeled with its origin below — measured from your statements when possible, else assumptions or defaults.', 'Contributions and market volatility are excluded.'],
+    warnings: analysis.returnAccounts.length ? [] : ['No accounts with a non-zero return assumption were found.'],
+    inputs: analysis.returnAccounts.map((account: any) => ({
+      label: account.account_name,
+      value: formatCurrency(account.starting_balance * account.annual_return_pct / 100),
+      note: `${formatCurrency(account.starting_balance)} x ${account.annual_return_pct.toFixed(2)}% — tap for where the rate and balance come from.`,
+      detail: accountProjectionDetail(account),
+    })),
   }
   const forecastReturnDetail: CalculationDetail = {
     title: 'Forecast return',
@@ -460,11 +498,12 @@ function Overview({ analysis, trajectoryData, savingsRate, topCategory, onPoint,
     formula: 'Sum of growth-account ending balance - starting balance - (monthly contribution x forecast months).',
     dateRange: forecastRange,
     assumptions: ['Only accounts with a non-zero forecast return rate are included.', 'The forecast compounds monthly at the listed annual rate.'],
-    warnings: ['This is modeled growth, not a guaranteed return.', 'Forecast records do not expose the date of each starting balance.', ...(analysis.returnAccounts.length ? [] : ['No growth accounts were found.'])],
+    warnings: ['This is modeled growth, not a guaranteed return.', ...(analysis.returnAccounts.length ? [] : ['No growth accounts were found.'])],
     inputs: analysis.returnAccounts.map((account: any) => ({
       label: account.account_name,
       value: formatCurrency(account.ending_balance - account.starting_balance - account.monthly_contribution * analysis.forecastMonths),
-      note: `${formatCurrency(account.ending_balance)} - ${formatCurrency(account.starting_balance)} - (${formatCurrency(account.monthly_contribution)} x ${analysis.forecastMonths})`,
+      note: `${formatCurrency(account.ending_balance)} - ${formatCurrency(account.starting_balance)} - (${formatCurrency(account.monthly_contribution)} x ${analysis.forecastMonths}) — tap for full provenance.`,
+      detail: accountProjectionDetail(account),
     })),
   }
 

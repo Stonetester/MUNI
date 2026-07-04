@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { AccountForecast, ForecastPoint } from '@/lib/types'
 import { formatCurrency, formatMonth, accountTypeLabel } from '@/lib/utils'
 import Card from '@/components/ui/Card'
@@ -16,7 +16,7 @@ import {
   Legend,
   TooltipProps,
 } from 'recharts'
-import { TrendingUp } from 'lucide-react'
+import { TrendingUp, HelpCircle } from 'lucide-react'
 
 interface AccountForecastChartProps {
   points: ForecastPoint[]
@@ -68,6 +68,8 @@ export default function AccountForecastChart({ points, accountForecasts }: Accou
   )
 
   const [hiddenAccounts, setHiddenAccounts] = useState<Set<string>>(new Set())
+  // Which account's "show me the math" panel is open in the summary table.
+  const [explainId, setExplainId] = useState<number | null>(null)
 
   function toggleAccount(name: string) {
     setHiddenAccounts((prev) => {
@@ -189,8 +191,9 @@ export default function AccountForecastChart({ points, accountForecasts }: Accou
         </ResponsiveContainer>
       </div>
 
-      {/* Summary table */}
-      <div className="mt-4 overflow-x-auto">
+      {/* Summary table — tap a row to see exactly where each number comes from */}
+      <p className="mt-4 text-xs text-muted">Tap an account row to see the math and the origin of every value.</p>
+      <div className="mt-1 overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-muted border-b border-[#2d3748]">
@@ -202,13 +205,22 @@ export default function AccountForecastChart({ points, accountForecasts }: Accou
             </tr>
           </thead>
           <tbody>
-            {investmentAccounts.map((acc, i) => (
-              <tr key={acc.account_id} className="border-b border-[#2d3748]/40 hover:bg-surface-2/30">
+            {investmentAccounts.map((acc, i) => {
+              const isOpen = explainId === acc.account_id
+              const monthlyRate = acc.annual_return_pct / 100 / 12
+              const firstMonth = acc.starting_balance * (1 + monthlyRate) + acc.monthly_contribution
+              return (
+              <Fragment key={acc.account_id}>
+              <tr
+                onClick={() => setExplainId(isOpen ? null : acc.account_id)}
+                className="border-b border-[#2d3748]/40 hover:bg-surface-2/30 cursor-pointer"
+              >
                 <td className="py-2 pr-4">
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
                     <span className="text-text-primary font-medium">{acc.account_name}</span>
                     <span className="text-muted">({accountTypeLabel(acc.account_type)})</span>
+                    <HelpCircle size={11} className={isOpen ? 'text-primary' : 'text-muted'} />
                   </div>
                 </td>
                 <td className="text-right py-2 px-2 text-text-secondary">{formatCurrency(acc.starting_balance)}</td>
@@ -222,7 +234,47 @@ export default function AccountForecastChart({ points, accountForecasts }: Accou
                   {formatCurrency(acc.ending_balance)}
                 </td>
               </tr>
-            ))}
+              {isOpen && (
+                <tr className="border-b border-[#2d3748]/40 bg-surface-2/40">
+                  <td colSpan={5} className="py-3 px-3">
+                    <div className="flex flex-col gap-2 text-[11px] leading-relaxed max-w-xl">
+                      <div>
+                        <span className="text-muted font-medium">Starting balance · </span>
+                        <span className="text-text-secondary">{formatCurrency(acc.starting_balance)} from {acc.starting_balance_source || 'the account balance'}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted font-medium">Growth rate · </span>
+                        <span className="text-text-secondary">{acc.rate_basis || 'no growth applied'}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted font-medium">Contribution · </span>
+                        <span className="text-text-secondary">
+                          {acc.monthly_contribution > 0
+                            ? `${formatCurrency(acc.monthly_contribution)}/mo — ${acc.contribution_basis || acc.contribution_label}`
+                            : 'none applied'}
+                          {acc.lifetime_monthly_contribution != null && (
+                            <> (lifetime average for comparison: {formatCurrency(acc.lifetime_monthly_contribution)}/mo — {acc.lifetime_contribution_basis})</>
+                          )}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-muted font-medium">How it's projected · </span>
+                        <span className="text-text-secondary">{acc.projection_formula}</span>
+                      </div>
+                      {acc.annual_return_pct > 0 && (
+                        <div>
+                          <span className="text-muted font-medium">First month worked out · </span>
+                          <span className="text-text-primary font-mono">
+                            {formatCurrency(acc.starting_balance)} × (1 + {acc.annual_return_pct.toFixed(2)}%/12) + {formatCurrency(acc.monthly_contribution)} = {formatCurrency(firstMonth)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
+              </Fragment>
+            )})}
           </tbody>
         </table>
       </div>

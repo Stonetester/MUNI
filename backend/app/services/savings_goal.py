@@ -287,14 +287,29 @@ def _contributions_history(
     return out
 
 
-def _suggested_goal(db: Session, user_id: int, today: date) -> float:
+def _round25(x: float) -> float:
+    """Round to the nearest $25 for a clean target."""
+    return round(x / 25.0) * 25.0
+
+
+def _suggested_goal(db: Session, user_id: int, today: date) -> dict:
     """
     Suggest a monthly NET-CASH savings goal from the last N COMPLETED months.
 
-    Basis = average NET CASH saved (income - spending) over the trailing completed months,
-    nudged up by a small stretch factor. Retirement/savings-account contributions are NOT
-    included — the main goal is measured against net cash only. We look only at completed
-    months so a partial current month doesn't drag the suggestion down.
+    Returns a realistic MAIN suggestion plus an optimistic STRETCH alternate, each
+    with a plain-language basis so the UI can show exactly how it was computed:
+
+      - `suggested` (MAIN): MEDIAN net cash saved over the trailing completed months,
+        floored at $0. The median is the honest "typical month" — one great month
+        can't inflate it, one blow-out month can't sink it, and overspent months
+        stay in the basis.
+      - `stretch` (ALTERNATE): mean of only the POSITIVE months x 1.10 — the app's
+        old suggestion. It drops overspent months entirely, so it answers "what
+        could I save in a good month?", not "what do I typically save?".
+
+    Retirement/savings-account contributions are NOT included — the main goal is
+    measured against net cash only. Only completed months count so a partial
+    current month doesn't drag the suggestion down.
     """
     nets: list[float] = []
     for i in range(1, SUGGEST_LOOKBACK_MONTHS + 1):
@@ -303,17 +318,38 @@ def _suggested_goal(db: Session, user_id: int, today: date) -> float:
         _, _, net = _net_saved(db, user_id, start, end)
         nets.append(net)
 
+    import statistics
+
+    n = len(nets)
+    median_net = statistics.median(nets) if nets else 0.0
+    suggested = _round25(max(median_net, 0.0))
+
     positive = [t for t in nets if t > 0]
     if positive:
-        avg = sum(positive) / len(positive)
+        stretch_base = sum(positive) / len(positive)
+        stretch_note = f"mean of the {len(positive)} positive months only, x {SUGGEST_STRETCH}"
     elif nets:
-        avg = sum(nets) / len(nets)
+        stretch_base = sum(nets) / len(nets)
+        stretch_note = f"mean of all {n} months (none were positive), x {SUGGEST_STRETCH}"
     else:
-        avg = 0.0
+        stretch_base = 0.0
+        stretch_note = "no history"
+    stretch = _round25(max(stretch_base * SUGGEST_STRETCH, 0.0))
 
-    suggestion = max(avg * SUGGEST_STRETCH, 0.0)
-    # Round to the nearest $25 for a clean target.
-    return round(suggestion / 25.0) * 25.0
+    return {
+        "suggested": suggested,
+        "suggested_basis": (
+            f"median net cash saved (income - spending) over the last {n} completed months "
+            f"(median ${median_net:,.0f}), floored at $0, rounded to $25 — a typical month, "
+            "including overspent months"
+        ),
+        "stretch": stretch,
+        "stretch_basis": (
+            f"optimistic stretch: {stretch_note} (${stretch_base:,.0f} x {SUGGEST_STRETCH} = "
+            f"${stretch_base * SUGGEST_STRETCH:,.0f}), rounded to $25 — ignores overspent months, "
+            "so it's a good-month target, not a typical-month one"
+        ),
+    }
 
 
 def _sum_history(histories: list[list[dict]]) -> list[dict]:
@@ -356,7 +392,8 @@ def _person_block(db: Session, user: User, today: date, household_user_ids: list
     # total_saved kept for display only — the GOAL is measured against net_saved.
     total_saved = round(net_saved + contributions["total"], 2)
 
-    suggested = _suggested_goal(db, user.id, today)
+    suggestion = _suggested_goal(db, user.id, today)
+    suggested = suggestion["suggested"]
     user_goal = profile.monthly_savings_goal if profile else None
     goal = user_goal if user_goal is not None else suggested
 
@@ -374,6 +411,9 @@ def _person_block(db: Session, user: User, today: date, household_user_ids: list
         "contributions_history": contributions_history,
         "total_saved": total_saved,
         "suggested_goal": suggested,
+        "suggested_goal_basis": suggestion["suggested_basis"],
+        "suggested_goal_stretch": suggestion["stretch"],
+        "suggested_goal_stretch_basis": suggestion["stretch_basis"],
         "user_goal": round(user_goal, 2) if user_goal is not None else None,
         "goal": round(goal, 2),
         "using_suggestion": user_goal is None,
@@ -412,6 +452,7 @@ def compute_savings_goals(db: Session, current_user: User, joint: bool = False) 
     joint_contrib = round(sum(p["contributions"]["total"] for p in all_people), 2)
     joint_goal = round(sum(p["goal"] for p in all_people), 2)
     joint_suggested = round(sum(p["suggested_goal"] for p in all_people), 2)
+    joint_stretch = round(sum(p["suggested_goal_stretch"] for p in all_people), 2)
     joint_pct = round((joint_net_saved / joint_goal) * 100, 1) if joint_goal > 0 else 0.0
     joint_history = _sum_history([p["contributions_history"] for p in all_people])
 
@@ -422,6 +463,7 @@ def compute_savings_goals(db: Session, current_user: User, joint: bool = False) 
         "contributions_history": joint_history,
         "total_saved": joint_total_saved,
         "suggested_goal": joint_suggested,
+        "suggested_goal_stretch": joint_stretch,
         "goal": joint_goal,
         "pct_of_goal": joint_pct,
         "on_track": joint_net_saved >= joint_goal if joint_goal > 0 else False,

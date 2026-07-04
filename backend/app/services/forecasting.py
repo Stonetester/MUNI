@@ -30,7 +30,13 @@ from app.models.category import Category
 from app.models.life_event import LifeEvent
 from app.models.transaction import Transaction
 from app.models.user import User
-from app.schemas.forecast import AccountForecast, ForecastPoint, ForecastResponse, NetWorthBreakdownItem
+from app.schemas.forecast import (
+    AccountForecast,
+    ForecastPoint,
+    ForecastResponse,
+    NetWorthBreakdownItem,
+    SpendingModelRow,
+)
 from app.services.transaction_math import counts_in_recurring_forecast
 
 # Account type sets
@@ -98,8 +104,8 @@ FREQUENCY_MONTHS: Dict[str, float] = {
 }
 
 
-def _latest_snapshot_balances(account_ids: List[int], db: Session) -> Dict[int, float]:
-    """Return {account_id: balance} from the most recent BalanceSnapshot for each account."""
+def _latest_snapshot_meta(account_ids: List[int], db: Session) -> Dict[int, tuple]:
+    """{account_id: (balance, date)} from each account's most recent BalanceSnapshot."""
     if not account_ids:
         return {}
     snapshots = (
@@ -108,11 +114,39 @@ def _latest_snapshot_balances(account_ids: List[int], db: Session) -> Dict[int, 
         .order_by(BalanceSnapshot.date.desc())
         .all()
     )
-    result: Dict[int, float] = {}
+    result: Dict[int, tuple] = {}
     for snap in snapshots:
         if snap.account_id not in result:
-            result[snap.account_id] = float(snap.balance)
+            result[snap.account_id] = (float(snap.balance), snap.date)
     return result
+
+
+def _latest_snapshot_balances(account_ids: List[int], db: Session) -> Dict[int, float]:
+    """Return {account_id: balance} from the most recent BalanceSnapshot for each account."""
+    return {aid: bal for aid, (bal, _d) in _latest_snapshot_meta(account_ids, db).items()}
+
+
+def _starting_balance_source(acc_id: int, snap_meta: Dict[int, tuple]) -> str:
+    """Plain-language provenance of an account's starting balance in the forecast."""
+    if acc_id in snap_meta:
+        _bal, d = snap_meta[acc_id]
+        return f"latest statement snapshot ({d.isoformat()})"
+    return "manually set account balance (no statement snapshots yet)"
+
+
+def _projection_formula(acc: "Account", annual_pct: float, contrib: float) -> str:
+    """The exact month-step rule the forecast applies to this account."""
+    if acc.account_type in COMPOUND_TYPES:
+        return (
+            f"each month: balance × (1 + {annual_pct:.2f}%/12) + ${contrib:,.2f} contribution"
+            if annual_pct or contrib else "each month: balance carried forward (no growth or contribution configured)"
+        )
+    if acc.account_type in CASH_POOL_TYPES:
+        return (
+            "share of the household cash pool: the pool moves each month by projected income − "
+            "projected spending − savings transfers − event costs; this account keeps its starting share of the pool"
+        )
+    return "held constant — the forecast doesn't model growth or payments for this account type"
 
 
 def _projected_net_worth_breakdown(
@@ -610,9 +644,12 @@ def _build_compound_account_config(
     db: Session,
     user_id: int,
     solo_hysa_user_id: Optional[int] = None,
-) -> tuple[Dict[int, float], Dict[int, float], Dict[int, dict]]:
+) -> tuple[Dict[int, float], Dict[int, float], Dict[int, dict], Dict[int, dict]]:
     """
-    Returns (monthly_rate_map, monthly_contrib_map, hysa_detail_map) for each account.
+    Returns (monthly_rate_map, monthly_contrib_map, hysa_detail_map, rate_detail_map)
+    for each account. `rate_detail_map[account_id]` = {"source", "basis"} recording
+    WHERE the growth rate came from, so the UI can show the math behind every
+    projected balance instead of an unexplained percentage.
     Pulls from InvestmentHolding records first, then FinancialProfile defaults.
     Uses DEFAULT_ANNUAL_RETURNS as the final fallback for compound-type accounts.
 
@@ -645,6 +682,7 @@ def _build_compound_account_config(
     monthly_rate: Dict[int, float] = {}
     monthly_contrib: Dict[int, float] = {}
     hysa_detail: Dict[int, dict] = {}
+    rate_detail: Dict[int, dict] = {}
 
     # 0. Measured XIRR wins for investment accounts (highest priority for RATE).
     #    Anchor each account's projected growth to its own realized money-weighted
@@ -658,10 +696,19 @@ def _build_compound_account_config(
             continue
         r = account_return(acc.id, db)
         if r.get("annualized_pct") is not None:
-            blended_annual = _blend_forecast_rate(
-                r["annualized_pct"], r.get("n_snapshots") or 0
-            )
+            n_snaps = r.get("n_snapshots") or 0
+            blended_annual = _blend_forecast_rate(r["annualized_pct"], n_snaps)
             monthly_rate[acc.id] = blended_annual / 100.0 / 12.0
+            w = min(XIRR_TRUST_MAX, max(0.0, n_snaps * XIRR_TRUST_PER_STATEMENT))
+            rate_detail[acc.id] = {
+                "source": "measured_xirr",
+                "basis": (
+                    f"your measured return {r['annualized_pct']}%/yr (XIRR over {n_snaps} statements, "
+                    f"{r['period_start']}→{r['period_end']}), blended {w:.0%} measured / "
+                    f"{1 - w:.0%} toward the {MARKET_ANCHOR_ANNUAL:g}% market anchor "
+                    f"= {blended_annual:.1f}%/yr"
+                ),
+            }
 
     # 1. Build from InvestmentHolding records. Holdings supply CONTRIBUTIONS always,
     #    and supply the RATE only when a measured XIRR did not already set it.
@@ -676,6 +723,14 @@ def _build_compound_account_config(
             )
             if acc.id not in monthly_rate:
                 monthly_rate[acc.id] = blended_annual / 100.0 / 12.0
+                rate_detail[acc.id] = {
+                    "source": "holdings_assumed",
+                    "basis": (
+                        f"value-weighted average of the assumed annual returns you set on "
+                        f"{len(acc_holdings)} holding{'s' if len(acc_holdings) != 1 else ''} "
+                        f"= {blended_annual:.1f}%/yr (an assumption, not a measured return)"
+                    ),
+                }
             monthly_contrib[acc.id] = sum(h.monthly_contribution or 0.0 for h in acc_holdings)
 
     # 1b. RECENT real data is the truth for investment-account contributions (401k/IRA/
@@ -729,6 +784,10 @@ def _build_compound_account_config(
             if acc.account_type == "hysa":
                 if acc.id not in monthly_rate and (profile.hysa_apy or 0) > 0:
                     monthly_rate[acc.id] = (profile.hysa_apy or 0) / 100.0 / 12.0
+                    rate_detail[acc.id] = {
+                        "source": "profile_apy",
+                        "basis": f"the {profile.hysa_apy:g}% APY set in the financial profile",
+                    }
 
         ira_without_holdings = [
             a for a in accounts
@@ -744,8 +803,15 @@ def _build_compound_account_config(
         if acc.account_type in COMPOUND_TYPES and acc.id not in monthly_rate:
             default_annual = DEFAULT_ANNUAL_RETURNS.get(acc.account_type, 5.0)
             monthly_rate[acc.id] = default_annual / 100.0 / 12.0
+            rate_detail[acc.id] = {
+                "source": "type_default",
+                "basis": (
+                    f"the app's default {default_annual:g}%/yr for {acc.account_type} accounts "
+                    "(no measured return or assumption available yet — upload statements to measure one)"
+                ),
+            }
 
-    return monthly_rate, monthly_contrib, hysa_detail
+    return monthly_rate, monthly_contrib, hysa_detail, rate_detail
 
 
 def _infer_pay_schedule(user_id: int, db: Session) -> Optional[Dict]:
@@ -931,7 +997,7 @@ def compute_estimated_balances(
 
     # Per-user estimation: scope a joint HYSA to this user's deposits only (same
     # asymmetry fix as the solo forecast — the projection here only sees this user's data).
-    monthly_rate, monthly_contrib, hysa_detail = _build_compound_account_config(
+    monthly_rate, monthly_contrib, hysa_detail, _rate_detail = _build_compound_account_config(
         accounts, db, user_id, solo_hysa_user_id=user_id
     )
 
@@ -1125,7 +1191,7 @@ def run_forecast(
     # solo_hysa_user_id scopes a joint HYSA's contribution to THIS user's deposits only,
     # so the per-individual forecast doesn't grow the HYSA by the partner's half while
     # only the logged-in user's cash outflow leaves checking (would inflate solo net worth).
-    account_monthly_rate, account_monthly_contrib, hysa_detail = _build_compound_account_config(
+    account_monthly_rate, account_monthly_contrib, hysa_detail, rate_detail = _build_compound_account_config(
         accounts, db, user.id, solo_hysa_user_id=user.id
     )
     # HYSA accounts get a current-month override: contribution is the actual deposits
@@ -1139,7 +1205,8 @@ def run_forecast(
     # Seed from Account.balance, then override with the most recent BalanceSnapshot
     # so that uploaded statement PDFs (EverBank, JH, Schwab) are reflected correctly.
     account_balances: Dict[int, float] = {a.id: float(a.balance) for a in accounts}
-    account_balances.update(_latest_snapshot_balances(list(account_balances.keys()), db))
+    snap_meta = _latest_snapshot_meta(list(account_balances.keys()), db)
+    account_balances.update({aid: bal for aid, (bal, _d) in snap_meta.items()})
 
     # Separate accounts into cash pool (no compound growth) vs compound accounts
     cash_pool_ids = {a.id for a in accounts if a.account_type in CASH_POOL_TYPES}
@@ -1408,6 +1475,7 @@ def run_forecast(
         annual_return = account_monthly_rate.get(acc.id, 0.0) * 12.0 * 100.0
         contrib = account_monthly_contrib.get(acc.id, 0.0)
         src = _resolve_contribution_source(acc, contrib, hysa_detail, db)
+        rd = rate_detail.get(acc.id, {"source": "none", "basis": ""})
         account_forecasts.append(
             AccountForecast(
                 account_id=acc.id,
@@ -1423,8 +1491,41 @@ def run_forecast(
                 contribution_basis=src["basis"],
                 lifetime_monthly_contribution=src.get("lifetime_monthly"),
                 lifetime_contribution_basis=src.get("lifetime_basis", ""),
+                rate_source=rd["source"],
+                rate_basis=rd["basis"],
+                starting_balance_source=_starting_balance_source(acc.id, snap_meta),
+                projection_formula=_projection_formula(acc, round(annual_return, 2), contrib),
             )
         )
+
+    # ── Spending model: the exact inputs behind projected income/spending ──────
+    spending_model: List[SpendingModelRow] = []
+    for cat_id, avgs in hist_avgs.items():
+        monthly = avgs["avg3"] * 0.5 + avgs["avg6"] * 0.3 + avgs["avg12"] * 0.2
+        name = categories_map.get(cat_id, "Uncategorized") if cat_id else "Uncategorized"
+        if cat_id in paid_off_cat_ids:
+            kind, note = "excluded", "linked liability is paid off — payments are no longer projected"
+        elif cat_id in savings_cat_ids:
+            kind, note = "savings", "money saved, not spent — moves cash but is excluded from projected spending"
+        else:
+            kind = "expense" if monthly < 0 else "income"
+            note = ""
+        spending_model.append(SpendingModelRow(
+            category=name, kind=kind,
+            avg3=round(avgs["avg3"], 2), avg6=round(avgs["avg6"], 2), avg12=round(avgs["avg12"], 2),
+            monthly=round(monthly, 2), note=note,
+        ))
+    for rule in all_rules:
+        if rule.category_id in hist_covered_cats:
+            continue
+        name = categories_map.get(rule.category_id, "Uncategorized") if rule.category_id else "Uncategorized"
+        spending_model.append(SpendingModelRow(
+            category=f"{name} ({rule.name})",
+            kind="expense" if (rule.amount or 0) < 0 else "income",
+            monthly=round(rule.amount or 0.0, 2),
+            note=f"from your recurring rule ({rule.frequency}) — no transaction history for this category yet",
+        ))
+    spending_model.sort(key=lambda r: abs(r.monthly), reverse=True)
 
     return ForecastResponse(
         scenario_id=scenario_id,
@@ -1435,6 +1536,13 @@ def run_forecast(
         total_income=round(total_income, 2),
         total_expenses=round(total_expenses, 2),
         account_forecasts=account_forecasts,
+        spending_model=spending_model,
+        variance_pct=round(variance_pct, 4),
+        variance_basis=(
+            f"cash range = ±{variance_pct:.0%} of each month's projected spending — the "
+            "coefficient of variation of your real monthly spending over the last 12 months, "
+            "clamped between 5% and 30%"
+        ),
     )
 
 
@@ -1468,16 +1576,19 @@ def run_joint_forecast(
     # ── Compound config: each user contributes to their owned accounts ──
     account_monthly_rate: Dict[int, float] = {}
     account_monthly_contrib: Dict[int, float] = {}
+    rate_detail: Dict[int, dict] = {}
     # HYSA current-month actuals (apply $0-or-actual for i==0, trailing avg after).
     hysa_current_month_contrib: Dict[int, float] = {}
     joint_hysa_detail: Dict[int, dict] = {}  # merged hysa_detail across users for source labeling
 
     for u in users:
         owned = [a for a in all_accounts if a.user_id == u.id]
-        rate_map, contrib_map, hysa_detail = _build_compound_account_config(owned, db, u.id)
+        rate_map, contrib_map, hysa_detail, user_rate_detail = _build_compound_account_config(owned, db, u.id)
         for acc_id, rate in rate_map.items():
             if acc_id not in account_monthly_rate:
                 account_monthly_rate[acc_id] = rate
+        for acc_id, rd in user_rate_detail.items():
+            rate_detail.setdefault(acc_id, rd)
         for acc_id, contrib in contrib_map.items():
             account_monthly_contrib[acc_id] = account_monthly_contrib.get(acc_id, 0.0) + contrib
         # HYSA detail: for a joint HYSA the helper already measured BOTH partners'
@@ -1522,12 +1633,20 @@ def run_joint_forecast(
         if a.account_type in COMPOUND_TYPES and a.id not in account_monthly_rate:
             default_annual = DEFAULT_ANNUAL_RETURNS.get(a.account_type, 5.0)
             account_monthly_rate[a.id] = default_annual / 100.0 / 12.0
+            rate_detail.setdefault(a.id, {
+                "source": "type_default",
+                "basis": (
+                    f"the app's default {default_annual:g}%/yr for {a.account_type} accounts "
+                    "(no measured return or assumption available yet)"
+                ),
+            })
 
     # ── Starting balances ──
     # Seed from Account.balance, then override with the most recent BalanceSnapshot
     # so that uploaded statement PDFs (EverBank, JH, Schwab) are reflected correctly.
     account_balances: Dict[int, float] = {a.id: float(a.balance) for a in all_accounts}
-    account_balances.update(_latest_snapshot_balances(list(account_balances.keys()), db))
+    snap_meta = _latest_snapshot_meta(list(account_balances.keys()), db)
+    account_balances.update({aid: bal for aid, (bal, _d) in snap_meta.items()})
 
     cash_pool_ids = {a.id for a in all_accounts if a.account_type in CASH_POOL_TYPES}
     compound_ids = {a.id for a in all_accounts if a.account_type in COMPOUND_TYPES}
@@ -1556,6 +1675,8 @@ def run_joint_forecast(
 
     # ── Combined historical averages (merged by category name across all users) ──
     combined_monthly: Dict[str, float] = {}
+    # Per-label blend inputs, kept so the response can EXPLAIN every projected amount.
+    combined_model: Dict[str, dict] = {}
     # Savings-kind outflows across the household. Kept OUT of displayed expenses (saved,
     # not consumed; already tracked as account contributions) but rolled into cash below.
     combined_savings_outflow = 0.0
@@ -1578,13 +1699,20 @@ def run_joint_forecast(
             # is already captured as the owner's HYSA/account contribution, so it must NOT
             # also roll cash here (would double-count). An owner's own savings outflow does
             # roll cash forward (their money leaving checking) but stays out of expenses.
+            cat = cats_map.get(cat_id)
+            label = cat.name if cat else "Uncategorized"
             if cat_id in savings_cats:
                 if hist_amount < 0 and user_has_savings:
                     combined_savings_outflow += hist_amount
+                m = combined_model.setdefault(label, {"kind": "savings", "avg3": 0.0, "avg6": 0.0, "avg12": 0.0, "monthly": 0.0,
+                                                      "note": "money saved, not spent — moves cash but is excluded from projected spending"})
+                for k, v in (("avg3", avgs["avg3"]), ("avg6", avgs["avg6"]), ("avg12", avgs["avg12"]), ("monthly", hist_amount)):
+                    m[k] += v
                 continue
-            cat = cats_map.get(cat_id)
-            label = cat.name if cat else "Uncategorized"
             combined_monthly[label] = combined_monthly.get(label, 0.0) + hist_amount
+            m = combined_model.setdefault(label, {"kind": "", "avg3": 0.0, "avg6": 0.0, "avg12": 0.0, "monthly": 0.0, "note": ""})
+            for k, v in (("avg3", avgs["avg3"]), ("avg6", avgs["avg6"]), ("avg12", avgs["avg12"]), ("monthly", hist_amount)):
+                m[k] += v
 
     # ── Life events from all users ──
     all_events = (
@@ -1690,6 +1818,7 @@ def run_joint_forecast(
         annual_return = account_monthly_rate.get(a.id, 0.0) * 12.0 * 100.0
         contrib = account_monthly_contrib.get(a.id, 0.0)
         src = _resolve_contribution_source(a, contrib, joint_hysa_detail, db)
+        rd = rate_detail.get(a.id, {"source": "none", "basis": ""})
         account_forecasts.append(
             AccountForecast(
                 account_id=a.id,
@@ -1705,8 +1834,23 @@ def run_joint_forecast(
                 contribution_basis=src["basis"],
                 lifetime_monthly_contribution=src.get("lifetime_monthly"),
                 lifetime_contribution_basis=src.get("lifetime_basis", ""),
+                rate_source=rd["source"],
+                rate_basis=rd["basis"],
+                starting_balance_source=_starting_balance_source(a.id, snap_meta),
+                projection_formula=_projection_formula(a, round(annual_return, 2), contrib),
             )
         )
+
+    # Household spending model — per-category blend inputs summed across both people.
+    spending_model: List[SpendingModelRow] = []
+    for label, m in combined_model.items():
+        kind = m["kind"] or ("expense" if m["monthly"] < 0 else "income")
+        spending_model.append(SpendingModelRow(
+            category=label, kind=kind,
+            avg3=round(m["avg3"], 2), avg6=round(m["avg6"], 2), avg12=round(m["avg12"], 2),
+            monthly=round(m["monthly"], 2), note=m["note"],
+        ))
+    spending_model.sort(key=lambda r: abs(r.monthly), reverse=True)
 
     return ForecastResponse(
         scenario_id=None,
@@ -1717,4 +1861,10 @@ def run_joint_forecast(
         total_income=round(total_income, 2),
         total_expenses=round(total_expenses, 2),
         account_forecasts=account_forecasts,
+        spending_model=spending_model,
+        variance_pct=round(variance_pct, 4),
+        variance_basis=(
+            f"cash range = ±{variance_pct:.0%} of each month's projected spending "
+            "(household default variance)"
+        ),
     )

@@ -378,11 +378,12 @@ function PersonGoalDetail({ person }: { person: SavingsGoalPerson }) {
         icon={<Info size={15} />}
         rows={[
           ['Goal in use', formatCurrency(person.goal)],
-          ['Source', person.using_suggestion ? 'App suggestion' : 'Your saved profile goal'],
-          ['Suggested goal', `${formatCurrency(person.suggested_goal)}/mo`],
+          ['Source', person.using_suggestion ? 'App suggestion (typical month)' : 'Your saved profile goal'],
+          ['Suggested goal (typical month)', `${formatCurrency(person.suggested_goal)}/mo`],
+          ['Stretch goal (good month)', `${formatCurrency(person.suggested_goal_stretch)}/mo`],
           ['Profile goal', person.user_goal === null ? 'Not set' : `${formatCurrency(person.user_goal)}/mo`],
         ]}
-        note="The suggestion averages the last 6 completed months of positive NET CASH saved (income minus expenses), stretches that by 10%, then rounds to the nearest $25. Retirement/savings contributions are not part of the goal."
+        note={`Suggested goal: ${person.suggested_goal_basis || 'median net cash saved over the last 6 completed months.'} Stretch goal: ${person.suggested_goal_stretch_basis || 'mean of positive months only × 1.10 — a good-month target, not a typical one.'}`}
       />
 
       <DetailSection
@@ -441,10 +442,11 @@ function JointGoalDetail({ joint, people }: { joint: SavingsGoalJoint; people: S
         icon={<TrendingUp size={15} />}
         rows={[
           ['Joint goal in use', `${formatCurrency(joint.goal)}/mo`],
-          ['Joint suggested goal', `${formatCurrency(joint.suggested_goal)}/mo`],
+          ['Joint suggested goal (typical)', `${formatCurrency(joint.suggested_goal)}/mo`],
+          ['Joint stretch goal (good month)', `${formatCurrency(joint.suggested_goal_stretch)}/mo`],
           ['People included', people.map((p) => p.name).join(', ')],
         ]}
-        note="The household goal is the sum of each person's effective monthly NET-CASH goal. Progress is the sum of each person's net cash saved."
+        note="The household goal is the sum of each person's effective monthly NET-CASH goal. Progress is the sum of each person's net cash saved. Suggested = the sum of each person's typical-month median; stretch = the sum of their good-month targets."
       />
 
       <DetailSection
