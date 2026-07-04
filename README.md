@@ -1,20 +1,17 @@
-# FinanceTrack
+# FinanceTrack (MUNI)
 
 Personal finance forecasting tool for Keaton & Katherine. Tracks expenses, income, investments, debt, life events, and projects your financial future.
 
-## Features
+## Documentation
 
-## Proxmox Deployment Guide
-
-For a production deployment on Proxmox (Ubuntu LXC), see **`PROXMOX_SETUP.md`**.
-
----
-
-
-
-## Full User Guide
-
-For complete, step-by-step usage instructions (all pages and workflows), see **`USER_GUIDE.md`**.
+| Doc | What it covers |
+|---|---|
+| **`docs/CALCULATIONS.md`** | The canonical "where does this number come from" reference — every formula, truth hierarchy, abstention rule, and provenance label (savings goals, HYSA, 401k, XIRR returns, forecast engine, Coast FI, salary inference, budgets) |
+| **`docs/DATA-IMPORT.md`** | Every ingestion path (paystubs, statements, Sheets, CSV), dedup/idempotency/enrichment semantics, and the bulk re-upload playbook |
+| **`docs/AI-SYSTEM.md`** | The AI chat + reports: grounding prompt contents, models & escalation ladder, report types, `num_ctx` gotcha, configuration |
+| **`USER_GUIDE.md`** | Step-by-step usage for every page and workflow |
+| **`PROXMOX_SETUP.md`** | Production deployment on Proxmox (Ubuntu LXC), daily ops, rollback |
+| **`CLAUDE.md`** | Compact context for AI coding agents (settled decisions, schema notes, file map) |
 
 ---
 
@@ -131,13 +128,13 @@ docker compose up --build
 ## Forecast Logic
 
 The forecasting engine uses:
-1. **Historical averages**: 3/6/12-month trailing average per category
-2. **Recurring schedules**: Your income and expense rules
-3. **Life event overlays**: Wedding payments, honeymoon, etc.
-4. **Debt amortization**: Student loan payoff projection
-5. **Investment growth**: 401k/IRA with configurable return rate (default 7%)
+1. **Historical averages**: recent-weighted blend per category (3-mo avg × 50% + 6-mo × 30% + 12-mo × 20%)
+2. **Recurring schedules**: rules supplement only categories with no history
+3. **Life event overlays**: wedding payments, honeymoon, etc.
+4. **Investment growth**: measured XIRR blended toward a 10% market anchor when statements exist; holdings' assumed rates or per-type defaults otherwise — every rate labeled with its origin
+5. **Measured contributions**: paystubs (401k), statement contributions, and real EverBank deposits (HYSA) beat manual profile values, each labeled
 
-Scenarios let you clone the baseline and ask "what if I cut dining out by 50%?" — the comparison view shows the impact on savings and net worth.
+Scenarios let you clone the baseline and ask "what if I cut dining out by 50%?" — the comparison view shows the impact on savings and net worth. Full formulas, truth hierarchies, and abstention rules: **`docs/CALCULATIONS.md`**.
 
 ---
 

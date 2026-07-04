@@ -1,6 +1,11 @@
 # MUNI — Claude Project Context
 
-_Last updated: 2026-07-03 (Fable 5 full-app audit). Active branch: `main`._
+_Last updated: 2026-07-04. Active branch: `main`._
+
+**Deep references (read the relevant one before touching its area):**
+`docs/CALCULATIONS.md` (every formula + truth hierarchy + abstention rule),
+`docs/DATA-IMPORT.md` (ingestion paths, dedup/enrichment semantics, re-upload playbook),
+`docs/AI-SYSTEM.md` (chat grounding, escalation, report types, num_ctx gotcha).
 
 MUNI is Keaton and Katherine's household finance app. Operating principle everywhere:
 **prefer real measured data (paystubs, statements, transactions) over static profile
@@ -103,8 +108,11 @@ Every `AccountForecast` row carries `contribution_source` / `contribution_label`
 - XIRR lumps period contributions on the statement date (tested alternative moved rates
   AWAY from broker-printed figures; the real gap is the measurement window → `trailing_12mo_pct`).
 - No-password auth + Tailscale boundary is intentional.
-- `_suggested_goal` averages only positive trailing months (optimistic stretch) — open
-  question with Keaton as of 2026-07-03, don't change unilaterally.
+- Suggested savings goal (settled 2026-07-04): MAIN = median of trailing completed
+  months (typical month); the positive-months-mean × 1.10 lives on ONLY as the labeled
+  `suggested_goal_stretch` alternate. Don't swap them back.
+- Bulk re-upload of statements/paystubs is idempotent and enriching (2026-07-04) —
+  never reintroduce a 409-reject on re-import; see `docs/DATA-IMPORT.md`.
 
 ## User financial context (verify against paystubs/statements before trusting)
 
