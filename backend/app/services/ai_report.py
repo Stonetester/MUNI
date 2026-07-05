@@ -603,7 +603,8 @@ def _gather_monthly_history(users: list[User], db: Session, months: int = 18) ->
     for key in ordered_keys:
         b = buckets[key]
         savings = b["income"] - b["spending"]
-        top = sorted(b["by_category"].items(), key=lambda x: -x[1])[:3]
+        by_cat_sorted = sorted(b["by_category"].items(), key=lambda x: -x[1])
+        top = by_cat_sorted[:3]
         result.append({
             "month": key,
             "income": round(b["income"], 2),
@@ -611,6 +612,10 @@ def _gather_monthly_history(users: list[User], db: Session, months: int = 18) ->
             "savings": round(savings, 2),
             "savings_rate": round(savings / b["income"] * 100, 1) if b["income"] > 0 else 0,
             "top_categories": [(c, round(v, 2)) for c, v in top],
+            # FULL per-category breakdown (newest-first). The chat prompt renders this so
+            # any-category / any-month questions ("how much on gas in June?") are answerable;
+            # the report path still uses top_categories for its shorter summary.
+            "by_category": [(c, round(v, 2)) for c, v in by_cat_sorted],
         })
     return result  # newest-first
 
@@ -1073,13 +1078,16 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
     if history:
         ctx_lines += [
             "",
-            "Monthly history, HOUSEHOLD combined (most recent first) — income / spending / savings rate, top spend categories:",
+            "Monthly history, HOUSEHOLD combined (most recent first) — income / spending / savings rate, then the",
+            "FULL per-category spending breakdown for that month. This is COMPLETE (every category, not just the top",
+            "few), so answer any 'how much did I spend on <category> in <month>' question directly from these lines.",
+            "If a category isn't listed for a month, spending on it that month was $0 — say $0, don't say you lack data.",
         ]
         for h in history:
-            tops = ", ".join(f"{c} ${v:,.0f}" for c, v in h["top_categories"]) or "no spending"
+            cats = ", ".join(f"{c} ${v:,.0f}" for c, v in h["by_category"]) or "no spending"
             ctx_lines.append(
                 f"  - {h['month']}: income ${h['income']:,.0f}, spending ${h['spending']:,.0f}, "
-                f"savings ${h['savings']:,.0f} ({h['savings_rate']}%) — top spend: {tops}"
+                f"savings ${h['savings']:,.0f} ({h['savings_rate']}%) — by category: {cats}"
             )
 
     # Year-by-year summary with full income AND spending category breakdown, over the
