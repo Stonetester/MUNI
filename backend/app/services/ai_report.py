@@ -5,6 +5,7 @@ Gathers financial data and generates a financial advisor style report.
 from __future__ import annotations
 
 import calendar
+import json
 from datetime import date, datetime
 from typing import Optional
 
@@ -934,6 +935,11 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         "net worth, and per-account balances, with the source of every input) and the current savings-goal",
         "status — use them for any question about the future; never claim you can't predict or can't see",
         "forecasts, and never invent your own projection when the app's is provided.",
+        "TOOLS: for anything NOT already spelled out below — an arbitrary date range ('last 90 days'),",
+        "a specific merchant ('Starbucks'), a single day, a person-only slice, biggest-N transactions, or a",
+        "future projection to an arbitrary horizon / target ('when do we hit $500k') — call a tool instead of",
+        "guessing or saying you lack the data: query_transactions for past spending/income, project_finances for",
+        "predictions. The summaries below are for speed; the tools reach the full ledger and the real forecast engine.",
         "FORMATTING: write clean markdown. Use real markdown tables for comparisons (header row + |---| divider).",
         "Round dollars to whole numbers (e.g. $5,827 — no cents). Use short '##' headers for sections, '-' bullets,",
         "and '**bold**' for key numbers. Do NOT prefix lines with '>' for math; write equations inline on a normal",
@@ -1151,8 +1157,71 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
     return "\n".join(ctx_lines)
 
 
-def _chat_with_claude(api_key: str, system_prompt: str, history: list, message: str) -> str:
-    return _claude_messages(api_key, system_prompt, history + [{"role": "user", "content": message}], max_tokens=1536)
+def _chat_with_claude(
+    api_key: str,
+    system_prompt: str,
+    history: list,
+    message: str,
+    user: "User | None" = None,
+    db: "Session | None" = None,
+) -> str:
+    """Claude chat. When user+db are supplied, Claude gets DB/forecast TOOLS so it can
+    answer any past/future question by querying the real data — not just what's pre-baked
+    in the prompt. Runs a bounded tool-use loop. Without user+db it degrades to a plain
+    text completion (used where tools aren't wired)."""
+    if user is None or db is None:
+        return _claude_messages(api_key, system_prompt, history + [{"role": "user", "content": message}], max_tokens=1536)
+
+    try:
+        import anthropic
+    except ImportError:
+        raise RuntimeError("The `anthropic` package is not installed. Run `pip install anthropic` in the backend venv.")
+    from app.config import settings
+    from app.services.chat_tools import tool_definitions, execute_tool
+
+    all_users = db.query(User).order_by(User.id).all()
+    tools = tool_definitions([u.username for u in all_users])
+
+    client = anthropic.Anthropic(api_key=api_key)
+    messages = history + [{"role": "user", "content": message}]
+
+    for model in (settings.ANTHROPIC_MODEL, settings.ANTHROPIC_FALLBACK_MODEL):
+        try:
+            # Bounded agentic loop: model may call tools, we run them, feed results back,
+            # repeat until it returns a plain-text answer (or we hit the safety cap).
+            convo = list(messages)
+            for _ in range(6):
+                resp = client.messages.create(
+                    model=model,
+                    max_tokens=1536,
+                    system=system_prompt,
+                    tools=tools,
+                    messages=convo,
+                )
+                if resp.stop_reason != "tool_use":
+                    return "".join(b.text for b in resp.content if b.type == "text")
+
+                convo.append({"role": "assistant", "content": resp.content})
+                tool_results = []
+                for block in resp.content:
+                    if block.type == "tool_use":
+                        out = execute_tool(block.name, block.input, user, all_users, db)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(out, default=str),
+                        })
+                convo.append({"role": "user", "content": tool_results})
+            # Loop cap hit — ask for a final answer with no more tools.
+            final = client.messages.create(
+                model=model, max_tokens=1536, system=system_prompt, messages=convo,
+            )
+            return "".join(b.text for b in final.content if b.type == "text")
+        except anthropic.NotFoundError:
+            continue  # try the fallback model
+    raise RuntimeError(
+        f"Neither {settings.ANTHROPIC_MODEL} nor {settings.ANTHROPIC_FALLBACK_MODEL} is available on this API key."
+    )
 
 
 def _chat_with_openai(api_key: str, system_prompt: str, history: list, message: str) -> str:
@@ -1176,11 +1245,14 @@ def _chat_with_ollama(host: str, model: str, system_prompt: str, history: list, 
     return _ollama_chat_call(host, model, messages)
 
 
-def _chat_via_claude(settings, system_prompt: str, history: list, message: str) -> tuple[str, str]:
+def _chat_via_claude(
+    settings, system_prompt: str, history: list, message: str,
+    user: "User | None" = None, db: "Session | None" = None,
+) -> tuple[str, str]:
     if not settings.ANTHROPIC_API_KEY:
         return "⚠️ No Anthropic key set in backend `.env`.", "error"
     try:
-        return _chat_with_claude(settings.ANTHROPIC_API_KEY, system_prompt, history, message), "claude"
+        return _chat_with_claude(settings.ANTHROPIC_API_KEY, system_prompt, history, message, user=user, db=db), "claude"
     except Exception as e:
         return f"⚠️ **Claude Error**\n\n{e}", "error"
 
@@ -1208,7 +1280,7 @@ def answer_chat_question(
 
     # Manual override → straight to the strong model.
     if escalate:
-        reply, used = _chat_via_claude(settings, system_prompt, history, message)
+        reply, used = _chat_via_claude(settings, system_prompt, history, message, user=user, db=db)
         return reply, used
 
     if provider == "openai":
@@ -1220,14 +1292,14 @@ def answer_chat_question(
             return f"⚠️ **ChatGPT Error**\n\n{e}", "error"
 
     if provider == "claude":
-        return _chat_via_claude(settings, system_prompt, history, message)
+        return _chat_via_claude(settings, system_prompt, history, message, user=user, db=db)
 
     # provider == "ollama" (local 14b, default) — with auto-escalation on hard questions.
     host = settings.OLLAMA_HOST or "http://10.0.0.172:11434"
     local_model = model or settings.OLLAMA_CHAT_MODEL or "qwen3:14b"
 
     if _is_hard_question(message) and settings.ANTHROPIC_API_KEY:
-        reply, used = _chat_via_claude(settings, system_prompt, history, message)
+        reply, used = _chat_via_claude(settings, system_prompt, history, message, user=user, db=db)
         if used == "claude":
             return reply, f"{local_model}→claude"
         # Claude unavailable/failed → fall through to local.
@@ -1237,14 +1309,14 @@ def answer_chat_question(
     except Exception as e:
         # Local unreachable → try Claude as a fallback before giving up.
         if settings.ANTHROPIC_API_KEY:
-            fb, used = _chat_via_claude(settings, system_prompt, history, message)
+            fb, used = _chat_via_claude(settings, system_prompt, history, message, user=user, db=db)
             if used == "claude":
                 return fb, f"{local_model} (unreachable)→claude"
         return f"⚠️ **Mongol Error**\n\n{e}", "error"
 
     # Local answered but punted → escalate.
     if _reply_low_confidence(reply) and settings.ANTHROPIC_API_KEY:
-        esc, used = _chat_via_claude(settings, system_prompt, history, message)
+        esc, used = _chat_via_claude(settings, system_prompt, history, message, user=user, db=db)
         if used == "claude":
             return esc, f"{local_model}→claude"
 
