@@ -65,3 +65,8 @@ backend_log.txt
 *.bak-*
 .env.local.bak*
 backend/finance.db.bak*
+
+# SQLite databases are live data — never commit (prod holds real user data)
+*.db
+muni.db
+backend/muni.db
