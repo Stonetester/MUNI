@@ -351,9 +351,12 @@ export default function AiReportPage() {
                 <select
                   value={localModel}
                   onChange={e => setLocalModel(e.target.value)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-2 border border-border text-text-primary outline-none focus:border-violet-500/50"
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border outline-none focus:border-violet-500/50 [color-scheme:dark]"
+                  style={{ backgroundColor: '#242938', color: '#f1f5f9' }}
                 >
-                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  {ollamaModels.map(m => (
+                    <option key={m} value={m} style={{ backgroundColor: '#242938', color: '#f1f5f9' }}>{m}</option>
+                  ))}
                 </select>
               )}
             </div>
