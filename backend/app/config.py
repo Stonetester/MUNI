@@ -10,10 +10,15 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 43200  # 30 days
 
+    # Prod (CT 102) overrides this via .env to add the Tailscale host / LAN IP the
+    # frontend is actually served from — a missing origin makes every API call fail
+    # CORS preflight, which the browser surfaces as a bare "Network error".
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3000",
+        "http://muni.tail887f36.ts.net",
+        "https://muni.tail887f36.ts.net",
     ]
 
     ANTHROPIC_API_KEY: str = ""
