@@ -21,12 +21,27 @@ def _make_title(message: str) -> str:
     return (text[:57] + "…") if len(text) > 60 else (text or "New chat")
 
 
+# Curated shortlist for the MUNI chat picker. Benchmarked 2026-08-27 on the V100:
+# all three answer finance questions well and finish in ~13-28s. The 32b models are
+# deliberately excluded — they can run past the browser/proxy timeout ("Network Error").
+RECOMMENDED_OLLAMA_MODELS = [
+    {"name": "qwen3.6:27b", "label": "Qwen3.6 27B — best reasoning (default)"},
+    {"name": "gpt-oss:20b", "label": "GPT-OSS 20B — fastest, concise"},
+    {"name": "mistral-small:24b", "label": "Mistral Small 24B — steady middle ground"},
+]
+
+
 @router.get("/ollama-models")
 def get_ollama_models(current_user: User = Depends(get_current_user)):
-    """Local AI models available on Mongol (Ollama). Empty if Mongol is asleep."""
+    """Curated Local AI models for MUNI chat. Only the ones actually installed on Mongol
+    are returned, so the list is empty when Mongol is asleep."""
     from app.config import settings
-    default = settings.OLLAMA_CHAT_MODEL or "qwen3:14b"
-    return {"default": default, "models": list_ollama_models()}
+    default = settings.OLLAMA_CHAT_MODEL or "qwen3.6:27b"
+    installed = {m["name"] for m in list_ollama_models()}
+    models = [m for m in RECOMMENDED_OLLAMA_MODELS if m["name"] in installed]
+    if default not in {m["name"] for m in models} and models:
+        default = models[0]["name"]
+    return {"default": default, "models": models}
 
 
 @router.get("/types")

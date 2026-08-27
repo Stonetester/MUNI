@@ -179,7 +179,7 @@ export default function AiReportPage() {
   // Chat defaults to the local model (Mongol 14b); report keeps the shared provider toggle.
   const [chatProvider, setChatProvider] = useState<Provider>('ollama')
   // Local AI model picker (only used when chatProvider === 'ollama')
-  const [ollamaModels, setOllamaModels] = useState<string[]>([])
+  const [ollamaModels, setOllamaModels] = useState<{ name: string; label?: string }[]>([])
   const [localModel, setLocalModel] = useState<string>('')
 
   // Report state
@@ -280,8 +280,8 @@ export default function AiReportPage() {
       loadSessions()
       listOllamaModels()
         .then(({ default: def, models }) => {
+          setOllamaModels(models)
           const names = models.map(m => m.name)
-          setOllamaModels(names)
           setLocalModel(prev => prev || (names.includes(def) ? def : names[0] || def))
         })
         .catch(() => { /* Mongol asleep — keep backend default */ })
@@ -355,7 +355,7 @@ export default function AiReportPage() {
                   style={{ backgroundColor: '#242938', color: '#f1f5f9' }}
                 >
                   {ollamaModels.map(m => (
-                    <option key={m} value={m} style={{ backgroundColor: '#242938', color: '#f1f5f9' }}>{m}</option>
+                    <option key={m.name} value={m.name} style={{ backgroundColor: '#242938', color: '#f1f5f9' }}>{m.label || m.name}</option>
                   ))}
                 </select>
               )}

@@ -793,9 +793,9 @@ export async function postAiChat(
   return res.data
 }
 
-export async function listOllamaModels(): Promise<{ default: string; models: { name: string; size: number | null }[] }> {
+export async function listOllamaModels(): Promise<{ default: string; models: { name: string; label?: string }[] }> {
   if (isDemoModeActive()) {
-    return { default: 'qwen3:14b', models: [{ name: 'qwen3:14b', size: null }, { name: 'qwen3:8b', size: null }] }
+    return { default: 'qwen3.6:27b', models: [{ name: 'qwen3.6:27b', label: 'Qwen3.6 27B — best reasoning (default)' }, { name: 'gpt-oss:20b', label: 'GPT-OSS 20B — fastest, concise' }] }
   }
   const res = await api.get('/ai-report/ollama-models')
   return res.data
