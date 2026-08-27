@@ -198,6 +198,32 @@ def _generate_with_claude(api_key: str, system_prompt: str, user_prompt: str) ->
     return _claude_messages(api_key, system_prompt, [{"role": "user", "content": user_prompt}], max_tokens=3000)
 
 
+def list_ollama_models() -> list[dict]:
+    """Return the models available on the configured Ollama host.
+
+    Each entry: {"name": str, "size": int|None}. Empty list if Mongol is asleep
+    or unreachable — the caller degrades to the default model.
+    """
+    import urllib.request
+    import json as _json
+    from app.config import settings
+
+    host = settings.OLLAMA_HOST or "http://10.0.0.172:11434"
+    try:
+        req = urllib.request.Request(f"{host}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = _json.loads(resp.read().decode())
+    except Exception:
+        return []
+    out = []
+    for m in data.get("models", []):
+        name = m.get("name") or m.get("model")
+        if name:
+            out.append({"name": name, "size": m.get("size")})
+    out.sort(key=lambda x: x["name"])
+    return out
+
+
 def _ollama_chat_call(host: str, model: str, messages: list) -> str:
     """POST to Ollama /api/chat with an explicit context window.
 

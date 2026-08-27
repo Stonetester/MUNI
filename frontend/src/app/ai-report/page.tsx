@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
-import { getAiReport, postAiChat, listChatSessions, getChatSession, deleteChatSession, ChatSessionSummary, ReportType, REPORT_TYPE_LABELS } from '@/lib/api'
+import { getAiReport, postAiChat, listChatSessions, getChatSession, deleteChatSession, listOllamaModels, ChatSessionSummary, ReportType, REPORT_TYPE_LABELS } from '@/lib/api'
 import { useViewMode } from '@/lib/viewMode'
 import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap, Users, User, History, Plus, Trash2, X } from 'lucide-react'
 
@@ -178,6 +178,9 @@ export default function AiReportPage() {
   const [provider, setProvider] = useState<Provider>('claude')
   // Chat defaults to the local model (Mongol 14b); report keeps the shared provider toggle.
   const [chatProvider, setChatProvider] = useState<Provider>('ollama')
+  // Local AI model picker (only used when chatProvider === 'ollama')
+  const [ollamaModels, setOllamaModels] = useState<string[]>([])
+  const [localModel, setLocalModel] = useState<string>('')
 
   // Report state
   const [year, setYear] = useState(defaultYear)
@@ -257,7 +260,7 @@ export default function AiReportPage() {
     setChatInput('')
     setChatLoading(true)
     try {
-      const data = await postAiChat(msg, newHistory.slice(0, -1), chatProvider, { escalate, joint: isJoint, sessionId: currentSessionId })
+      const data = await postAiChat(msg, newHistory.slice(0, -1), chatProvider, { escalate, joint: isJoint, sessionId: currentSessionId, model: chatProvider === 'ollama' && localModel ? localModel : undefined })
       setChatHistory([...newHistory, { role: 'assistant', content: data.reply, modelUsed: data.model_used }])
       setCurrentSessionId(data.session_id)
       loadSessions()
@@ -271,9 +274,18 @@ export default function AiReportPage() {
 
   // Report is NOT auto-generated — it runs only when the user clicks Generate.
 
-  // Load saved sessions the first time the chat tab is opened.
+  // Load saved sessions + available local models the first time the chat tab is opened.
   useEffect(() => {
-    if (tab === 'chat') loadSessions()
+    if (tab === 'chat') {
+      loadSessions()
+      listOllamaModels()
+        .then(({ default: def, models }) => {
+          const names = models.map(m => m.name)
+          setOllamaModels(names)
+          setLocalModel(prev => prev || (names.includes(def) ? def : names[0] || def))
+        })
+        .catch(() => { /* Mongol asleep — keep backend default */ })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
@@ -332,7 +344,20 @@ export default function AiReportPage() {
         {/* Provider toggle — report uses `provider`, chat uses `chatProvider` (local default) */}
         {tab === 'report'
           ? <ProviderToggle provider={provider} onChange={setProvider} localLabel="Mongol" />
-          : <ProviderToggle provider={chatProvider} onChange={setChatProvider} localLabel="Mongol 14b" />}
+          : (
+            <div className="flex flex-col items-center gap-2">
+              <ProviderToggle provider={chatProvider} onChange={setChatProvider} localLabel="Local AI" />
+              {chatProvider === 'ollama' && ollamaModels.length > 0 && (
+                <select
+                  value={localModel}
+                  onChange={e => setLocalModel(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-2 border border-border text-text-primary outline-none focus:border-violet-500/50"
+                >
+                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              )}
+            </div>
+          )}
 
         {/* Scope indicator — which numbers the tutor is grounded in (follows the global Solo/Joint toggle) */}
         {tab === 'chat' && (
@@ -595,7 +620,7 @@ export default function AiReportPage() {
 
             <p className="text-[11px] text-text-secondary/70 text-center -mt-1">
               {chatProvider === 'ollama'
-                ? 'Local Mongol 14b answers; hard questions auto-escalate to Claude. Tap ⚡ Smart to force it.'
+                ? `${localModel || 'Local AI'} on Mongol answers; hard questions auto-escalate to Claude. Tap ⚡ Smart to force it.`
                 : 'Answered grounded in your real MUNI numbers.'}
             </p>
 

@@ -10,7 +10,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models.user import User
 from app.models.chat_session import ChatSession, ChatMessageRow
-from app.services.ai_report import generate_monthly_report, answer_chat_question
+from app.services.ai_report import generate_monthly_report, answer_chat_question, list_ollama_models
 
 router = APIRouter(prefix="/ai-report", tags=["ai-report"])
 
@@ -19,6 +19,14 @@ def _make_title(message: str) -> str:
     """Derive a short session title from the first user message."""
     text = " ".join(message.strip().split())
     return (text[:57] + "…") if len(text) > 60 else (text or "New chat")
+
+
+@router.get("/ollama-models")
+def get_ollama_models(current_user: User = Depends(get_current_user)):
+    """Local AI models available on Mongol (Ollama). Empty if Mongol is asleep."""
+    from app.config import settings
+    default = settings.OLLAMA_CHAT_MODEL or "qwen3:14b"
+    return {"default": default, "models": list_ollama_models()}
 
 
 @router.get("/types")

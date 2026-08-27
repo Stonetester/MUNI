@@ -793,6 +793,14 @@ export async function postAiChat(
   return res.data
 }
 
+export async function listOllamaModels(): Promise<{ default: string; models: { name: string; size: number | null }[] }> {
+  if (isDemoModeActive()) {
+    return { default: 'qwen3:14b', models: [{ name: 'qwen3:14b', size: null }, { name: 'qwen3:8b', size: null }] }
+  }
+  const res = await api.get('/ai-report/ollama-models')
+  return res.data
+}
+
 // ── Saved chat sessions ──
 export interface ChatSessionSummary {
   id: number
