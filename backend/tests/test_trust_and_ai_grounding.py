@@ -319,3 +319,58 @@ class ChatGroundingTests(TestCase):
         self.assertIn("Keaton and Katherine combined spent $2,000.00", answer)
         self.assertIn("Keaton $1,200.00", answer)
         self.assertIn("Katherine $800.00", answer)
+
+    def test_total_followup_inherits_solo_wedding_subject_and_uses_year_range(self):
+        from app.services.ai_report import _answer_ledger_question
+
+        wedding = Category(user_id=self.k.id, name="Wedding", kind="expense")
+        self.db.add(wedding)
+        self.db.flush()
+        self.db.add_all([
+            Transaction(user_id=self.k.id, category_id=wedding.id, date=date(2024, 6, 1), amount=-400, description="Venue"),
+            Transaction(user_id=self.k.id, category_id=wedding.id, date=date(2025, 6, 1), amount=-600, description="Photos"),
+            Transaction(user_id=self.kat.id, date=date(2025, 7, 1), amount=-999, description="Wedding item"),
+        ])
+        self.db.commit()
+
+        answer = _answer_ledger_question(
+            self.k,
+            self.db,
+            "what is the total from 2024-2026",
+            history=[{"role": "user", "content": "How much did I spend on wedding transactions?"}],
+            joint=False,
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("Keaton spent $1,000.00", answer)
+        self.assertIn("2024 through 2026", answer)
+        self.assertNotIn("$999.00", answer)
+
+    def test_breakout_followup_lists_inherited_transactions(self):
+        from app.services.ai_report import _answer_ledger_question
+
+        wedding = Category(user_id=self.k.id, name="Wedding", kind="expense")
+        self.db.add(wedding)
+        self.db.flush()
+        self.db.add(Transaction(
+            user_id=self.k.id, category_id=wedding.id,
+            date=date(2025, 8, 1), amount=-750,
+            description="Venue Deposit", import_source="sheets:AUG2025",
+        ))
+        self.db.commit()
+
+        answer = _answer_ledger_question(
+            self.k,
+            self.db,
+            "break out the transactions so i know what all is adding up to that sum",
+            history=[
+                {"role": "user", "content": "How much did I spend on wedding transactions?"},
+                {"role": "assistant", "content": "prior answer"},
+                {"role": "user", "content": "what is the total from 2024-2026"},
+            ],
+            joint=False,
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("| 2025-08-01 | Keaton | Venue Deposit | Wedding | $750.00 |", answer)
+        self.assertIn("**Total: $750.00 across 1 transactions.**", answer)

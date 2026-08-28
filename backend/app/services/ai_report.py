@@ -922,61 +922,82 @@ def _answer_ledger_question(
     """
     text = message.strip()
     lower = text.lower()
-    if not any(term in lower for term in ("transaction", "spend", "spent", "paid", "put into", "sent to", "transferred", "deposited")):
+    prior_user_messages = [
+        str(item.get("content", "")).strip()
+        for item in (history or [])[-12:]
+        if item.get("role") == "user" and str(item.get("content", "")).strip()
+    ]
+    context_text = " ".join(prior_user_messages + [text]).lower()
+    followup_terms = ("total", "break out", "breakdown", "list", "show", "which transactions", "adding up", "line items")
+    ledger_terms = ("transaction", "spend", "spent", "paid", "put into", "sent to", "transferred", "deposited")
+    if not any(term in context_text for term in ledger_terms) or not any(
+        term in lower for term in ledger_terms + followup_terms
+    ):
         return None
 
-    raw_outflow = any(term in lower for term in (
+    def extract_keyword(candidate: str) -> str | None:
+        patterns = (
+            r"\b(?:called|labeled|labelled|named)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
+            r"\b(?:put|paid|sent|transferred|deposited)(?:\s+money)?\s+(?:into|to|toward|towards)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
+            r"\bon\s+(?:transactions?\s+(?:that\s+are\s+)?(?:called|labeled|labelled|named)\s+)?[\"']?(.+?)[\"']?(?:\s+transactions?)?[?.,]*$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, candidate, flags=re.IGNORECASE)
+            if match:
+                value = re.sub(r"\s+transactions?\b.*$", "", match.group(1), flags=re.IGNORECASE).strip()
+                if value:
+                    return value
+        return None
+
+    keyword_source = next(
+        ((candidate, extracted) for candidate in [text] + list(reversed(prior_user_messages))
+         if (extracted := extract_keyword(candidate))),
+        None,
+    )
+    if not keyword_source:
+        return None
+    source_message, keyword = keyword_source
+    intent_lower = source_message.lower()
+    raw_outflow = any(term in intent_lower for term in (
         "put into", "sent to", "transferred to", "deposited into",
         "transactions called", "transactions that are called", "transactions labeled",
         "transactions labelled", "transactions named",
     ))
-    named = re.search(
-        r"\b(?:called|labeled|labelled|named)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if not named:
-        named = re.search(
-            r"\b(?:put|paid|sent|transferred|deposited)(?:\s+money)?\s+"
-            r"(?:into|to|toward|towards)\s+[\"']?([^\"'?.,]+?)[\"']?"
-            r"(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
-            text,
-            flags=re.IGNORECASE,
-        )
-    if not named:
-        # Handles either "spent on wedding transactions" or
-        # "spent in the last two years on wedding transactions".
-        named = re.search(
-            r"\bon\s+(?:transactions?\s+(?:that\s+are\s+)?(?:called|labeled|labelled|named)\s+)?"
-            r"[\"']?(.+?)[\"']?(?:\s+transactions?)?[?.,]*$",
-            text,
-            flags=re.IGNORECASE,
-        )
-    if not named:
-        return None
-    keyword = named.group(1).strip()
-    keyword = re.sub(r"\s+transactions?\b.*$", "", keyword, flags=re.IGNORECASE).strip()
-    if not keyword:
-        return None
 
     # Follow-ups often separate the window from the merchant question (for
     # example: "Use the last 2 years" then "transactions called EverBank").
-    recent_user_context = " ".join(
-        str(item.get("content", ""))
-        for item in (history or [])[-4:]
-        if item.get("role") == "user"
-    )
-    window_text = f"{recent_user_context} {text}".lower()
+    window_candidates = [text] + list(reversed(prior_user_messages))
     number_words = {
         "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
     }
-    years_match = re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b", window_text)
-    months_match = re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+months?\b", window_text)
     def window_count(match) -> int:
         token = match.group(1)
         return int(token) if token.isdigit() else number_words[token]
-    if years_match:
+    year_range = next((
+        re.search(r"\b(20\d{2})\s*(?:-|–|to|through)\s*(20\d{2})\b", candidate.lower())
+        for candidate in window_candidates
+        if re.search(r"\b(20\d{2})\s*(?:-|–|to|through)\s*(20\d{2})\b", candidate.lower())
+    ), None)
+    years_match = next((
+        re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b", candidate.lower())
+        for candidate in window_candidates
+        if re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b", candidate.lower())
+    ), None)
+    months_match = next((
+        re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+months?\b", candidate.lower())
+        for candidate in window_candidates
+        if re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+months?\b", candidate.lower())
+    ), None)
+    end = date.today()
+    if year_range:
+        start_year, end_year = map(int, year_range.groups())
+        if start_year > end_year:
+            start_year, end_year = end_year, start_year
+        start = date(start_year, 1, 1)
+        end = min(date(end_year, 12, 31), date.today())
+        period = f"{start_year} through {end_year}"
+    elif years_match:
         count = window_count(years_match)
         start = date.today() - relativedelta(years=count)
         period = f"the last {count} years"
@@ -989,7 +1010,8 @@ def _answer_ledger_question(
 
     all_users = db.query(User).order_by(User.id).all()
     joint_terms = ("joint", "together", "combined", "household", " we ", " our ", "both", "me and", "and me", "katherine and i")
-    padded_lower = f" {lower} "
+    scope_text = lower if any(term in f" {lower} " for term in joint_terms + (" i ", " my ", " me ") + tuple(candidate.username.lower() for candidate in all_users)) else intent_lower
+    padded_lower = f" {scope_text} "
     explicit_household = any(term in padded_lower for term in joint_terms)
     explicit_personal = any(term in padded_lower for term in (" i ", " my ", " me "))
     household_scope = explicit_household or (joint and not explicit_personal)
@@ -998,7 +1020,7 @@ def _answer_ledger_question(
         scope_label = "Keaton and Katherine combined"
     else:
         named_user = next(
-            (candidate for candidate in all_users if candidate.username.lower() in lower),
+            (candidate for candidate in all_users if candidate.username.lower() in scope_text),
             None,
         )
         scoped_users = [named_user or user]
@@ -1011,7 +1033,7 @@ def _answer_ledger_question(
             Transaction.user_id.in_(scoped_ids),
             Transaction.scenario_id.is_(None),
             Transaction.date >= start,
-            Transaction.date <= date.today(),
+            Transaction.date <= end,
             Transaction.amount < 0,
         )
         .all()
@@ -1064,13 +1086,27 @@ def _answer_ledger_question(
         if category_match_exists else
         "The match searched transaction descriptions and merchants."
     )
-    return (
+    answer = (
         f"**{scope_label} {action} ${total:,.2f} on transactions matching "
         f"\"{keyword}\" over {period}.**\n\n"
         f"That is the sum of {len(matched)} outbound ledger transaction"
-        f"{'s' if len(matched) != 1 else ''} from {start.isoformat()} through {date.today().isoformat()}."
+        f"{'s' if len(matched) != 1 else ''} from {start.isoformat()} through {end.isoformat()}."
         f" {match_note}{breakdown}{transfer_note} {source_note}"
     )
+    listing_requested = any(term in lower for term in ("break out", "breakdown", "list", "show", "which transactions", "adding up", "line items"))
+    if listing_requested and matched:
+        owner_names = {candidate.id: candidate.username.capitalize() for candidate in all_users}
+        rows = ["", "| Date | Owner | Description | Category | Amount |", "|---|---|---|---|---:|"]
+        for txn in sorted(matched, key=lambda item: (item.date, item.user_id, item.id)):
+            description = (txn.merchant or txn.description or "").replace("|", "\\|")
+            category = (txn.category_name or "Uncategorized").replace("|", "\\|")
+            rows.append(
+                f"| {txn.date.isoformat()} | {owner_names.get(txn.user_id, 'Unknown')} | "
+                f"{description} | {category} | ${abs(txn.amount):,.2f} |"
+            )
+        rows += ["", f"**Total: ${total:,.2f} across {len(matched)} transactions.**"]
+        answer += "\n" + "\n".join(rows)
+    return answer
 
 
 def _answer_named_transaction_outflow_question(
