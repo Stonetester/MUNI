@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 # Never let a digest window grow unbounded if digests were off for a while.
 _MAX_WINDOW_DAYS = 3
+MUNI_PHONE_URL = "http://muni.tail887f36.ts.net"
+APP_LINK = f"<{MUNI_PHONE_URL}|Open MUNI on your phone>"
 
 
 def _tz() -> ZoneInfo:
@@ -202,6 +204,7 @@ def build_personal_message(group: dict) -> str:
     for t in group["txns"]:
         lines.append(_txn_line(t))
     lines.append("📝 Enter these in your sheet — Google Sheets stay the source of truth.")
+    lines.append(f"📱 {APP_LINK}")
     return "\n".join(lines)
 
 
@@ -216,6 +219,7 @@ def build_dm_message(label: str, groups: list[dict]) -> str:
         for txn in group["txns"]:
             lines.append(_txn_line(txn))
     lines.append("📝 Enter these in your sheet — Google Sheets stay the source of truth.")
+    lines.append(f"📱 {APP_LINK}")
     return "\n".join(lines)
 
 
