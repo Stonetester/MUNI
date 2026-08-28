@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
 from dateutil.relativedelta import relativedelta
@@ -17,6 +17,7 @@ from app.schemas.dashboard import (
     AccountBalanceSummary,
     DashboardResponse,
     MonthSummary,
+    WeekComparison,
 )
 from app.schemas.forecast import ForecastPoint
 from app.schemas.transaction import TransactionOut
@@ -120,6 +121,26 @@ def get_dashboard(
 
     this_month = _month_summary(this_month_txns, categories_map)
     last_month = _month_summary(last_month_txns, categories_map)
+
+    this_week_start = today - timedelta(days=today.weekday())
+    last_week_start = this_week_start - timedelta(days=7)
+    last_week_end = this_week_start - timedelta(days=1)
+    week_txns = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.date >= last_week_start,
+            Transaction.date <= today,
+            Transaction.scenario_id.is_(None),
+        )
+        .all()
+    )
+    week_comparison = WeekComparison(
+        this_week=round(sum(abs(t.amount) for t in week_txns
+                            if t.date >= this_week_start and counts_as_expense(t)), 2),
+        last_week=round(sum(abs(t.amount) for t in week_txns
+                            if t.date <= last_week_end and counts_as_expense(t)), 2),
+    )
 
     # Upcoming events (next 3 by start_date)
     upcoming_events = (
@@ -231,6 +252,7 @@ def get_dashboard(
         balances_by_type=balances_by_type,
         this_month=this_month,
         last_month=last_month,
+        week_comparison=week_comparison,
         upcoming_events=upcoming_events,
         forecast_preview=forecast_preview,
         flow_months=flow_months,

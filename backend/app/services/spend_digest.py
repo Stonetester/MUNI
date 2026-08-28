@@ -85,9 +85,13 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
     if since < floor:
         since = floor
 
+    report_since = since
+    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    fetch_since = min(report_since, yesterday_start)
+
     errors: list[str] = []
     try:
-        payload = simplefin.fetch_accounts(connection.access_url, start=since, end=now)
+        payload = simplefin.fetch_accounts(connection.access_url, start=fetch_since, end=now)
         refresh_accounts(db, connection, payload)
         connection.last_synced_at = datetime.utcnow()
         connection.last_error = None
@@ -105,6 +109,7 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
     groups: dict[str, dict] = {}
     credits: list[dict] = []
     total_spend = 0.0
+    daily_by_owner: dict[str, dict[str, float]] = {}
 
     for acc in payload.get("accounts", []):
         row = by_sfid.get(acc.get("id"))
@@ -126,6 +131,17 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
                 "is_today": when.date() == today_local,
             }
             if amount < 0:
+                owner_key = owner_username or "__joint__"
+                comparison = daily_by_owner.setdefault(owner_key, {"today": 0.0, "yesterday": 0.0})
+                if when.date() == today_local:
+                    comparison["today"] += abs(amount)
+                elif when.date() == today_local - timedelta(days=1):
+                    comparison["yesterday"] += abs(amount)
+
+                # Yesterday is fetched for the comparison visual only. Preserve
+                # the digest cursor so old purchases are not announced again.
+                if when < report_since:
+                    continue
                 g = groups.setdefault(
                     owner_label,
                     {"label": owner_label, "username": owner_username, "spend": 0.0, "txns": []},
@@ -134,7 +150,8 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
                 g["txns"].append(entry)
                 total_spend += abs(amount)
             elif amount > 0:
-                credits.append(entry)
+                if when >= report_since:
+                    credits.append(entry)
 
     # Stable order: Keaton, Katherine, Joint — i.e. users first, joint last.
     ordered = sorted(groups.values(), key=lambda g: (g["label"] == "Joint", g["label"]))
@@ -147,7 +164,8 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
         "errors": errors,
         "total_spend": round(total_spend, 2),
         "credits": credits,
-        "since": since.isoformat(),
+        "since": report_since.isoformat(),
+        "daily_by_owner": daily_by_owner,
     }
 
 
@@ -216,13 +234,36 @@ def build_personal_message(group: dict) -> str:
     return "\n".join(lines)
 
 
-def build_dm_message(label: str, groups: list[dict], example: bool = False) -> str:
+def _comparison_bars(first_label: str, first: float, second_label: str, second: float,
+                     width: int = 10) -> list[str]:
+    """Two phone-friendly proportional bars with no fragile space alignment."""
+    ceiling = max(first, second, 0)
+
+    def bar(value: float) -> str:
+        filled = int((max(value, 0) / ceiling) * width) if ceiling else 0
+        if value > 0:
+            filled = max(1, filled)
+        return "█" * filled + "░" * (width - filled)
+
+    return [
+        f"{first_label}: {bar(first)} *${first:,.2f}*",
+        f"{second_label}: {bar(second)} *${second:,.2f}*",
+    ]
+
+
+def build_dm_message(label: str, groups: list[dict], comparison: dict | None = None,
+                     example: bool = False) -> str:
     """Render one partner's owned and joint transactions as a single DM."""
     now = datetime.now(_tz())
     total = sum(g["spend"] for g in groups)
     heading = "🧪 *EXAMPLE — Daily Card Activity*" if example else "💳 *Daily Card Activity*"
     lines = [heading, f"_{label} · {now:%a, %b} {now.day}_", "",
              f"*Today’s total — ${total:,.2f}*"]
+    if comparison is not None:
+        lines.extend(["", "*Today vs. yesterday*", *_comparison_bars(
+            "Today", comparison.get("today", 0),
+            "Yesterday", comparison.get("yesterday", 0),
+        )])
     for group in groups:
         section = "Joint accounts" if group["label"] == "Joint" else f"{group['label']} accounts"
         lines.extend(["", f"*{section} — ${group['spend']:,.2f}*"])
@@ -248,14 +289,21 @@ def split_digest_messages(
     routed: list[tuple[str, float, str]] = []
     remaining: list[dict] = []
     joint = [g for g in data["groups"] if not g.get("username")]
+    daily_by_owner = data.get("daily_by_owner") or {}
     routed_joint = False
 
     for username, destination in user_destinations.items():
         owned = [g for g in data["groups"] if g.get("username") == username]
         dm_groups = owned + joint
-        if destination and dm_groups:
+        owned_comparison = daily_by_owner.get(username, {})
+        joint_comparison = daily_by_owner.get("__joint__", {})
+        comparison = {
+            period: owned_comparison.get(period, 0) + joint_comparison.get(period, 0)
+            for period in ("today", "yesterday")
+        }
+        if destination and (dm_groups or any(comparison.values())):
             label = username.capitalize()
-            personal.append((destination, build_dm_message(label, dm_groups)))
+            personal.append((destination, build_dm_message(label, dm_groups, comparison=comparison)))
             routed.extend((g["label"], g["spend"], "DM") for g in owned)
             routed_joint = routed_joint or bool(joint)
 

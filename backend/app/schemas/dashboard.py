@@ -14,6 +14,11 @@ class MonthSummary(BaseModel):
     by_category: Dict[str, float]
 
 
+class WeekComparison(BaseModel):
+    this_week: float
+    last_week: float
+
+
 class AccountBalanceSummary(BaseModel):
     account_type: str
     total: float
@@ -27,6 +32,7 @@ class DashboardResponse(BaseModel):
     balances_by_type: List[AccountBalanceSummary]
     this_month: MonthSummary
     last_month: MonthSummary
+    week_comparison: WeekComparison
     upcoming_events: List[LifeEventOut]
     forecast_preview: List[ForecastPoint]   # 6 forward months (for net-worth chart)
     flow_months: List[ForecastPoint]         # 12 months: 6 past actual + current + 5 future

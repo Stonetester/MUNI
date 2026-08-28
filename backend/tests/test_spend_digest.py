@@ -61,6 +61,10 @@ class TestBuildSlackMessage(unittest.TestCase):
                 {"description": "BofA payment", "amount": 500.0, "account": "Visa",
                  "pending": False, "date": "2026-07-04", "is_today": True},
             ],
+            "daily_by_owner": {
+                "keaton": {"today": 43.12, "yesterday": 51.00},
+                "__joint__": {"today": 18.50, "yesterday": 9.00},
+            },
         }
         data.update(overrides)
         return data
@@ -105,6 +109,9 @@ class TestBuildSlackMessage(unittest.TestCase):
         self.assertIn("💳 *Daily Card Activity*", personal)
         self.assertIn("Wawa", personal)
         self.assertIn("Target", personal)  # joint purchase is delivered to both partners
+        self.assertIn("*Today vs. yesterday*", personal)
+        self.assertIn("Today: ██████████ *$61.62*", personal)
+        self.assertIn("Yesterday: █████████░ *$60.00*", personal)
         self.assertNotIn("Household total", personal)
         # Household message is a roll-up only once DM delivery is configured.
         household = channels["#coin"]
@@ -147,11 +154,16 @@ class TestBuildSlackMessage(unittest.TestCase):
         self.assertIn("muni.tail887f36.ts.net", msg)
 
     def test_dm_example_has_single_readable_header(self):
-        msg = build_dm_message("Keaton", self._data()["groups"], example=True)
+        msg = build_dm_message(
+            "Keaton", self._data()["groups"],
+            comparison={"today": 61.62, "yesterday": 82.00}, example=True,
+        )
         self.assertTrue(msg.startswith("🧪 *EXAMPLE — Daily Card Activity*"))
         self.assertIn("*Today’s total — $61.62*", msg)
         self.assertIn("*Keaton accounts — $43.12*", msg)
         self.assertIn("*Joint accounts — $18.50*", msg)
+        self.assertIn("Today: ███████░░░ *$61.62*", msg)
+        self.assertIn("Yesterday: ██████████ *$82.00*", msg)
 
 
 if __name__ == "__main__":
