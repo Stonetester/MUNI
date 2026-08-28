@@ -143,6 +143,7 @@ class TestBuildSlackMessage(unittest.TestCase):
         self.assertIn("Wawa", msg)
         self.assertIn("Target", msg)
         self.assertIn("*Joint — $18.50*", msg)
+        self.assertIn("muni.tail887f36.ts.net", msg)
 
 
 if __name__ == "__main__":
