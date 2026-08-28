@@ -374,3 +374,35 @@ class ChatGroundingTests(TestCase):
         self.assertIsNotNone(answer)
         self.assertIn("| 2025-08-01 | Keaton | Venue Deposit | Wedding | $750.00 |", answer)
         self.assertIn("**Total: $750.00 across 1 transactions.**", answer)
+
+    def test_contributed_to_destination_uses_raw_ledger_and_explicit_year_range(self):
+        from app.services.ai_report import _answer_ledger_question
+
+        transfer = Category(user_id=self.k.id, name="Savings Transfer", kind="savings")
+        self.db.add(transfer)
+        self.db.flush()
+        self.db.add_all([
+            Transaction(
+                user_id=self.k.id, category_id=transfer.id,
+                date=date(2025, 9, 22), amount=-1600,
+                description="everbank", import_source="sheets:SEP2025",
+            ),
+            Transaction(
+                user_id=self.k.id, category_id=transfer.id,
+                date=date(2026, 1, 14), amount=-1700,
+                description="Everbank", import_source="sheets:JAN2026",
+            ),
+        ])
+        self.db.commit()
+
+        answer = _answer_ledger_question(
+            self.k,
+            self.db,
+            "How much did I contribute to Everbank from 2024-2026 total",
+            joint=False,
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("Keaton contributed $3,300.00", answer)
+        self.assertIn("2024 through 2026", answer)
+        self.assertIn("All matching rows came from the Google Sheets sync", answer)

@@ -929,7 +929,10 @@ def _answer_ledger_question(
     ]
     context_text = " ".join(prior_user_messages + [text]).lower()
     followup_terms = ("total", "break out", "breakdown", "list", "show", "which transactions", "adding up", "line items")
-    ledger_terms = ("transaction", "spend", "spent", "paid", "put into", "sent to", "transferred", "deposited")
+    ledger_terms = (
+        "transaction", "spend", "spent", "paid", "put into", "sent to",
+        "transferred", "deposited", "contribute", "contributed", "contribution",
+    )
     if not any(term in context_text for term in ledger_terms) or not any(
         term in lower for term in ledger_terms + followup_terms
     ):
@@ -938,7 +941,7 @@ def _answer_ledger_question(
     def extract_keyword(candidate: str) -> str | None:
         patterns = (
             r"\b(?:called|labeled|labelled|named)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
-            r"\b(?:put|paid|sent|transferred|deposited)(?:\s+money)?\s+(?:into|to|toward|towards)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
+            r"\b(?:put|paid|sent|transferred|deposited|contributed|contribute|contributions?)(?:\s+money)?\s+(?:into|to|toward|towards)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for|from)\b|[?.,]*$)",
             r"\bon\s+(?:transactions?\s+(?:that\s+are\s+)?(?:called|labeled|labelled|named)\s+)?[\"']?(.+?)[\"']?(?:\s+transactions?)?[?.,]*$",
         )
         for pattern in patterns:
@@ -960,6 +963,7 @@ def _answer_ledger_question(
     intent_lower = source_message.lower()
     raw_outflow = any(term in intent_lower for term in (
         "put into", "sent to", "transferred to", "deposited into",
+        "contribute to", "contributed to", "contribution to", "contributions to",
         "transactions called", "transactions that are called", "transactions labeled",
         "transactions labelled", "transactions named",
     ))
@@ -1074,7 +1078,7 @@ def _answer_ledger_question(
         breakdown = " Per-person breakdown: " + ", ".join(
             f"{name} ${amount:,.2f}" for name, amount in per_person.items()
         ) + "."
-    action = "sent" if raw_outflow else "spent"
+    action = "contributed" if "contribut" in intent_lower else ("sent" if raw_outflow else "spent")
     transfer_note = (
         " It includes savings/transfer rows because this wording asks how much was put into a destination, "
         "not consumption spending."
