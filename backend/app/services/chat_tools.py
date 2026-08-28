@@ -8,8 +8,10 @@ to an arbitrary horizon / target. These tools close that gap by querying the rea
 and running the real forecast engine on demand, so the model never has to say "that
 figure isn't in my data" when the data exists.
 
-Only Claude uses these (its tool-calling is reliable); the local/OpenAI paths keep the
-static-prompt-only behavior. See answer_chat_question in ai_report.py.
+Both Claude and the local Ollama model call these (Ollama exposes native tool-calling
+on /api/chat). The MODEL decides WHICH slice of the ledger to ask for; this module does
+ALL of the arithmetic in Python, so a total is never something a language model added up
+in its head. See answer_chat_question in ai_report.py.
 """
 from __future__ import annotations
 
@@ -37,9 +39,11 @@ def tool_definitions(usernames: list[str]) -> list[dict]:
                 "Query the real transaction ledger for any PAST spending or income question that "
                 "isn't already answered by the summaries in the system prompt — e.g. an arbitrary date "
                 "range ('last 90 days'), a specific merchant ('Starbucks'), a single day, a description "
-                "keyword, or a person-scoped slice. Returns the total, transaction count, average, and "
-                "(optionally) a sample of matching transactions. Amounts are absolute dollars. Prefer this "
-                "over guessing whenever the exact figure isn't already listed in the prompt."
+                "keyword, or a person-scoped slice. Returns the exact total, transaction count, average, a "
+                "per-person split, and (optionally) the matching transactions. Amounts are absolute dollars. "
+                "ALWAYS call this rather than adding numbers up yourself or saying a figure is unavailable - "
+                "the totals it returns are computed in code and ARE the authoritative answer. Call it more "
+                "than once (e.g. once per person, or once per year) when a question needs several slices."
             ),
             "input_schema": {
                 "type": "object",
@@ -51,8 +55,15 @@ def tool_definitions(usernames: list[str]) -> list[dict]:
                     },
                     "flow": {
                         "type": "string",
-                        "enum": ["expense", "income", "both"],
-                        "description": "Count expenses, income, or both. Default 'expense'.",
+                        "enum": ["expense", "income", "both", "outflow_all"],
+                        "description": (
+                            "'expense' (default) = consumption spending; savings and internal transfers are "
+                            "excluded. 'income' = money in. 'both' = income + expenses. 'outflow_all' = EVERY "
+                            "dollar that left the account including savings transfers and contributions - use "
+                            "this when the question is how much was PUT INTO / SENT TO / CONTRIBUTED TO a "
+                            "destination (e.g. 'how much did I put into EverBank'), because those rows are "
+                            "savings transfers, not consumption spending."
+                        ),
                     },
                     "category": {
                         "type": "string",
@@ -76,12 +87,12 @@ def tool_definitions(usernames: list[str]) -> list[dict]:
                     },
                     "group_by": {
                         "type": "string",
-                        "enum": ["none", "category", "month", "merchant"],
-                        "description": "Break the total down by this dimension. Default 'none' (single total).",
+                        "enum": ["none", "category", "month", "merchant", "person", "year"],
+                        "description": "Break the total down by this dimension. Default 'none' (single total). Use 'person' to split a household total between partners, 'year' for a year-by-year breakdown.",
                     },
                     "include_samples": {
                         "type": "boolean",
-                        "description": "If true, also return up to 15 of the largest matching transactions (date, amount, merchant, category). Useful for 'what were my biggest X'.",
+                        "description": "If true, also return the matching transactions themselves (date, owner, amount, merchant, category), largest first, up to 40. Use this whenever the user asks to see, list, or break out the individual transactions.",
                     },
                 },
                 "required": ["person"],
@@ -164,15 +175,32 @@ def _run_query_transactions(inp: dict, all_users: list[User], db: Session) -> di
             return counts_as_income(t)
         if flow == "both":
             return counts_as_income(t) or counts_as_expense(t)
+        if flow == "outflow_all":
+            # Every dollar that left the account, savings/transfer rows included.
+            return t.amount < 0
         return counts_as_expense(t)
+
+    # A category filter matches the EXACT category when one exists (so 'Wedding'
+    # means the Wedding category, not every row whose category merely contains it);
+    # otherwise it falls back to substring so partial names still work.
+    exact_category = None
+    if cat_filter:
+        exact_category = next(
+            (name for name in cats_map.values() if (name or "").strip().lower() == cat_filter),
+            None,
+        )
 
     matched = []
     for t in txns:
         if not flow_ok(t):
             continue
         cat_name = cats_map.get(t.category_id, "Uncategorized")
-        if cat_filter and cat_filter not in cat_name.lower():
-            continue
+        if cat_filter:
+            if exact_category:
+                if (cat_name or "").strip().lower() != cat_filter:
+                    continue
+            elif cat_filter not in (cat_name or "").lower():
+                continue
         if text_filter:
             hay = f"{t.merchant or ''} {t.description or ''}".lower()
             if text_filter not in hay:
@@ -181,11 +209,26 @@ def _run_query_transactions(inp: dict, all_users: list[User], db: Session) -> di
 
     total = round(sum(abs(t.amount) for t, _ in matched), 2)
     count = len(matched)
+    owner_names = {u.id: u.username.capitalize() for u in all_users}
+    per_person = {}
+    for t, _ in matched:
+        key = owner_names.get(t.user_id, "Unknown")
+        per_person[key] = round(per_person.get(key, 0.0) + abs(t.amount), 2)
+
+    sheets_count = sum(
+        1 for t, _ in matched
+        if t.import_source and str(t.import_source).startswith("sheets:")
+    )
+
     result: dict = {
         "person": inp.get("person", "household"),
         "flow": flow,
         "filters": {
             "category": inp.get("category"),
+            "category_match": (
+                "exact category" if exact_category
+                else ("category name substring" if cat_filter else None)
+            ),
             "merchant_or_text": inp.get("merchant_or_text"),
             "start_date": start_date,
             "end_date": end_date,
@@ -193,6 +236,15 @@ def _run_query_transactions(inp: dict, all_users: list[User], db: Session) -> di
         "total": total,
         "count": count,
         "average": round(total / count, 2) if count else 0.0,
+        "per_person": per_person,
+        "source": {
+            "table": "transactions",
+            "rows_from_google_sheets_sync": sheets_count,
+            "note": (
+                "Totals are summed in Python over the live ledger rows - report them "
+                "exactly as given; do not recompute or round differently."
+            ),
+        },
     }
 
     group_by = inp.get("group_by", "none")
@@ -203,6 +255,10 @@ def _run_query_transactions(inp: dict, all_users: list[User], db: Session) -> di
                 key = cat_name
             elif group_by == "month":
                 key = t.date.strftime("%Y-%m")
+            elif group_by == "year":
+                key = str(t.date.year)
+            elif group_by == "person":
+                key = owner_names.get(t.user_id, "Unknown")
             else:  # merchant
                 key = t.merchant or (t.description or "Unknown")
             groups[key] = groups.get(key, 0.0) + abs(t.amount)
@@ -211,19 +267,44 @@ def _run_query_transactions(inp: dict, all_users: list[User], db: Session) -> di
         }
 
     if inp.get("include_samples"):
-        top = sorted(matched, key=lambda x: -abs(x[0].amount))[:15]
-        result["samples"] = [
+        top = sorted(matched, key=lambda x: -abs(x[0].amount))[:40]
+        result["transactions"] = [
             {
                 "date": t.date.isoformat(),
+                "owner": owner_names.get(t.user_id, "Unknown"),
                 "amount": round(abs(t.amount), 2),
                 "merchant": t.merchant or t.description or "",
                 "category": cat_name,
             }
             for t, cat_name in top
         ]
+        if count > 40:
+            result["transactions_note"] = (
+                f"Showing the 40 largest of {count} matching transactions; "
+                f"the total above covers all {count}."
+            )
 
     if count == 0:
-        result["note"] = "No matching transactions — the true figure for these filters is $0."
+        result["note"] = "No matching transactions - the true figure for these filters is $0."
+        # The most common cause of a false $0: the question was about money PUT INTO a
+        # destination (a savings transfer / contribution), but flow='expense' filtered
+        # those rows out. Don't make the model remember to retry - tell it here.
+        if flow == "expense":
+            probe = dict(inp)
+            probe["flow"] = "outflow_all"
+            probe.pop("group_by", None)
+            probe.pop("include_samples", None)
+            retry = _run_query_transactions(probe, all_users, db)
+            if retry["count"]:
+                result["retry_hint"] = (
+                    f"IMPORTANT: {retry['count']} matching transaction(s) totaling "
+                    f"${retry['total']:,.2f} DO exist, but they are savings transfers or "
+                    f"contributions rather than consumption spending, so flow='expense' "
+                    f"excluded them. If the question was about money PUT INTO or CONTRIBUTED "
+                    f"TO this destination, call query_transactions again with "
+                    f"flow='outflow_all' and report that figure. Do NOT answer $0 without "
+                    f"doing so."
+                )
     return result
 
 

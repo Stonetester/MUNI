@@ -6,11 +6,8 @@ from __future__ import annotations
 
 import calendar
 import json
-import re
 from datetime import date, datetime
 from typing import Optional
-
-from dateutil.relativedelta import relativedelta
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -911,215 +908,6 @@ def _reply_low_confidence(reply: str) -> bool:
     ))
 
 
-def _answer_ledger_question(
-    user: User, db: Session, message: str, history: list | None = None, joint: bool = False,
-) -> str | None:
-    """Deterministically answer common natural-language transaction-total questions.
-
-    The local model cannot call Claude's ledger tools. This path therefore resolves
-    time window, owner scope, flow semantics, and a free-text/category term against
-    the same Transaction rows used by MUNI's Transactions screen.
-    """
-    text = message.strip()
-    lower = text.lower()
-    prior_user_messages = [
-        str(item.get("content", "")).strip()
-        for item in (history or [])[-12:]
-        if item.get("role") == "user" and str(item.get("content", "")).strip()
-    ]
-    context_text = " ".join(prior_user_messages + [text]).lower()
-    followup_terms = ("total", "break out", "breakdown", "list", "show", "which transactions", "adding up", "line items")
-    ledger_terms = (
-        "transaction", "spend", "spent", "paid", "put into", "sent to",
-        "transferred", "deposited", "contribute", "contributed", "contribution",
-    )
-    if not any(term in context_text for term in ledger_terms) or not any(
-        term in lower for term in ledger_terms + followup_terms
-    ):
-        return None
-
-    def extract_keyword(candidate: str) -> str | None:
-        patterns = (
-            r"\b(?:called|labeled|labelled|named)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
-            r"\b(?:put|paid|sent|transferred|deposited|contributed|contribute|contributions?)(?:\s+money)?\s+(?:into|to|toward|towards)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for|from)\b|[?.,]*$)",
-            r"\bon\s+(?:transactions?\s+(?:that\s+are\s+)?(?:called|labeled|labelled|named)\s+)?[\"']?(.+?)[\"']?(?:\s+transactions?)?[?.,]*$",
-        )
-        for pattern in patterns:
-            match = re.search(pattern, candidate, flags=re.IGNORECASE)
-            if match:
-                value = re.sub(r"\s+transactions?\b.*$", "", match.group(1), flags=re.IGNORECASE).strip()
-                if value:
-                    return value
-        return None
-
-    keyword_source = next(
-        ((candidate, extracted) for candidate in [text] + list(reversed(prior_user_messages))
-         if (extracted := extract_keyword(candidate))),
-        None,
-    )
-    if not keyword_source:
-        return None
-    source_message, keyword = keyword_source
-    intent_lower = source_message.lower()
-    raw_outflow = any(term in intent_lower for term in (
-        "put into", "sent to", "transferred to", "deposited into",
-        "contribute to", "contributed to", "contribution to", "contributions to",
-        "transactions called", "transactions that are called", "transactions labeled",
-        "transactions labelled", "transactions named",
-    ))
-
-    # Follow-ups often separate the window from the merchant question (for
-    # example: "Use the last 2 years" then "transactions called EverBank").
-    window_candidates = [text] + list(reversed(prior_user_messages))
-    number_words = {
-        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    }
-    def window_count(match) -> int:
-        token = match.group(1)
-        return int(token) if token.isdigit() else number_words[token]
-    year_range = next((
-        re.search(r"\b(20\d{2})\s*(?:-|–|to|through)\s*(20\d{2})\b", candidate.lower())
-        for candidate in window_candidates
-        if re.search(r"\b(20\d{2})\s*(?:-|–|to|through)\s*(20\d{2})\b", candidate.lower())
-    ), None)
-    years_match = next((
-        re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b", candidate.lower())
-        for candidate in window_candidates
-        if re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b", candidate.lower())
-    ), None)
-    months_match = next((
-        re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+months?\b", candidate.lower())
-        for candidate in window_candidates
-        if re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+months?\b", candidate.lower())
-    ), None)
-    end = date.today()
-    if year_range:
-        start_year, end_year = map(int, year_range.groups())
-        if start_year > end_year:
-            start_year, end_year = end_year, start_year
-        start = date(start_year, 1, 1)
-        end = min(date(end_year, 12, 31), date.today())
-        period = f"{start_year} through {end_year}"
-    elif years_match:
-        count = window_count(years_match)
-        start = date.today() - relativedelta(years=count)
-        period = f"the last {count} years"
-    elif months_match:
-        count = window_count(months_match)
-        start = date.today() - relativedelta(months=count)
-        period = f"the last {count} months"
-    else:
-        return None
-
-    all_users = db.query(User).order_by(User.id).all()
-    joint_terms = ("joint", "together", "combined", "household", " we ", " our ", "both", "me and", "and me", "katherine and i")
-    scope_text = lower if any(term in f" {lower} " for term in joint_terms + (" i ", " my ", " me ") + tuple(candidate.username.lower() for candidate in all_users)) else intent_lower
-    padded_lower = f" {scope_text} "
-    explicit_household = any(term in padded_lower for term in joint_terms)
-    explicit_personal = any(term in padded_lower for term in (" i ", " my ", " me "))
-    household_scope = explicit_household or (joint and not explicit_personal)
-    if household_scope:
-        scoped_users = all_users
-        scope_label = "Keaton and Katherine combined"
-    else:
-        named_user = next(
-            (candidate for candidate in all_users if candidate.username.lower() in scope_text),
-            None,
-        )
-        scoped_users = [named_user or user]
-        scope_label = scoped_users[0].username.capitalize()
-    scoped_ids = [candidate.id for candidate in scoped_users]
-
-    candidates = (
-        db.query(Transaction)
-        .filter(
-            Transaction.user_id.in_(scoped_ids),
-            Transaction.scenario_id.is_(None),
-            Transaction.date >= start,
-            Transaction.date <= end,
-            Transaction.amount < 0,
-        )
-        .all()
-    )
-    needle = keyword.casefold()
-    category_match_exists = any(
-        (category.name or "").strip().casefold() == needle
-        for category in db.query(Category).filter(Category.user_id.in_(scoped_ids)).all()
-    )
-    matched = [
-        txn for txn in candidates
-        if (raw_outflow or counts_as_expense(txn))
-        and (
-            (txn.category_name or "").strip().casefold() == needle
-            if category_match_exists
-            else needle in f"{txn.merchant or ''} {txn.description or ''}".casefold()
-        )
-    ]
-    total = sum(abs(txn.amount) for txn in matched)
-    sheets_count = sum(
-        1 for txn in matched
-        if txn.import_source and txn.import_source.startswith("sheets:")
-    )
-    if matched and sheets_count == len(matched):
-        source_note = "All matching rows came from the Google Sheets sync."
-    elif sheets_count:
-        source_note = f"{sheets_count} of the matching rows came from the Google Sheets sync."
-    else:
-        source_note = "No matching rows were tagged as Google Sheets imports."
-    per_person = {
-        candidate.username.capitalize(): sum(
-            abs(txn.amount) for txn in matched if txn.user_id == candidate.id
-        )
-        for candidate in scoped_users
-    }
-    breakdown = ""
-    if household_scope:
-        breakdown = " Per-person breakdown: " + ", ".join(
-            f"{name} ${amount:,.2f}" for name, amount in per_person.items()
-        ) + "."
-    action = "contributed" if "contribut" in intent_lower else ("sent" if raw_outflow else "spent")
-    transfer_note = (
-        " It includes savings/transfer rows because this wording asks how much was put into a destination, "
-        "not consumption spending."
-        if raw_outflow else
-        " Savings and neutral transfers are excluded from this spending total."
-    )
-    match_note = (
-        f"The match used the exact \"{keyword}\" category."
-        if category_match_exists else
-        "The match searched transaction descriptions and merchants."
-    )
-    answer = (
-        f"**{scope_label} {action} ${total:,.2f} on transactions matching "
-        f"\"{keyword}\" over {period}.**\n\n"
-        f"That is the sum of {len(matched)} outbound ledger transaction"
-        f"{'s' if len(matched) != 1 else ''} from {start.isoformat()} through {end.isoformat()}."
-        f" {match_note}{breakdown}{transfer_note} {source_note}"
-    )
-    listing_requested = any(term in lower for term in ("break out", "breakdown", "list", "show", "which transactions", "adding up", "line items"))
-    if listing_requested and matched:
-        owner_names = {candidate.id: candidate.username.capitalize() for candidate in all_users}
-        rows = ["", "| Date | Owner | Description | Category | Amount |", "|---|---|---|---|---:|"]
-        for txn in sorted(matched, key=lambda item: (item.date, item.user_id, item.id)):
-            description = (txn.merchant or txn.description or "").replace("|", "\\|")
-            category = (txn.category_name or "Uncategorized").replace("|", "\\|")
-            rows.append(
-                f"| {txn.date.isoformat()} | {owner_names.get(txn.user_id, 'Unknown')} | "
-                f"{description} | {category} | ${abs(txn.amount):,.2f} |"
-            )
-        rows += ["", f"**Total: ${total:,.2f} across {len(matched)} transactions.**"]
-        answer += "\n" + "\n".join(rows)
-    return answer
-
-
-def _answer_named_transaction_outflow_question(
-    user: User, db: Session, message: str, history: list | None = None,
-) -> str | None:
-    """Backward-compatible wrapper for the original narrow ledger helper."""
-    return _answer_ledger_question(user, db, message, history=history, joint=False)
-
-
 def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> str:
     today = date.today()
     # The chat ALWAYS sees the whole household — every account, both partners, and the
@@ -1173,11 +961,33 @@ def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> s
         "net worth, and per-account balances, with the source of every input) and the current savings-goal",
         "status — use them for any question about the future; never claim you can't predict or can't see",
         "forecasts, and never invent your own projection when the app's is provided.",
-        "TOOLS: for anything NOT already spelled out below — an arbitrary date range ('last 90 days'),",
-        "a specific merchant ('Starbucks'), a single day, a person-only slice, biggest-N transactions, or a",
-        "future projection to an arbitrary horizon / target ('when do we hit $500k') — call a tool instead of",
-        "guessing or saying you lack the data: query_transactions for past spending/income, project_finances for",
-        "predictions. The summaries below are for speed; the tools reach the full ledger and the real forecast engine.",
+        "TOOLS — READ THIS BEFORE ANSWERING ANY 'how much' QUESTION:",
+        "You have query_transactions (the real ledger) and project_finances (the real forecast engine).",
+        "NEVER add up dollar amounts yourself and NEVER estimate a total. If a question asks how much was",
+        "spent, paid, put into, sent to, or contributed to anything — over any time window — call",
+        "query_transactions and report the `total` it returns EXACTLY as given. The tool sums the rows in",
+        "code; that number is the answer. Doing the arithmetic in your head is the one thing you must not do.",
+        "How to fill it in:",
+        "  - person: use the ACTIVE PROFILE's name in SOLO mode; use 'household' in JOINT mode, or whenever",
+        "    the question says we/our/both/together/combined. Name a partner explicitly if the question does.",
+        "  - flow: 'expense' for spending on a thing (dining, wedding, gas). Use 'outflow_all' when the",
+        "    question is how much was PUT INTO / SENT TO / CONTRIBUTED TO a destination (savings, EverBank,",
+        "    an account) — those rows are savings transfers and 'expense' will return $0 for them.",
+        "  - category vs merchant_or_text: if the thing named is one of the categories listed below, pass it",
+        "    as `category`; otherwise pass it as `merchant_or_text` to search merchants and descriptions.",
+        "    If a category attempt returns count 0, retry the other way before concluding it is $0.",
+        "  - dates: resolve relative windows yourself into start_date/end_date (today's date is given above).",
+        "    'the last two years' means the two-year window ending today, not two calendar years.",
+        "  - group_by: 'person' to split a household total between partners, 'year'/'month' for trends,",
+        "    'category' or 'merchant' to show where the money went.",
+        "  - include_samples: true whenever the user wants to see, list, or break out the transactions.",
+        "Call the tool more than once when a question needs several slices (per person, per year).",
+        "In JOINT mode always report the combined total AND the per-person split (`per_person` comes back",
+        "with every result). In SOLO mode report just the active profile's number.",
+        "If the tool returns count 0, say plainly that no matching transactions were found for those filters",
+        "and state the filters you used — do not invent a figure and do not fall back to a prompt summary.",
+        "State the window and what you matched on so the number is auditable. The summaries below are for",
+        "speed on common questions; the tools reach the full ledger and are always authoritative.",
         "FORMATTING: write clean markdown. Use real markdown tables for comparisons (header row + |---| divider).",
         "Round dollars to whole numbers (e.g. $5,827 — no cents). Use short '##' headers for sections, '-' bullets,",
         "and '**bold**' for key numbers. Do NOT prefix lines with '>' for math; write equations inline on a normal",
@@ -1478,9 +1288,124 @@ def _chat_with_openai(api_key: str, system_prompt: str, history: list, message: 
     return response.choices[0].message.content or ""
 
 
-def _chat_with_ollama(host: str, model: str, system_prompt: str, history: list, message: str) -> str:
-    messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": message}]
-    return _ollama_chat_call(host, model, messages)
+def _ollama_chat_raw(host: str, model: str, messages: list, tools: list | None = None) -> dict:
+    """POST to Ollama /api/chat and return the whole `message` object.
+
+    Same context/`think` handling as _ollama_chat_call, but the caller gets the
+    tool_calls too. Kept separate so the plain-text path stays a one-liner.
+    """
+    import urllib.request
+    import urllib.error
+    import json as _json
+    from app.config import settings
+
+    base = {
+        "model": model,
+        "stream": False,
+        "messages": messages,
+        "options": {"num_ctx": settings.OLLAMA_NUM_CTX},
+    }
+    if tools:
+        base["tools"] = tools
+
+    for body in ({**base, "think": False}, base):
+        req = urllib.request.Request(
+            f"{host}/api/chat",
+            data=_json.dumps(body, default=str).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                return _json.loads(resp.read())["message"]
+        except urllib.error.HTTPError as e:
+            if body is base:
+                raise RuntimeError(f"Ollama error {e.code}: {e.read().decode(errors='replace')[:300]}")
+            continue  # model rejected `think` — retry without it
+        except OSError as e:
+            raise RuntimeError(
+                f"Could not reach Mongol at {host} — it may be asleep or unreachable. "
+                f"Wake it up first, then try again. ({e})"
+            )
+    raise RuntimeError("Ollama call failed")
+
+
+def _ollama_tool_schema(tools: list[dict]) -> list[dict]:
+    """Anthropic tool defs -> Ollama/OpenAI function-calling shape."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in tools
+    ]
+
+
+def _chat_with_ollama(
+    host: str,
+    model: str,
+    system_prompt: str,
+    history: list,
+    message: str,
+    user: "User | None" = None,
+    db: "Session | None" = None,
+) -> str:
+    """Local chat. With user+db the local model gets the SAME ledger/forecast tools
+    Claude has, so a question like "how much did I spend on Wedding in the last two
+    years" is answered by querying the real rows and summing them in Python — the
+    model only picks the filters and writes the prose. Without user+db (or if the
+    model can't tool-call) it degrades to the static-prompt completion."""
+    from app.services.chat_tools import tool_definitions, execute_tool
+
+    messages = [{"role": "system", "content": system_prompt}] + history + [
+        {"role": "user", "content": message}
+    ]
+
+    if user is None or db is None:
+        return _ollama_chat_call(host, model, messages)
+
+    all_users = db.query(User).order_by(User.id).all()
+    tools = _ollama_tool_schema(tool_definitions([u.username for u in all_users]))
+
+    try:
+        convo = list(messages)
+        for _ in range(6):
+            reply = _ollama_chat_raw(host, model, convo, tools=tools)
+            calls = reply.get("tool_calls") or []
+            if not calls:
+                return reply.get("content") or ""
+
+            convo.append({
+                "role": "assistant",
+                "content": reply.get("content") or "",
+                "tool_calls": calls,
+            })
+            for call in calls:
+                fn = call.get("function", {}) or {}
+                args = fn.get("arguments") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
+                out = execute_tool(fn.get("name", ""), args, user, all_users, db)
+                convo.append({
+                    "role": "tool",
+                    "name": fn.get("name", ""),
+                    "content": json.dumps(out, default=str),
+                })
+        # Loop cap hit — one final pass with no tools so it must answer in prose.
+        return _ollama_chat_raw(host, model, convo).get("content") or ""
+    except RuntimeError:
+        raise
+    except Exception:
+        # Model/server rejected tools — fall back to the static-prompt answer
+        # rather than failing the chat turn outright.
+        return _ollama_chat_call(host, model, messages)
 
 
 def _chat_via_claude(
@@ -1514,10 +1439,6 @@ def answer_chat_question(
     """
     from app.config import settings
 
-    exact_ledger_answer = _answer_ledger_question(user, db, message, history, joint=joint)
-    if exact_ledger_answer is not None:
-        return exact_ledger_answer, "MUNI ledger"
-
     system_prompt = _build_chat_system_prompt(user, db, joint=joint)
 
     # Manual override → straight to the strong model.
@@ -1547,7 +1468,7 @@ def answer_chat_question(
         # Claude unavailable/failed → fall through to local.
 
     try:
-        reply = _chat_with_ollama(host, local_model, system_prompt, history, message)
+        reply = _chat_with_ollama(host, local_model, system_prompt, history, message, user=user, db=db)
     except Exception as e:
         # Local unreachable → try Claude as a fallback before giving up.
         if settings.ANTHROPIC_API_KEY:
