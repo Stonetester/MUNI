@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import calendar
 import json
+import re
 from datetime import date, datetime
 from typing import Optional
+
+from dateutil.relativedelta import relativedelta
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -908,6 +911,98 @@ def _reply_low_confidence(reply: str) -> bool:
     ))
 
 
+def _answer_named_transaction_outflow_question(
+    user: User, db: Session, message: str, history: list | None = None,
+) -> str | None:
+    """Answer explicit ledger-name outflow questions without asking the LLM to infer.
+
+    Category spending deliberately excludes savings and transfers. A question such
+    as "how much have I spent on transactions called EverBank in the last 2 years"
+    is instead asking for raw outbound ledger rows whose merchant/description has
+    that name. Keeping this path deterministic prevents a local model from turning
+    the absence of an EverBank *spending category* into a false $0 answer.
+    """
+    text = message.strip()
+    lower = text.lower()
+    if not any(term in lower for term in ("transaction", "paid", "put into", "sent to")):
+        return None
+
+    named = re.search(
+        r"\b(?:called|labeled|labelled|named)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not named:
+        named = re.search(
+            r"\b(?:put|paid|sent|transferred|deposited)(?:\s+money)?\s+"
+            r"(?:into|to|toward|towards)\s+[\"']?([^\"'?.,]+?)[\"']?"
+            r"(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+    if not named:
+        return None
+    keyword = named.group(1).strip()
+    if not keyword:
+        return None
+
+    # Follow-ups often separate the window from the merchant question (for
+    # example: "Use the last 2 years" then "transactions called EverBank").
+    recent_user_context = " ".join(
+        str(item.get("content", ""))
+        for item in (history or [])[-4:]
+        if item.get("role") == "user"
+    )
+    window_text = f"{recent_user_context} {text}".lower()
+    years_match = re.search(r"\b(?:last|past)\s+(\d+)\s+years?\b", window_text)
+    months_match = re.search(r"\b(?:last|past)\s+(\d+)\s+months?\b", window_text)
+    if years_match:
+        start = date.today() - relativedelta(years=int(years_match.group(1)))
+        period = f"the last {int(years_match.group(1))} years"
+    elif months_match:
+        start = date.today() - relativedelta(months=int(months_match.group(1)))
+        period = f"the last {int(months_match.group(1))} months"
+    else:
+        return None
+
+    candidates = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == user.id,
+            Transaction.scenario_id.is_(None),
+            Transaction.date >= start,
+            Transaction.date <= date.today(),
+            Transaction.amount < 0,
+        )
+        .all()
+    )
+    needle = keyword.casefold()
+    matched = [
+        txn for txn in candidates
+        if needle in f"{txn.merchant or ''} {txn.description or ''}".casefold()
+    ]
+    total = sum(abs(txn.amount) for txn in matched)
+    sheets_count = sum(
+        1 for txn in matched
+        if txn.import_source and txn.import_source.startswith("sheets:")
+    )
+    if matched and sheets_count == len(matched):
+        source_note = "All matching rows came from the Google Sheets sync."
+    elif sheets_count:
+        source_note = f"{sheets_count} of the matching rows came from the Google Sheets sync."
+    else:
+        source_note = "No matching rows were tagged as Google Sheets imports."
+    owner = user.username.capitalize()
+    return (
+        f"**{owner}, you personally sent ${total:,.2f} to transactions matching "
+        f"\"{keyword}\" over {period}.**\n\n"
+        f"That is the sum of {len(matched)} outbound ledger transaction"
+        f"{'s' if len(matched) != 1 else ''} from {start.isoformat()} through {date.today().isoformat()}. "
+        "It includes savings/transfer rows because you asked how much you paid or put into that named "
+        f"destination—not how much counted as consumption spending. {source_note}"
+    )
+
+
 def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> str:
     today = date.today()
     # The chat ALWAYS sees the whole household — every account, both partners, and the
@@ -1301,6 +1396,10 @@ def answer_chat_question(
     When `joint`, the prompt is grounded in the COMBINED household (both partners).
     """
     from app.config import settings
+
+    exact_ledger_answer = _answer_named_transaction_outflow_question(user, db, message, history)
+    if exact_ledger_answer is not None:
+        return exact_ledger_answer, "MUNI ledger"
 
     system_prompt = _build_chat_system_prompt(user, db, joint=joint)
 

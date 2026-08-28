@@ -159,3 +159,95 @@ class ChatGroundingTests(TestCase):
             set(REPORT_TYPES.keys()),
             {"monthly", "spending", "investments", "goals", "year"},
         )
+
+    def test_named_transaction_question_counts_personal_transfers(self):
+        from app.services.ai_report import _answer_named_transaction_outflow_question
+
+        transfer = Category(user_id=self.k.id, name="Savings Transfer", kind="transfer")
+        self.db.add(transfer)
+        self.db.flush()
+        self.db.add_all([
+            Transaction(
+                user_id=self.k.id, category_id=transfer.id,
+                date=date.today() - relativedelta(months=3), amount=-2400,
+                description="Transfer to EverBank HYSA", import_source="sheets:MAY2026",
+            ),
+            Transaction(
+                user_id=self.k.id, category_id=transfer.id,
+                date=date.today() - relativedelta(months=8), amount=-1250.50,
+                description="External transfer", merchant="EverBank", import_source="sheets:DEC2025",
+            ),
+            Transaction(
+                user_id=self.kat.id,
+                date=date.today() - relativedelta(months=2), amount=-999,
+                description="EverBank transfer",
+            ),
+            Transaction(
+                user_id=self.k.id, category_id=transfer.id,
+                date=date.today() - relativedelta(years=3), amount=-5000,
+                description="Transfer to EverBank HYSA",
+            ),
+        ])
+        self.db.commit()
+
+        answer = _answer_named_transaction_outflow_question(
+            self.k, self.db,
+            "How much money have I spent on transactions that are called EverBank in the last 2 years?",
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("$3,650.50", answer)
+        self.assertIn("2 outbound ledger transactions", answer)
+        self.assertIn("includes savings/transfer rows", answer)
+        self.assertIn("All matching rows came from the Google Sheets sync", answer)
+
+    def test_put_into_named_destination_uses_raw_personal_outflows(self):
+        from app.services.ai_report import _answer_named_transaction_outflow_question
+
+        transfer = Category(user_id=self.k.id, name="Savings Transfer", kind="savings")
+        self.db.add(transfer)
+        self.db.flush()
+        self.db.add(Transaction(
+            user_id=self.k.id, category_id=transfer.id,
+            date=date.today() - relativedelta(months=1), amount=-1600,
+            description="everbank", import_source="sheets:AUG2026",
+        ))
+        self.db.commit()
+
+        answer = _answer_named_transaction_outflow_question(
+            self.k, self.db, "How much have I personally put into EverBank in the last 2 years?"
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("$1,600.00", answer)
+
+    def test_named_transaction_question_requires_a_time_window(self):
+        from app.services.ai_report import _answer_named_transaction_outflow_question
+
+        answer = _answer_named_transaction_outflow_question(
+            self.k, self.db, "How much did I spend on transactions called EverBank?"
+        )
+        self.assertIsNone(answer)
+
+    def test_named_transaction_question_uses_recent_user_time_window(self):
+        from app.services.ai_report import _answer_named_transaction_outflow_question
+
+        transfer = Category(user_id=self.k.id, name="Transfer", kind="transfer")
+        self.db.add(transfer)
+        self.db.flush()
+        self.db.add(Transaction(
+            user_id=self.k.id, category_id=transfer.id,
+            date=date.today() - relativedelta(months=4), amount=-800,
+            description="EverBank deposit",
+        ))
+        self.db.commit()
+
+        answer = _answer_named_transaction_outflow_question(
+            self.k,
+            self.db,
+            "How much money have I spent on transactions that are called EverBank?",
+            history=[{"role": "user", "content": "Only look at the last 2 years."}],
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("$800.00", answer)
