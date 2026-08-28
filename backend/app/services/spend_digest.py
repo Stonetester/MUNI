@@ -85,13 +85,9 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
     if since < floor:
         since = floor
 
-    report_since = since
-    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    fetch_since = min(report_since, yesterday_start)
-
     errors: list[str] = []
     try:
-        payload = simplefin.fetch_accounts(connection.access_url, start=report_since, end=now)
+        payload = simplefin.fetch_accounts(connection.access_url, start=since, end=now)
         refresh_accounts(db, connection, payload)
         connection.last_synced_at = datetime.utcnow()
         connection.last_error = None
@@ -102,17 +98,6 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
         return {"connected": True, "groups": [], "errors": [str(e)], "total_spend": 0.0, "credits": []}
     db.commit()
 
-    comparison_payload = payload
-    if fetch_since < report_since:
-        try:
-            comparison_payload = simplefin.fetch_accounts(
-                connection.access_url, start=fetch_since, end=now
-            )
-        except simplefin.SimplefinError as exc:
-            # The normal digest is still useful if only the optional comparison
-            # window fails. Its chart will use whatever the primary fetch has.
-            logger.warning("SimpleFIN comparison window unavailable: %s", exc)
-
     by_sfid = {a.simplefin_id: a for a in connection.accounts}
     today_local = now.date()
 
@@ -120,24 +105,6 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
     groups: dict[str, dict] = {}
     credits: list[dict] = []
     total_spend = 0.0
-    daily_by_owner: dict[str, dict[str, float]] = {}
-
-    for acc in comparison_payload.get("accounts", []):
-        row = by_sfid.get(acc.get("id"))
-        if row is None or not row.enabled:
-            continue
-        owner_key = row.user.username if row.user else "__joint__"
-        comparison = daily_by_owner.setdefault(owner_key, {"today": 0.0, "yesterday": 0.0})
-        for txn in acc.get("transactions", []):
-            amount = simplefin.txn_amount(txn)
-            if amount >= 0:
-                continue
-            ts = simplefin.txn_timestamp(txn)
-            when = datetime.fromtimestamp(ts, tz) if ts else now
-            if when.date() == today_local:
-                comparison["today"] += abs(amount)
-            elif when.date() == today_local - timedelta(days=1):
-                comparison["yesterday"] += abs(amount)
 
     for acc in payload.get("accounts", []):
         row = by_sfid.get(acc.get("id"))
@@ -180,8 +147,7 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
         "errors": errors,
         "total_spend": round(total_spend, 2),
         "credits": credits,
-        "since": report_since.isoformat(),
-        "daily_by_owner": daily_by_owner,
+        "since": since.isoformat(),
     }
 
 
@@ -250,36 +216,13 @@ def build_personal_message(group: dict) -> str:
     return "\n".join(lines)
 
 
-def _comparison_bars(first_label: str, first: float, second_label: str, second: float,
-                     width: int = 10) -> list[str]:
-    """Two phone-friendly proportional bars with no fragile space alignment."""
-    ceiling = max(first, second, 0)
-
-    def bar(value: float) -> str:
-        filled = int((max(value, 0) / ceiling) * width) if ceiling else 0
-        if value > 0:
-            filled = max(1, filled)
-        return "█" * filled + "░" * (width - filled)
-
-    return [
-        f"{first_label}: {bar(first)} *${first:,.2f}*",
-        f"{second_label}: {bar(second)} *${second:,.2f}*",
-    ]
-
-
-def build_dm_message(label: str, groups: list[dict], comparison: dict | None = None,
-                     example: bool = False) -> str:
+def build_dm_message(label: str, groups: list[dict], example: bool = False) -> str:
     """Render one partner's owned and joint transactions as a single DM."""
     now = datetime.now(_tz())
     total = sum(g["spend"] for g in groups)
     heading = "🧪 *EXAMPLE — Daily Card Activity*" if example else "💳 *Daily Card Activity*"
     lines = [heading, f"_{label} · {now:%a, %b} {now.day}_", "",
              f"*Today’s total — ${total:,.2f}*"]
-    if comparison is not None:
-        lines.extend(["", "*Today vs. yesterday*", *_comparison_bars(
-            "Today", comparison.get("today", 0),
-            "Yesterday", comparison.get("yesterday", 0),
-        )])
     for group in groups:
         section = "Joint accounts" if group["label"] == "Joint" else f"{group['label']} accounts"
         lines.extend(["", f"*{section} — ${group['spend']:,.2f}*"])
@@ -305,21 +248,14 @@ def split_digest_messages(
     routed: list[tuple[str, float, str]] = []
     remaining: list[dict] = []
     joint = [g for g in data["groups"] if not g.get("username")]
-    daily_by_owner = data.get("daily_by_owner") or {}
     routed_joint = False
 
     for username, destination in user_destinations.items():
         owned = [g for g in data["groups"] if g.get("username") == username]
         dm_groups = owned + joint
-        owned_comparison = daily_by_owner.get(username, {})
-        joint_comparison = daily_by_owner.get("__joint__", {})
-        comparison = {
-            period: owned_comparison.get(period, 0) + joint_comparison.get(period, 0)
-            for period in ("today", "yesterday")
-        }
-        if destination and (dm_groups or any(comparison.values())):
+        if destination and dm_groups:
             label = username.capitalize()
-            personal.append((destination, build_dm_message(label, dm_groups, comparison=comparison)))
+            personal.append((destination, build_dm_message(label, dm_groups)))
             routed.extend((g["label"], g["spend"], "DM") for g in owned)
             routed_joint = routed_joint or bool(joint)
 
