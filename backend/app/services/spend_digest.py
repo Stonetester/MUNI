@@ -1,10 +1,10 @@
 """End-of-day household spend digest → Slack.
 
 Reads the day's card/checking activity from the SimpleFIN feed, groups it by
-owner (Keaton / Katherine / Joint), and posts a short message to the Slack
-spend channel so both partners can hand-enter the purchases into their
-Google Sheets. Feed data is NEVER written into `transactions` — the sheets
-stay the source of truth; this is a reminder mirror, not an importer.
+owner (Keaton / Katherine / Joint), and DMs each partner their own plus joint
+purchases. The household channel receives only the roll-up. Feed data is NEVER
+written into `transactions` — the sheets stay the source of truth; this is a
+reminder mirror, not an importer.
 
 Slack path: direct `chat.postMessage` with native mrkdwn (*bold*, single
 asterisks) — same delivery style as the athena-agents scripts. No tables.
@@ -13,6 +13,7 @@ A dead feed degrades to a one-line notice, never a crash.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -204,31 +205,77 @@ def build_personal_message(group: dict) -> str:
     return "\n".join(lines)
 
 
-def split_digest_messages(
-    data: dict, user_channels: dict[str, str], household_channel: str
-) -> list[tuple[str, str]]:
-    """Route each owner group to its channel. Returns [(channel, text), ...].
+def build_dm_message(label: str, groups: list[dict]) -> str:
+    """Render one partner's owned and joint transactions as a single DM."""
+    now = datetime.now(_tz())
+    total = sum(g["spend"] for g in groups)
+    lines = [f"*💳 {label}'s spend — {now:%a, %b} {now.day} — ${total:,.2f}*"]
+    for group in groups:
+        if group["label"] == "Joint":
+            lines.append(f"*Joint — ${group['spend']:,.2f}*")
+        for txn in group["txns"]:
+            lines.append(_txn_line(txn))
+    lines.append("📝 Enter these in your sheet — Google Sheets stay the source of truth.")
+    return "\n".join(lines)
 
-    A group whose owner has a personal channel gets its own message there;
-    joint accounts and owners without a channel stay in the household digest,
-    which also carries one-line totals for the routed-away groups (so the
-    household channel always shows the full day). With no personal channels
-    configured this collapses to the original single household message."""
+
+def split_digest_messages(
+    data: dict, user_destinations: dict[str, str], household_channel: str
+) -> list[tuple[str, str]]:
+    """Route owned transactions to partner DMs and keep a household roll-up.
+
+    Destinations are normally Slack member IDs (``U…``), resolved to DM
+    conversations at send time. Channel and DM conversation IDs remain accepted
+    for backwards compatibility. Joint transactions are included in both
+    configured partner DMs. Owners without a destination remain detailed in the
+    household channel.
+    """
     personal: list[tuple[str, str]] = []
     routed: list[tuple[str, float, str]] = []
     remaining: list[dict] = []
+    joint = [g for g in data["groups"] if not g.get("username")]
+    routed_joint = False
+
+    for username, destination in user_destinations.items():
+        owned = [g for g in data["groups"] if g.get("username") == username]
+        dm_groups = owned + joint
+        if destination and dm_groups:
+            label = username.capitalize()
+            personal.append((destination, build_dm_message(label, dm_groups)))
+            routed.extend((g["label"], g["spend"], "DM") for g in owned)
+            routed_joint = routed_joint or bool(joint)
+
     for g in data["groups"]:
-        channel = user_channels.get(g.get("username") or "")
-        if channel:
-            personal.append((channel, build_personal_message(g)))
-            routed.append((g["label"], g["spend"], channel))
-        else:
+        if g.get("username"):
+            if not user_destinations.get(g["username"]):
+                remaining.append(g)
+        elif not routed_joint:
             remaining.append(g)
+
+    if routed_joint:
+        routed.extend((g["label"], g["spend"], "DM to both") for g in joint)
 
     household = dict(data)
     household["groups"] = remaining
     messages = personal + [(household_channel, build_slack_message(household, routed=routed))]
     return messages
+
+
+def open_slack_dm(user_id: str) -> tuple[str | None, str | None]:
+    """Open or reuse a Slack DM conversation for one member ID."""
+    try:
+        resp = requests.post(
+            "https://slack.com/api/conversations.open",
+            headers={"Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}"},
+            json={"users": user_id},
+            timeout=15,
+        )
+        body = resp.json()
+        if not body.get("ok"):
+            return None, body.get("error") or "conversations.open failed"
+        return body["channel"]["id"], None
+    except (requests.RequestException, KeyError, ValueError) as exc:
+        return None, str(exc)
 
 
 def send_slack_message(text: str, channel: str | None = None) -> tuple[bool, str | None]:
@@ -238,6 +285,12 @@ def send_slack_message(text: str, channel: str | None = None) -> tuple[bool, str
         logger.warning("SLACK_BOT_TOKEN not configured — spend digest not sent.")
         return False, "SLACK_BOT_TOKEN not configured"
     channel = channel or settings.SLACK_SPEND_CHANNEL
+    if re.fullmatch(r"U[A-Z0-9]{6,}", channel):
+        dm_channel, error = open_slack_dm(channel)
+        if error:
+            logger.error("Slack DM open for %s failed: %s", channel, error)
+            return False, f"DM open failed: {error}"
+        channel = dm_channel
     try:
         resp = requests.post(
             "https://slack.com/api/chat.postMessage",
