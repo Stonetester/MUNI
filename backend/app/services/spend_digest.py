@@ -91,7 +91,7 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
 
     errors: list[str] = []
     try:
-        payload = simplefin.fetch_accounts(connection.access_url, start=fetch_since, end=now)
+        payload = simplefin.fetch_accounts(connection.access_url, start=report_since, end=now)
         refresh_accounts(db, connection, payload)
         connection.last_synced_at = datetime.utcnow()
         connection.last_error = None
@@ -102,6 +102,17 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
         return {"connected": True, "groups": [], "errors": [str(e)], "total_spend": 0.0, "credits": []}
     db.commit()
 
+    comparison_payload = payload
+    if fetch_since < report_since:
+        try:
+            comparison_payload = simplefin.fetch_accounts(
+                connection.access_url, start=fetch_since, end=now
+            )
+        except simplefin.SimplefinError as exc:
+            # The normal digest is still useful if only the optional comparison
+            # window fails. Its chart will use whatever the primary fetch has.
+            logger.warning("SimpleFIN comparison window unavailable: %s", exc)
+
     by_sfid = {a.simplefin_id: a for a in connection.accounts}
     today_local = now.date()
 
@@ -110,6 +121,23 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
     credits: list[dict] = []
     total_spend = 0.0
     daily_by_owner: dict[str, dict[str, float]] = {}
+
+    for acc in comparison_payload.get("accounts", []):
+        row = by_sfid.get(acc.get("id"))
+        if row is None or not row.enabled:
+            continue
+        owner_key = row.user.username if row.user else "__joint__"
+        comparison = daily_by_owner.setdefault(owner_key, {"today": 0.0, "yesterday": 0.0})
+        for txn in acc.get("transactions", []):
+            amount = simplefin.txn_amount(txn)
+            if amount >= 0:
+                continue
+            ts = simplefin.txn_timestamp(txn)
+            when = datetime.fromtimestamp(ts, tz) if ts else now
+            if when.date() == today_local:
+                comparison["today"] += abs(amount)
+            elif when.date() == today_local - timedelta(days=1):
+                comparison["yesterday"] += abs(amount)
 
     for acc in payload.get("accounts", []):
         row = by_sfid.get(acc.get("id"))
@@ -131,17 +159,6 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
                 "is_today": when.date() == today_local,
             }
             if amount < 0:
-                owner_key = owner_username or "__joint__"
-                comparison = daily_by_owner.setdefault(owner_key, {"today": 0.0, "yesterday": 0.0})
-                if when.date() == today_local:
-                    comparison["today"] += abs(amount)
-                elif when.date() == today_local - timedelta(days=1):
-                    comparison["yesterday"] += abs(amount)
-
-                # Yesterday is fetched for the comparison visual only. Preserve
-                # the digest cursor so old purchases are not announced again.
-                if when < report_since:
-                    continue
                 g = groups.setdefault(
                     owner_label,
                     {"label": owner_label, "username": owner_username, "spend": 0.0, "txns": []},
@@ -150,8 +167,7 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
                 g["txns"].append(entry)
                 total_spend += abs(amount)
             elif amount > 0:
-                if when >= report_since:
-                    credits.append(entry)
+                credits.append(entry)
 
     # Stable order: Keaton, Katherine, Joint — i.e. users first, joint last.
     ordered = sorted(groups.values(), key=lambda g: (g["label"] == "Joint", g["label"]))
