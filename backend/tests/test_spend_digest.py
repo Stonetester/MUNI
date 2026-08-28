@@ -71,8 +71,9 @@ class TestBuildSlackMessage(unittest.TestCase):
         self.assertIn("*💳 Daily Spend —", msg)
         self.assertNotIn("**", msg)
         self.assertIn("*Keaton — $43.12*", msg)
-        self.assertIn("• $12.40 — Wawa (BofA Visa) ⏳", msg)
-        self.assertIn("(07-03)", msg)  # non-today txn carries its date
+        self.assertIn("• *$12.40* — Wawa", msg)
+        self.assertIn("_BofA Visa · Pending_", msg)
+        self.assertIn("_BofA Visa · 07-03_", msg)  # non-today txn carries its date
         self.assertIn("*Household total: $61.62*", msg)
         self.assertIn("+$500.00 BofA payment", msg)  # credits excluded from spend
         self.assertIn("source of truth", msg)  # sheets reminder line
@@ -101,7 +102,7 @@ class TestBuildSlackMessage(unittest.TestCase):
         channels = dict(msgs)
         # Personal message: only Keaton's purchases, personal header + sheet reminder.
         personal = channels["UKEATON1"]
-        self.assertIn("*💳 Keaton's spend —", personal)
+        self.assertIn("💳 *Daily Card Activity*", personal)
         self.assertIn("Wawa", personal)
         self.assertIn("Target", personal)  # joint purchase is delivered to both partners
         self.assertNotIn("Household total", personal)
@@ -142,8 +143,15 @@ class TestBuildSlackMessage(unittest.TestCase):
         msg = build_dm_message("Keaton", self._data()["groups"])
         self.assertIn("Wawa", msg)
         self.assertIn("Target", msg)
-        self.assertIn("*Joint — $18.50*", msg)
+        self.assertIn("*Joint accounts — $18.50*", msg)
         self.assertIn("muni.tail887f36.ts.net", msg)
+
+    def test_dm_example_has_single_readable_header(self):
+        msg = build_dm_message("Keaton", self._data()["groups"], example=True)
+        self.assertTrue(msg.startswith("🧪 *EXAMPLE — Daily Card Activity*"))
+        self.assertIn("*Today’s total — $61.62*", msg)
+        self.assertIn("*Keaton accounts — $43.12*", msg)
+        self.assertIn("*Joint accounts — $18.50*", msg)
 
 
 if __name__ == "__main__":

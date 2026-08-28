@@ -151,13 +151,21 @@ def gather_digest_data(db: Session, since: datetime | None = None) -> dict:
     }
 
 
-def _txn_line(t: dict) -> str:
-    marks = ""
+def _txn_lines(t: dict) -> list[str]:
+    details = [t["account"]]
     if t["pending"]:
-        marks += " ⏳"
+        details.append("Pending")
     if not t["is_today"]:
-        marks += f" ({t['date'][5:]})"
-    return f"• ${t['amount']:,.2f} — {t['description']} ({t['account']}){marks}"
+        details.append(t["date"][5:])
+    return [
+        f"• *${t['amount']:,.2f}* — {t['description']}",
+        f"  _{' · '.join(details)}_",
+    ]
+
+
+def _txn_line(t: dict) -> str:
+    """Legacy single-line renderer used by household/channel summaries."""
+    return "\n".join(_txn_lines(t))
 
 
 def build_slack_message(data: dict, routed: list[tuple[str, float, str]] | None = None) -> str:
@@ -208,18 +216,20 @@ def build_personal_message(group: dict) -> str:
     return "\n".join(lines)
 
 
-def build_dm_message(label: str, groups: list[dict]) -> str:
+def build_dm_message(label: str, groups: list[dict], example: bool = False) -> str:
     """Render one partner's owned and joint transactions as a single DM."""
     now = datetime.now(_tz())
     total = sum(g["spend"] for g in groups)
-    lines = [f"*💳 {label}'s spend — {now:%a, %b} {now.day} — ${total:,.2f}*"]
+    heading = "🧪 *EXAMPLE — Daily Card Activity*" if example else "💳 *Daily Card Activity*"
+    lines = [heading, f"_{label} · {now:%a, %b} {now.day}_", "",
+             f"*Today’s total — ${total:,.2f}*"]
     for group in groups:
-        if group["label"] == "Joint":
-            lines.append(f"*Joint — ${group['spend']:,.2f}*")
+        section = "Joint accounts" if group["label"] == "Joint" else f"{group['label']} accounts"
+        lines.extend(["", f"*{section} — ${group['spend']:,.2f}*"])
         for txn in group["txns"]:
-            lines.append(_txn_line(txn))
-    lines.append("📝 Enter these in your sheet — Google Sheets stay the source of truth.")
-    lines.append(f"📱 {APP_LINK}")
+            lines.extend(_txn_lines(txn))
+    lines.extend(["", "_Review these purchases and enter anything missing from your sheet._",
+                  "──────────", f"📱 {APP_LINK}"])
     return "\n".join(lines)
 
 
