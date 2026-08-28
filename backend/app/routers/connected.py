@@ -36,7 +36,7 @@ class DigestSettingsIn(BaseModel):
 
 
 class UserChannelsIn(BaseModel):
-    # username → personal Slack channel ("#spend-kat"); empty/None = stay in household digest
+    # username → Slack member ID (U…); empty/None = stay in household digest
     channels: dict[str, Optional[str]]
 
 
@@ -53,7 +53,7 @@ def _status_payload(db: Session, connection: Optional[SimplefinConnection]) -> d
         "digest_channel": settings.SLACK_SPEND_CHANNEL,
         "digest_time": f"{settings.SPEND_DIGEST_HOUR:02d}:{settings.SPEND_DIGEST_MINUTE:02d} {settings.DIGEST_TIMEZONE}",
         "slack_configured": bool(settings.SLACK_BOT_TOKEN),
-        # username → personal channel (null = purchases stay in the household digest)
+        # username → Slack member ID for DM delivery (null = household digest only)
         "user_channels": {u.username: u.spend_channel for u in db.query(User).order_by(User.id).all()},
         "accounts": [
             {
@@ -163,16 +163,19 @@ def patch_user_channels(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Set each partner's personal digest channel (empty = household digest only)."""
+    """Set each partner's Slack member ID for personal digest DMs."""
     for username, channel in body.channels.items():
         user = db.query(User).filter(User.username == username.lower()).first()
         if user is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown user '{username}'.")
         channel = (channel or "").strip()
-        # Accept "#name", bare "name", or a raw Slack channel ID (C…/G…) —
-        # private channels often only resolve by ID, so IDs must pass through untouched.
-        if channel and not channel.startswith("#") and not re.fullmatch(r"[CGD][A-Z0-9]{6,}", channel):
-            channel = f"#{channel}"
+        # New configuration uses member IDs. Preserve legacy channel/conversation
+        # destinations so existing installs do not break during migration.
+        if channel and not channel.startswith("#") and not re.fullmatch(r"[UCGD][A-Z0-9]{6,}", channel):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"'{channel}' is not a Slack member ID (expected U…).",
+            )
         user.spend_channel = channel or None
     db.commit()
     return {"ok": True, "user_channels": {u.username: u.spend_channel for u in db.query(User).all()}}

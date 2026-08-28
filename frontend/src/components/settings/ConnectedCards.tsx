@@ -205,14 +205,12 @@ export default function ConnectedCards() {
               ))}
             </div>
 
-            {/* Personal channels: each person's purchases go to their own channel;
-                joint + household total stay in the main digest channel */}
+            {/* Personal DMs: owned purchases go to that person; joint goes to both. */}
             <div className="flex flex-col gap-2">
-              <p className="text-xs font-semibold text-text-primary">Personal channels</p>
+              <p className="text-xs font-semibold text-text-primary">Personal Slack DMs</p>
               <p className="text-[11px] text-muted -mt-1">
-                Give each person their own Slack channel to get <em>only their</em> purchases.
-                Leave blank to keep them in {status.digest_channel}. Joint accounts and the
-                household total always post to {status.digest_channel}.
+                Enter each person&apos;s Slack member ID. They receive purchases from accounts assigned
+                to them, plus joint purchases. {status.digest_channel} keeps the household roll-up.
               </p>
               {Object.keys(channels).map(u => (
                 <div key={u} className="flex items-center gap-3">
@@ -220,7 +218,7 @@ export default function ConnectedCards() {
                   <input
                     value={channels[u]}
                     onChange={e => setChannels(c => ({ ...c, [u]: e.target.value }))}
-                    placeholder={`#spend-${u === 'katherine' ? 'kat' : u}`}
+                    placeholder="U0123ABCD"
                     className="flex-1 rounded-lg bg-surface-2 border border-[#2d3748] px-3 py-1.5 text-xs text-text-primary font-mono focus:outline-none focus:border-primary/50"
                   />
                 </div>
@@ -243,14 +241,13 @@ export default function ConnectedCards() {
                     }
                   }}
                 >
-                  Save Channels
+                  Save DM IDs
                 </Button>
                 {channelsSaved && <span className="text-xs text-green-400 flex items-center gap-1"><CheckCircle size={12} /> Saved</span>}
               </div>
               <p className="text-[10px] text-muted">
-                Create each channel in Slack and <code className="font-mono">/invite</code> the bot (Athena) to it, or the digest can&apos;t post there.
-                <strong className="text-text-secondary"> Private channel?</strong> Use its Channel ID instead of the name
-                (channel name → About tab → Channel ID, looks like <code className="font-mono">C0123ABCD</code>).
+                Find a member ID in Slack from the person&apos;s profile → More → Copy member ID.
+                It starts with <code className="font-mono">U</code>. Athena must have permission to open direct messages.
               </p>
             </div>
 

@@ -3,7 +3,7 @@ import base64
 import unittest
 
 from app.services import simplefin
-from app.services.spend_digest import build_slack_message, build_personal_message, split_digest_messages
+from app.services.spend_digest import build_dm_message, build_slack_message, build_personal_message, split_digest_messages
 
 
 class TestSimplefinHelpers(unittest.TestCase):
@@ -96,29 +96,29 @@ class TestBuildSlackMessage(unittest.TestCase):
         self.assertEqual(msgs[0][1], build_slack_message(self._data()))
 
     def test_split_routes_owner_to_personal_channel(self):
-        msgs = split_digest_messages(self._data(), {"keaton": "#spend-keaton"}, "#coin")
+        msgs = split_digest_messages(self._data(), {"keaton": "UKEATON1"}, "#coin")
         self.assertEqual(len(msgs), 2)
         channels = dict(msgs)
         # Personal message: only Keaton's purchases, personal header + sheet reminder.
-        personal = channels["#spend-keaton"]
+        personal = channels["UKEATON1"]
         self.assertIn("*💳 Keaton's spend —", personal)
         self.assertIn("Wawa", personal)
-        self.assertNotIn("Target", personal)  # joint purchase not in personal channel
+        self.assertIn("Target", personal)  # joint purchase is delivered to both partners
         self.assertNotIn("Household total", personal)
-        # Household message: joint detail stays, Keaton collapses to a routed total line.
+        # Household message is a roll-up only once DM delivery is configured.
         household = channels["#coin"]
-        self.assertIn("Target", household)
+        self.assertNotIn("Target", household)
         self.assertNotIn("Wawa", household)
-        self.assertIn("*Keaton — $43.12* → details in #spend-keaton", household)
+        self.assertIn("*Keaton — $43.12* → details in DM", household)
         self.assertIn("*Household total: $61.62*", household)  # still the FULL day total
 
     def test_split_all_routed_household_keeps_summary(self):
         data = self._data()
         data["groups"] = [g for g in data["groups"] if g["username"] == "keaton"]
         data["total_spend"] = 43.12
-        msgs = split_digest_messages(data, {"keaton": "#spend-keaton"}, "#coin")
+        msgs = split_digest_messages(data, {"keaton": "UKEATON1"}, "#coin")
         household = dict(msgs)["#coin"]
-        self.assertIn("→ details in #spend-keaton", household)
+        self.assertIn("→ details in DM", household)
         self.assertIn("*Household total: $43.12*", household)
         self.assertNotIn("No card activity", household)
 
@@ -126,6 +126,23 @@ class TestBuildSlackMessage(unittest.TestCase):
         msg = build_personal_message(self._data()["groups"][0])
         self.assertNotIn("**", msg)
         self.assertIn("source of truth", msg)
+
+    def test_joint_transactions_are_sent_to_both_dms(self):
+        msgs = split_digest_messages(
+            self._data(), {"keaton": "UKEATON1", "katherine": "UKAT0001"}, "#coin"
+        )
+        channels = dict(msgs)
+        self.assertIn("Wawa", channels["UKEATON1"])
+        self.assertIn("Target", channels["UKEATON1"])
+        self.assertNotIn("Wawa", channels["UKAT0001"])
+        self.assertIn("Target", channels["UKAT0001"])
+        self.assertIn("*Joint — $18.50* → details in DM to both", channels["#coin"])
+
+    def test_dm_message_combines_owned_and_joint_groups(self):
+        msg = build_dm_message("Keaton", self._data()["groups"])
+        self.assertIn("Wawa", msg)
+        self.assertIn("Target", msg)
+        self.assertIn("*Joint — $18.50*", msg)
 
 
 if __name__ == "__main__":
