@@ -911,22 +911,25 @@ def _reply_low_confidence(reply: str) -> bool:
     ))
 
 
-def _answer_named_transaction_outflow_question(
-    user: User, db: Session, message: str, history: list | None = None,
+def _answer_ledger_question(
+    user: User, db: Session, message: str, history: list | None = None, joint: bool = False,
 ) -> str | None:
-    """Answer explicit ledger-name outflow questions without asking the LLM to infer.
+    """Deterministically answer common natural-language transaction-total questions.
 
-    Category spending deliberately excludes savings and transfers. A question such
-    as "how much have I spent on transactions called EverBank in the last 2 years"
-    is instead asking for raw outbound ledger rows whose merchant/description has
-    that name. Keeping this path deterministic prevents a local model from turning
-    the absence of an EverBank *spending category* into a false $0 answer.
+    The local model cannot call Claude's ledger tools. This path therefore resolves
+    time window, owner scope, flow semantics, and a free-text/category term against
+    the same Transaction rows used by MUNI's Transactions screen.
     """
     text = message.strip()
     lower = text.lower()
-    if not any(term in lower for term in ("transaction", "paid", "put into", "sent to")):
+    if not any(term in lower for term in ("transaction", "spend", "spent", "paid", "put into", "sent to", "transferred", "deposited")):
         return None
 
+    raw_outflow = any(term in lower for term in (
+        "put into", "sent to", "transferred to", "deposited into",
+        "transactions called", "transactions that are called", "transactions labeled",
+        "transactions labelled", "transactions named",
+    ))
     named = re.search(
         r"\b(?:called|labeled|labelled|named)\s+[\"']?([^\"'?.,]+?)[\"']?(?:\s+(?:in|over|during|for)\b|[?.,]*$)",
         text,
@@ -941,8 +944,18 @@ def _answer_named_transaction_outflow_question(
             flags=re.IGNORECASE,
         )
     if not named:
+        # Handles either "spent on wedding transactions" or
+        # "spent in the last two years on wedding transactions".
+        named = re.search(
+            r"\bon\s+(?:transactions?\s+(?:that\s+are\s+)?(?:called|labeled|labelled|named)\s+)?"
+            r"[\"']?(.+?)[\"']?(?:\s+transactions?)?[?.,]*$",
+            text,
+            flags=re.IGNORECASE,
+        )
+    if not named:
         return None
     keyword = named.group(1).strip()
+    keyword = re.sub(r"\s+transactions?\b.*$", "", keyword, flags=re.IGNORECASE).strip()
     if not keyword:
         return None
 
@@ -954,21 +967,48 @@ def _answer_named_transaction_outflow_question(
         if item.get("role") == "user"
     )
     window_text = f"{recent_user_context} {text}".lower()
-    years_match = re.search(r"\b(?:last|past)\s+(\d+)\s+years?\b", window_text)
-    months_match = re.search(r"\b(?:last|past)\s+(\d+)\s+months?\b", window_text)
+    number_words = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    }
+    years_match = re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b", window_text)
+    months_match = re.search(r"\b(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+months?\b", window_text)
+    def window_count(match) -> int:
+        token = match.group(1)
+        return int(token) if token.isdigit() else number_words[token]
     if years_match:
-        start = date.today() - relativedelta(years=int(years_match.group(1)))
-        period = f"the last {int(years_match.group(1))} years"
+        count = window_count(years_match)
+        start = date.today() - relativedelta(years=count)
+        period = f"the last {count} years"
     elif months_match:
-        start = date.today() - relativedelta(months=int(months_match.group(1)))
-        period = f"the last {int(months_match.group(1))} months"
+        count = window_count(months_match)
+        start = date.today() - relativedelta(months=count)
+        period = f"the last {count} months"
     else:
         return None
+
+    all_users = db.query(User).order_by(User.id).all()
+    joint_terms = ("joint", "together", "combined", "household", " we ", " our ", "both", "me and", "and me", "katherine and i")
+    padded_lower = f" {lower} "
+    explicit_household = any(term in padded_lower for term in joint_terms)
+    explicit_personal = any(term in padded_lower for term in (" i ", " my ", " me "))
+    household_scope = explicit_household or (joint and not explicit_personal)
+    if household_scope:
+        scoped_users = all_users
+        scope_label = "Keaton and Katherine combined"
+    else:
+        named_user = next(
+            (candidate for candidate in all_users if candidate.username.lower() in lower),
+            None,
+        )
+        scoped_users = [named_user or user]
+        scope_label = scoped_users[0].username.capitalize()
+    scoped_ids = [candidate.id for candidate in scoped_users]
 
     candidates = (
         db.query(Transaction)
         .filter(
-            Transaction.user_id == user.id,
+            Transaction.user_id.in_(scoped_ids),
             Transaction.scenario_id.is_(None),
             Transaction.date >= start,
             Transaction.date <= date.today(),
@@ -977,9 +1017,18 @@ def _answer_named_transaction_outflow_question(
         .all()
     )
     needle = keyword.casefold()
+    category_match_exists = any(
+        (category.name or "").strip().casefold() == needle
+        for category in db.query(Category).filter(Category.user_id.in_(scoped_ids)).all()
+    )
     matched = [
         txn for txn in candidates
-        if needle in f"{txn.merchant or ''} {txn.description or ''}".casefold()
+        if (raw_outflow or counts_as_expense(txn))
+        and (
+            (txn.category_name or "").strip().casefold() == needle
+            if category_match_exists
+            else needle in f"{txn.merchant or ''} {txn.description or ''}".casefold()
+        )
     ]
     total = sum(abs(txn.amount) for txn in matched)
     sheets_count = sum(
@@ -992,15 +1041,43 @@ def _answer_named_transaction_outflow_question(
         source_note = f"{sheets_count} of the matching rows came from the Google Sheets sync."
     else:
         source_note = "No matching rows were tagged as Google Sheets imports."
-    owner = user.username.capitalize()
+    per_person = {
+        candidate.username.capitalize(): sum(
+            abs(txn.amount) for txn in matched if txn.user_id == candidate.id
+        )
+        for candidate in scoped_users
+    }
+    breakdown = ""
+    if household_scope:
+        breakdown = " Per-person breakdown: " + ", ".join(
+            f"{name} ${amount:,.2f}" for name, amount in per_person.items()
+        ) + "."
+    action = "sent" if raw_outflow else "spent"
+    transfer_note = (
+        " It includes savings/transfer rows because this wording asks how much was put into a destination, "
+        "not consumption spending."
+        if raw_outflow else
+        " Savings and neutral transfers are excluded from this spending total."
+    )
+    match_note = (
+        f"The match used the exact \"{keyword}\" category."
+        if category_match_exists else
+        "The match searched transaction descriptions and merchants."
+    )
     return (
-        f"**{owner}, you personally sent ${total:,.2f} to transactions matching "
+        f"**{scope_label} {action} ${total:,.2f} on transactions matching "
         f"\"{keyword}\" over {period}.**\n\n"
         f"That is the sum of {len(matched)} outbound ledger transaction"
-        f"{'s' if len(matched) != 1 else ''} from {start.isoformat()} through {date.today().isoformat()}. "
-        "It includes savings/transfer rows because you asked how much you paid or put into that named "
-        f"destination—not how much counted as consumption spending. {source_note}"
+        f"{'s' if len(matched) != 1 else ''} from {start.isoformat()} through {date.today().isoformat()}."
+        f" {match_note}{breakdown}{transfer_note} {source_note}"
     )
+
+
+def _answer_named_transaction_outflow_question(
+    user: User, db: Session, message: str, history: list | None = None,
+) -> str | None:
+    """Backward-compatible wrapper for the original narrow ledger helper."""
+    return _answer_ledger_question(user, db, message, history=history, joint=False)
 
 
 def _build_chat_system_prompt(user: User, db: Session, joint: bool = False) -> str:
@@ -1397,7 +1474,7 @@ def answer_chat_question(
     """
     from app.config import settings
 
-    exact_ledger_answer = _answer_named_transaction_outflow_question(user, db, message, history)
+    exact_ledger_answer = _answer_ledger_question(user, db, message, history, joint=joint)
     if exact_ledger_answer is not None:
         return exact_ledger_answer, "MUNI ledger"
 

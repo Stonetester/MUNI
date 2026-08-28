@@ -251,3 +251,71 @@ class ChatGroundingTests(TestCase):
 
         self.assertIsNotNone(answer)
         self.assertIn("$800.00", answer)
+
+    def test_wedding_spending_matches_description_and_category(self):
+        from app.services.ai_report import _answer_ledger_question
+
+        wedding = Category(user_id=self.k.id, name="Wedding", kind="expense")
+        transfer = Category(user_id=self.k.id, name="Savings Transfer", kind="savings")
+        self.db.add_all([wedding, transfer])
+        self.db.flush()
+        self.db.add_all([
+            Transaction(
+                user_id=self.k.id, category_id=wedding.id,
+                date=date.today() - relativedelta(months=3), amount=-2500,
+                description="Venue deposit", import_source="sheets:MAY2026",
+            ),
+            Transaction(
+                user_id=self.k.id,
+                date=date.today() - relativedelta(months=5), amount=-600,
+                description="Wedding photographer", import_source="sheets:MAR2026",
+            ),
+            Transaction(
+                user_id=self.k.id, category_id=transfer.id,
+                date=date.today() - relativedelta(months=2), amount=-1000,
+                description="Wedding savings", import_source="sheets:JUN2026",
+            ),
+        ])
+        self.db.commit()
+
+        answer = _answer_ledger_question(
+            self.k, self.db,
+            "How much did I spend in the last two years on wedding transactions?",
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("Keaton spent $2,500.00", answer)
+        self.assertIn("1 outbound ledger transaction", answer)
+        self.assertIn('exact "wedding" category', answer)
+        self.assertIn("Savings and neutral transfers are excluded", answer)
+
+    def test_joint_wedding_spending_combines_both_people(self):
+        from app.services.ai_report import _answer_ledger_question
+
+        k_wedding = Category(user_id=self.k.id, name="Wedding", kind="expense")
+        kat_wedding = Category(user_id=self.kat.id, name="Wedding", kind="expense")
+        self.db.add_all([k_wedding, kat_wedding])
+        self.db.flush()
+        self.db.add_all([
+            Transaction(
+                user_id=self.k.id, category_id=k_wedding.id,
+                date=date.today() - relativedelta(months=2), amount=-1200,
+                description="Wedding venue", import_source="sheets:JUN2026",
+            ),
+            Transaction(
+                user_id=self.kat.id, category_id=kat_wedding.id,
+                date=date.today() - relativedelta(months=1), amount=-800,
+                description="Wedding flowers", import_source="sheets:JUL2026",
+            ),
+        ])
+        self.db.commit()
+
+        answer = _answer_ledger_question(
+            self.k, self.db,
+            "How much did me and Katherine spend on wedding transactions in the last 2 years?",
+        )
+
+        self.assertIsNotNone(answer)
+        self.assertIn("Keaton and Katherine combined spent $2,000.00", answer)
+        self.assertIn("Keaton $1,200.00", answer)
+        self.assertIn("Katherine $800.00", answer)
