@@ -53,6 +53,9 @@ class JointDashboardMonthTests(TestCase):
         result = joint_transactions(limit=50, offset=0, month="2026-08", current_user=self.keaton, db=self.db)
         self.assertEqual(result["total"], 5)
         self.assertTrue(all(item["date"].month == 8 for item in result["items"]))
+        expense_flags = {item["description"]: item["is_expense"] for item in result["items"]}
+        self.assertTrue(expense_flags["Groceries"])
+        self.assertFalse(expense_flags["Move money"])
 
     def test_rejects_invalid_and_future_months(self):
         with self.assertRaises(HTTPException):

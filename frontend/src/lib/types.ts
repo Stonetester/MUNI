@@ -60,6 +60,7 @@ export interface Transaction {
   user_modified?: boolean    // edited in-app: Sheets sync leaves this row alone
   scenario_id?: number
   owner?: string
+  is_expense?: boolean
   created_at: string
 }
 

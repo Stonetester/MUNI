@@ -61,6 +61,7 @@ def joint_transactions(
         t = TransactionOut.model_validate(item)
         t_dict = t.model_dump()
         t_dict["owner"] = user_map.get(item.user_id)
+        t_dict["is_expense"] = counts_as_expense(item)
         result.append(t_dict)
 
     return {"items": result, "total": total, "skip": offset, "limit": limit}

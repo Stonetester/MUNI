@@ -122,7 +122,7 @@ function JointDashboard() {
         const [s, a, t] = await Promise.all([
           getJointSummary(selectedMonth),
           getJointAccounts(),
-          getJointTransactions(200, 0, selectedMonth),
+          getJointTransactions(2000, 0, selectedMonth),
         ])
         setSummary(s)
         setAccounts(a)
@@ -213,7 +213,7 @@ function JointDashboard() {
         <QuickStat label="Total Transactions" value={summary.transaction_count} displayValue={summary.transaction_count.toLocaleString()} icon={Receipt} color="bg-violet-600" />
       </div>
 
-      <JointCategoryBreakdown byCategory={summary.by_category} />
+      <JointCategoryBreakdown byCategory={summary.by_category} transactions={transactions} />
 
       {/* Accounts grouped by owner */}
       {owners.map(owner => {
