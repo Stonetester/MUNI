@@ -22,7 +22,7 @@ const pageTitles: Record<string, string> = {
   '/alerts': 'Alerts',
   '/calendar': 'Spending Calendar',
   '/insights': 'Spending Insights',
-  '/ai-report': 'AI Financial Report',
+  '/ai-report': 'AI Financial Advisor',
   '/notifications': 'Notifications',
   '/flow': 'Money Flow',
 }
