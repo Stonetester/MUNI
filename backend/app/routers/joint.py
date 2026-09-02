@@ -19,15 +19,38 @@ from app.services.transaction_math import ONE_OFF_MARKER, counts_as_expense, cou
 router = APIRouter(prefix="/joint", tags=["joint"])
 
 
+def _month_bounds(month: Optional[str]) -> tuple[date, date]:
+    """Return inclusive calendar-month bounds for YYYY-MM, defaulting to today."""
+    today = date.today()
+    if month is None:
+        year, mon = today.year, today.month
+    else:
+        try:
+            year, mon = map(int, month.split("-"))
+            if len(month) != 7 or month[4] != "-":
+                raise ValueError
+            start = date(year, mon, 1)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="month must use YYYY-MM format")
+        if start > today.replace(day=1):
+            raise HTTPException(status_code=400, detail="month cannot be in the future")
+    start = date(year, mon, 1)
+    return start, date(year, mon, monthrange(year, mon)[1])
+
+
 @router.get("/transactions")
 def joint_transactions(
     limit: int = Query(default=50, le=2000),
     offset: int = Query(default=0),
+    month: Optional[str] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Return transactions for all users (joint household view), with owner username."""
     query = db.query(Transaction).filter(Transaction.scenario_id.is_(None))
+    if month is not None:
+        start, end = _month_bounds(month)
+        query = query.filter(Transaction.date >= start, Transaction.date <= end)
     total = query.count()
     items = query.order_by(Transaction.date.desc()).offset(offset).limit(limit).all()
 
@@ -83,6 +106,7 @@ def joint_accounts(
 
 @router.get("/summary")
 def joint_summary(
+    month: Optional[str] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -91,15 +115,25 @@ def joint_summary(
     assets = sum(a.balance for a in all_accounts if a.account_type not in ('student_loan', 'car_loan', 'mortgage', 'credit_card'))
     liabilities = sum(abs(a.balance) for a in all_accounts if a.account_type in ('student_loan', 'car_loan', 'mortgage', 'credit_card'))
 
-    today = date.today()
-    month_start = today.replace(day=1)
+    month_start, month_end = _month_bounds(month)
     month_txns = db.query(Transaction).filter(
         Transaction.date >= month_start,
+        Transaction.date <= month_end,
         Transaction.scenario_id.is_(None)
     ).all()
 
     income = sum(t.amount for t in month_txns if counts_as_income(t))
     spending = sum(abs(t.amount) for t in month_txns if counts_as_expense(t))
+    category_map = {
+        category.id: category.name
+        for category in db.query(Category).all()
+    }
+    by_category: dict[str, float] = {}
+    for transaction in month_txns:
+        if not counts_as_expense(transaction):
+            continue
+        category_name = category_map.get(transaction.category_id, "Uncategorized")
+        by_category[category_name] = by_category.get(category_name, 0.0) + abs(transaction.amount)
 
     return {
         "net_worth": assets - liabilities,
@@ -107,6 +141,10 @@ def joint_summary(
         "total_liabilities": liabilities,
         "this_month_income": income,
         "this_month_spending": spending,
+        "month": month_start.strftime("%Y-%m"),
+        "savings": income - spending,
+        "transaction_count": len(month_txns),
+        "by_category": by_category,
     }
 
 

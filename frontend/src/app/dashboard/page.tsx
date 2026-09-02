@@ -18,8 +18,9 @@ import AlertsCard from '@/components/dashboard/AlertsCard'
 import SpendingCategoriesWidget from '@/components/dashboard/SpendingCategoriesWidget'
 import SpendCheckWidget from '@/components/dashboard/SpendCheckWidget'
 import SavingsGoalCard from '@/components/dashboard/SavingsGoalCard'
+import JointCategoryBreakdown from '@/components/dashboard/JointCategoryBreakdown'
 import StatDetailModal, { BreakdownItem } from '@/components/dashboard/StatDetailModal'
-import { TrendingUp, TrendingDown, DollarSign, CreditCard } from 'lucide-react'
+import { TrendingUp, TrendingDown, DollarSign, CreditCard, ChevronLeft, ChevronRight, Receipt, Wallet } from 'lucide-react'
 import { useViewMode } from '@/lib/viewMode'
 import { cn } from '@/lib/utils'
 
@@ -39,6 +40,7 @@ function QuickStat({
   color,
   note,
   onClick,
+  displayValue,
 }: {
   label: string
   value: number
@@ -46,6 +48,7 @@ function QuickStat({
   color: string
   note?: string
   onClick?: () => void
+  displayValue?: string
 }) {
   return (
     <Card
@@ -58,7 +61,7 @@ function QuickStat({
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs text-text-secondary leading-tight">{label}</p>
-        <p className="text-sm sm:text-base lg:text-lg font-bold text-text-primary break-words">{formatCurrency(value)}</p>
+        <p className="text-sm sm:text-base lg:text-lg font-bold text-text-primary break-words">{displayValue ?? formatCurrency(value)}</p>
         {note && <p className="text-[10px] text-muted">{note}</p>}
       </div>
       {onClick && <span className="text-xs text-muted pr-1">↗</span>}
@@ -82,9 +85,29 @@ interface JointSummary {
   total_liabilities: number
   this_month_income: number
   this_month_spending: number
+  month: string
+  savings: number
+  transaction_count: number
+  by_category: Record<string, number>
+}
+
+function monthKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function shiftMonth(month: string, offset: number) {
+  const [year, mon] = month.split('-').map(Number)
+  return monthKey(new Date(year, mon - 1 + offset, 1))
+}
+
+function monthLabel(month: string) {
+  const [year, mon] = month.split('-').map(Number)
+  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date(year, mon - 1, 1))
 }
 
 function JointDashboard() {
+  const currentMonth = monthKey(new Date())
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth)
   const [summary, setSummary] = useState<JointSummary | null>(null)
   const [accounts, setAccounts] = useState<JointAccount[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -93,11 +116,13 @@ function JointDashboard() {
 
   useEffect(() => {
     async function load() {
+      setLoading(true)
+      setError('')
       try {
         const [s, a, t] = await Promise.all([
-          getJointSummary(),
+          getJointSummary(selectedMonth),
           getJointAccounts(),
-          getJointTransactions(20, 0),
+          getJointTransactions(200, 0, selectedMonth),
         ])
         setSummary(s)
         setAccounts(a)
@@ -109,7 +134,7 @@ function JointDashboard() {
       }
     }
     load()
-  }, [])
+  }, [selectedMonth])
 
   if (loading) {
     return (
@@ -130,6 +155,37 @@ function JointDashboard() {
 
   return (
     <div className="flex flex-col gap-4 md:gap-5">
+      <div className="flex items-center justify-center gap-2">
+        <button
+          type="button"
+          aria-label="Previous month"
+          onClick={() => setSelectedMonth(month => shiftMonth(month, -1))}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface text-text-secondary transition-colors hover:text-text-primary"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <label className="relative flex h-10 min-w-48 cursor-pointer items-center justify-center rounded-xl border border-border bg-surface px-5 font-semibold text-text-primary transition-colors hover:border-primary/40">
+          <span>{monthLabel(selectedMonth)}</span>
+          <input
+            type="month"
+            aria-label="Choose month and year"
+            value={selectedMonth}
+            max={currentMonth}
+            onChange={(event) => event.target.value && setSelectedMonth(event.target.value)}
+            className="absolute inset-0 cursor-pointer opacity-0"
+          />
+        </label>
+        <button
+          type="button"
+          aria-label="Next month"
+          disabled={selectedMonth >= currentMonth}
+          onClick={() => setSelectedMonth(month => shiftMonth(month, 1))}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          <ChevronRight size={20} />
+        </button>
+      </div>
+
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <Card className="col-span-2">
@@ -148,9 +204,16 @@ function JointDashboard() {
             </div>
           </div>
         </Card>
-        <QuickStat label="This Month Income" value={summary.this_month_income} icon={DollarSign} color="bg-info" />
-        <QuickStat label="This Month Spending" value={summary.this_month_spending} icon={CreditCard} color="bg-warning" />
+        <QuickStat label="Income" value={summary.this_month_income} icon={DollarSign} color="bg-info" />
+        <QuickStat label="Spending" value={summary.this_month_spending} icon={CreditCard} color="bg-warning" />
       </div>
+
+      <div className="grid grid-cols-2 gap-3 md:gap-4">
+        <QuickStat label="Net Saved" value={summary.savings} icon={Wallet} color={summary.savings >= 0 ? 'bg-primary' : 'bg-danger'} />
+        <QuickStat label="Total Transactions" value={summary.transaction_count} displayValue={summary.transaction_count.toLocaleString()} icon={Receipt} color="bg-violet-600" />
+      </div>
+
+      <JointCategoryBreakdown byCategory={summary.by_category} />
 
       {/* Accounts grouped by owner */}
       {owners.map(owner => {

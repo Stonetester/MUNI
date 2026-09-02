@@ -406,4 +406,16 @@ export const DEMO_JOINT_SUMMARY = {
   total_liabilities: 5400,
   this_month_income: 12800,
   this_month_spending: 6940,
+  month: '2026-09',
+  savings: 5860,
+  transaction_count: 42,
+  by_category: {
+    Housing: 2650,
+    Food: 1280,
+    Transport: 910,
+    Shopping: 760,
+    Utilities: 640,
+    Entertainment: 420,
+    Healthcare: 280,
+  },
 }

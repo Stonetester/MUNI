@@ -597,15 +597,20 @@ export async function deleteCompensationEvent(id: number): Promise<void> {
 }
 
 // Joint household view
-export async function getJointSummary(): Promise<{
+export async function getJointSummary(month?: string): Promise<{
   net_worth: number
   total_assets: number
   total_liabilities: number
   this_month_income: number
   this_month_spending: number
+  month: string
+  savings: number
+  transaction_count: number
+  by_category: Record<string, number>
 }> {
-  if (isDemoModeActive()) return demo.DEMO_JOINT_SUMMARY
-  const res = await api.get('/joint/summary')
+  if (isDemoModeActive()) return { ...demo.DEMO_JOINT_SUMMARY, month: month || new Date().toISOString().slice(0, 7) }
+  const params = month ? `?month=${encodeURIComponent(month)}` : ''
+  const res = await api.get(`/joint/summary${params}`)
   return res.data
 }
 
@@ -623,9 +628,10 @@ export async function getJointAccounts(): Promise<Array<{
   return res.data
 }
 
-export async function getJointTransactions(limit = 50, offset = 0): Promise<PaginatedTransactions> {
+export async function getJointTransactions(limit = 50, offset = 0, month?: string): Promise<PaginatedTransactions> {
   if (isDemoModeActive()) return { items: demo.DEMO_TRANSACTIONS.slice(offset, offset + limit), total: demo.DEMO_TRANSACTIONS.length, skip: offset, limit }
-  const res = await api.get(`/joint/transactions?limit=${limit}&offset=${offset}`)
+  const monthParam = month ? `&month=${encodeURIComponent(month)}` : ''
+  const res = await api.get(`/joint/transactions?limit=${limit}&offset=${offset}${monthParam}`)
   return res.data as PaginatedTransactions
 }
 
