@@ -841,6 +841,37 @@ export async function renameChatSession(id: number, title: string): Promise<void
   await api.patch(`/ai-report/sessions/${id}`, { title })
 }
 
+export interface FinancialPlan {
+  id: number
+  session_id: number | null
+  title: string
+  objective: string
+  content: string
+  model_used: string | null
+  is_joint: boolean
+  allocations: { kind: 'spending' | 'savings'; label: string; amount: number; funded_by: string }[]
+  monthly_income: number
+  proposed_total: number
+  validation_status: 'balanced' | 'over_income' | 'needs_review'
+  created_at: string
+  updated_at: string
+}
+
+export async function listFinancialPlans(): Promise<FinancialPlan[]> {
+  if (isDemoModeActive()) return []
+  const res = await api.get('/ai-report/plans')
+  return res.data
+}
+
+export async function saveFinancialPlan(sessionId: number, title?: string): Promise<FinancialPlan> {
+  const res = await api.post(`/ai-report/sessions/${sessionId}/plans`, { title })
+  return res.data
+}
+
+export async function deleteFinancialPlan(id: number): Promise<void> {
+  await api.delete(`/ai-report/plans/${id}`)
+}
+
 // Notifications
 export async function getNotificationSettings(): Promise<{ notification_email: string | null; weekly_digest_enabled: boolean }> {
   if (isDemoModeActive()) return { notification_email: 'demo@example.com', weekly_digest_enabled: true }

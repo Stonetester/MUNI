@@ -21,18 +21,42 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from app.models.category import Category
+from app.models.account import Account
 from app.models.transaction import Transaction
 from app.models.user import User
 from app.services.transaction_math import counts_as_income, counts_as_expense
 
 
 # ── Tool schemas (Anthropic tool-use format) ────────────────────────────────
-# Kept deliberately small: two tools cover past (query_transactions) and future
-# (project_finances). The person enum is filled in at call time from the real users.
+# The person enum is filled in at call time from the real users.
 
 def tool_definitions(usernames: list[str]) -> list[dict]:
     person_enum = ["household"] + usernames
-    return [
+    tools = [
+        {
+            "name": "inspect_current_finances",
+            "description": (
+                "Inspect the CURRENT live MUNI state before answering questions about balances, "
+                "accounts, category budgets versus actuals, savings goals, or what data the app holds. "
+                "Returns owner-labeled accounts, current-month budget/actual rows, and canonical savings "
+                "goal results computed by the app. Call this instead of relying on an older chat turn."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "person": {
+                        "type": "string", "enum": person_enum,
+                        "description": "A specific person or 'household' for both people."
+                    },
+                    "include": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["accounts", "budgets", "savings_goals"]},
+                        "description": "Sections to return. Omit to return all current sections."
+                    },
+                },
+                "required": ["person"],
+            },
+        },
         {
             "name": "query_transactions",
             "description": (
@@ -129,6 +153,9 @@ def tool_definitions(usernames: list[str]) -> list[dict]:
             },
         },
     ]
+    # Keep the original two tools first for stable clients/tests; append capabilities.
+    order = {"query_transactions": 0, "project_finances": 1, "inspect_current_finances": 2}
+    return sorted(tools, key=lambda item: order.get(item["name"], 99))
 
 
 # ── Executors ───────────────────────────────────────────────────────────────
@@ -383,10 +410,57 @@ def _run_project_finances(inp: dict, user: User, all_users: list[User], db: Sess
     return result
 
 
+def _run_inspect_current_finances(inp: dict, user: User, all_users: list[User], db: Session) -> dict:
+    """Return owner-labelled, current app state with calculations performed in code."""
+    from calendar import monthrange
+    from app.services.savings_goal import compute_savings_goals
+
+    users = _resolve_users(inp.get("person", "household"), all_users)
+    user_ids = [u.id for u in users]
+    owners = {u.id: (u.display_name or u.username).strip() for u in all_users}
+    include = set(inp.get("include") or ["accounts", "budgets", "savings_goals"])
+    result: dict = {"person": inp.get("person", "household"), "as_of": date.today().isoformat()}
+
+    if "accounts" in include:
+        accounts = db.query(Account).filter(Account.user_id.in_(user_ids), Account.is_active.is_(True)).all()
+        result["accounts"] = [{
+            "name": a.name, "type": a.account_type, "institution": a.institution,
+            "balance": round(a.balance or 0, 2), "owner": owners.get(a.user_id, "Unknown"),
+            "joint": bool(a.is_joint),
+        } for a in accounts]
+
+    if "budgets" in include:
+        today = date.today()
+        start, end = today.replace(day=1), today.replace(day=monthrange(today.year, today.month)[1])
+        cats = db.query(Category).filter(Category.user_id.in_(user_ids), Category.kind.in_(["expense", "savings"])).all()
+        txns = db.query(Transaction).filter(
+            Transaction.user_id.in_(user_ids), Transaction.date >= start, Transaction.date <= end,
+            Transaction.scenario_id.is_(None),
+        ).all()
+        spend: dict[int, float] = {}
+        for t in txns:
+            if counts_as_expense(t) and t.category_id is not None:
+                spend[t.category_id] = spend.get(t.category_id, 0.0) + abs(t.amount)
+        result["budgets"] = [{
+            "category": c.name, "owner": owners.get(c.user_id, "Unknown"),
+            "budget": round(c.budget_amount or 0, 2), "actual": round(spend.get(c.id, 0), 2),
+            "remaining": round((c.budget_amount or 0) - spend.get(c.id, 0), 2),
+        } for c in cats if (c.budget_amount or spend.get(c.id, 0))]
+
+    if "savings_goals" in include:
+        goals = compute_savings_goals(db, user, joint=inp.get("person") == "household")
+        result["savings_goals"] = {"month": goals["month"], "people": goals["people"], "household": goals["joint"]}
+
+    result["source"] = "Live MUNI database; balances and settings are read-only, and totals are computed in application code."
+    return result
+
+
 def execute_tool(name: str, tool_input: dict, user: User, all_users: list[User], db: Session) -> dict:
     """Dispatch a tool call. Never raises — returns an {'error': ...} dict so the
     model can recover and tell the user, rather than crashing the chat turn."""
     try:
+        if name == "inspect_current_finances":
+            return _run_inspect_current_finances(tool_input, user, all_users, db)
         if name == "query_transactions":
             return _run_query_transactions(tool_input, all_users, db)
         if name == "project_finances":

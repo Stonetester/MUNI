@@ -40,7 +40,7 @@ const mainItems = [
 ]
 
 const moreItems = [
-  { label: 'AI Report', icon: Sparkles, href: '/ai-report' },
+  { label: 'AI', icon: Sparkles, href: '/ai-report' },
   { label: 'Money Flow', icon: Workflow, href: '/flow' },
   { label: 'Get Started', icon: PlusCircle, href: '/getting-started' },
   { label: 'Calendar', icon: CalendarDays, href: '/calendar' },

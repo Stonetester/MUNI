@@ -4,9 +4,9 @@ import { useState, useEffect, useRef } from 'react'
 import AppLayout from '@/components/layout/AppLayout'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
-import { getAiReport, postAiChat, listChatSessions, getChatSession, deleteChatSession, listOllamaModels, ChatSessionSummary, ReportType, REPORT_TYPE_LABELS } from '@/lib/api'
+import { getAiReport, postAiChat, listChatSessions, getChatSession, deleteChatSession, listOllamaModels, listFinancialPlans, saveFinancialPlan, deleteFinancialPlan, ChatSessionSummary, FinancialPlan, ReportType, REPORT_TYPE_LABELS } from '@/lib/api'
 import { useViewMode } from '@/lib/viewMode'
-import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap, Users, User, History, Plus, Trash2, X } from 'lucide-react'
+import { Sparkles, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Send, FileText, MessageSquare, Zap, GraduationCap, Users, User, History, Plus, Trash2, X, Save, BarChart3 } from 'lucide-react'
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -14,7 +14,7 @@ const MONTHS = [
 ]
 
 type Provider = 'claude' | 'openai' | 'ollama'
-type Tab = 'report' | 'chat'
+type Tab = 'report' | 'chat' | 'plans'
 type ChatMessage = { role: 'user' | 'assistant'; content: string; modelUsed?: string }
 
 // Inline: **bold**, *italic*, `code`. Run bold first so * inside ** isn't mis-parsed.
@@ -174,7 +174,7 @@ export default function AiReportPage() {
   const { mode } = useViewMode()
   const isJoint = mode === 'joint'
 
-  const [tab, setTab] = useState<Tab>('report')
+  const [tab, setTab] = useState<Tab>('chat')
   const [provider, setProvider] = useState<Provider>('claude')
   // Chat defaults to the local model (Mongol 14b); report keeps the shared provider toggle.
   const [chatProvider, setChatProvider] = useState<Provider>('ollama')
@@ -204,9 +204,39 @@ export default function AiReportPage() {
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [plans, setPlans] = useState<FinancialPlan[]>([])
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null)
+  const [planSaving, setPlanSaving] = useState(false)
+  const selectedPlan = plans.find(p => p.id === selectedPlanId) || plans[0] || null
 
   const loadSessions = async () => {
     try { setSessions(await listChatSessions()) } catch { /* non-fatal */ }
+  }
+
+  const loadPlans = async () => {
+    try {
+      const rows = await listFinancialPlans()
+      setPlans(rows)
+      setSelectedPlanId(prev => prev && rows.some(p => p.id === prev) ? prev : rows[0]?.id ?? null)
+    } catch { /* non-fatal */ }
+  }
+
+  const saveCurrentPlan = async () => {
+    if (!currentSessionId || planSaving) return
+    setPlanSaving(true)
+    try {
+      const plan = await saveFinancialPlan(currentSessionId)
+      await loadPlans()
+      setSelectedPlanId(plan.id)
+      setTab('plans')
+    } finally { setPlanSaving(false) }
+  }
+
+  const removePlan = async (id: number) => {
+    await deleteFinancialPlan(id)
+    const next = plans.filter(p => p.id !== id)
+    setPlans(next)
+    setSelectedPlanId(next[0]?.id ?? null)
   }
 
   const newChat = () => {
@@ -285,7 +315,7 @@ export default function AiReportPage() {
           setLocalModel(prev => prev || (names.includes(def) ? def : names[0] || def))
         })
         .catch(() => { /* Mongol asleep — keep backend default */ })
-    }
+    } else if (tab === 'plans') loadPlans()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
@@ -315,7 +345,7 @@ export default function AiReportPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-text-primary">AI Financial Advisor</h1>
-            <p className="text-xs text-text-secondary">Monthly reports, plus a finance tutor that answers with your real numbers</p>
+            <p className="text-xs text-text-secondary">Ask questions, build saved money plans, and review reports using your real numbers</p>
           </div>
         </div>
 
@@ -339,12 +369,21 @@ export default function AiReportPage() {
             <MessageSquare size={15} />
             Ask AI
           </button>
+          <button
+            onClick={() => setTab('plans')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
+              tab === 'plans' ? 'bg-surface-1 text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            <BarChart3 size={15} />
+            Plans
+          </button>
         </div>
 
         {/* Provider toggle — report uses `provider`, chat uses `chatProvider` (local default) */}
         {tab === 'report'
           ? <ProviderToggle provider={provider} onChange={setProvider} localLabel="Mongol" />
-          : (
+          : tab === 'chat' ? (
             <div className="flex flex-col items-center gap-2">
               <ProviderToggle provider={chatProvider} onChange={setChatProvider} localLabel="Local AI" />
               {chatProvider === 'ollama' && ollamaModels.length > 0 && (
@@ -360,7 +399,7 @@ export default function AiReportPage() {
                 </select>
               )}
             </div>
-          )}
+          ) : null}
 
         {/* Scope indicator — which numbers the tutor is grounded in (follows the global Solo/Joint toggle) */}
         {tab === 'chat' && (
@@ -472,6 +511,70 @@ export default function AiReportPage() {
               </Card>
             )}
           </>
+        )}
+
+        {/* ── SAVED FINANCIAL PLANS ── */}
+        {tab === 'plans' && (
+          <div className="flex flex-col gap-3">
+            {plans.length === 0 ? (
+              <Card title="">
+                <div className="py-10 text-center">
+                  <BarChart3 size={34} className="mx-auto text-violet-400/40" />
+                  <p className="mt-3 text-sm font-medium text-text-primary">No saved plans yet</p>
+                  <p className="mt-1 text-xs text-text-secondary">Ask AI for a spending or savings strategy, then save the completed answer as a plan.</p>
+                  <button onClick={() => setTab('chat')} className="mt-4 px-3 py-2 rounded-lg bg-violet-500 text-white text-xs font-medium">Start a planning chat</button>
+                </div>
+              </Card>
+            ) : (
+              <>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {plans.map(plan => (
+                    <button key={plan.id} onClick={() => setSelectedPlanId(plan.id)} className={`shrink-0 max-w-[220px] text-left px-3 py-2 rounded-xl border ${selectedPlan?.id === plan.id ? 'border-violet-500/50 bg-violet-500/10' : 'border-border bg-surface-2'}`}>
+                      <span className="block text-xs font-semibold text-text-primary truncate">{plan.title}</span>
+                      <span className="block text-[10px] text-text-secondary mt-0.5">{new Date(plan.created_at).toLocaleDateString()} · {plan.model_used || 'AI'}</span>
+                    </button>
+                  ))}
+                </div>
+                {selectedPlan && (
+                  <Card title="">
+                    <div className="-mt-2">
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-border">
+                        <div>
+                          <h2 className="text-base font-bold text-text-primary">{selectedPlan.title}</h2>
+                          <p className="text-xs text-text-secondary mt-1">{selectedPlan.objective}</p>
+                        </div>
+                        <button onClick={() => removePlan(selectedPlan.id)} className="p-2 text-text-secondary hover:text-danger"><Trash2 size={14} /></button>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 my-4">
+                        <div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] text-text-secondary">Current income</p><p className="text-sm font-bold text-text-primary">${selectedPlan.monthly_income.toLocaleString()}/mo</p></div>
+                        <div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] text-text-secondary">Plan allocation</p><p className="text-sm font-bold text-text-primary">${selectedPlan.proposed_total.toLocaleString()}/mo</p></div>
+                        <div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] text-text-secondary">Math check</p><p className={`text-xs font-bold ${selectedPlan.validation_status === 'balanced' ? 'text-emerald-400' : selectedPlan.validation_status === 'over_income' ? 'text-danger' : 'text-amber-400'}`}>{selectedPlan.validation_status === 'balanced' ? 'Fits income' : selectedPlan.validation_status === 'over_income' ? 'Over income' : 'Review needed'}</p></div>
+                      </div>
+
+                      {selectedPlan.allocations.length > 0 && (
+                        <div className="mb-5 space-y-4">
+                          {(['spending', 'savings'] as const).map(kind => {
+                            const rows = selectedPlan.allocations.filter(a => a.kind === kind)
+                            const max = Math.max(...rows.map(r => r.amount), 1)
+                            return rows.length ? <div key={kind}>
+                              <h3 className="text-xs font-semibold text-text-primary mb-2">{kind === 'spending' ? 'Spending targets' : 'Savings assignments'}</h3>
+                              <div className="space-y-2">{rows.map((row, i) => <div key={`${kind}-${i}`}>
+                                <div className="flex justify-between gap-3 text-[11px]"><span className="text-text-secondary truncate">{row.label}{row.funded_by ? ` · ${row.funded_by}` : ''}</span><span className="text-text-primary font-semibold">${row.amount.toLocaleString()}</span></div>
+                                <div className="h-2 mt-1 rounded-full bg-surface-2 overflow-hidden"><div className={`h-full rounded-full ${kind === 'savings' ? 'bg-emerald-500' : 'bg-violet-500'}`} style={{ width: `${Math.max(3, row.amount / max * 100)}%` }} /></div>
+                              </div>)}</div>
+                            </div> : null
+                          })}
+                        </div>
+                      )}
+                      <ReportMarkdown text={selectedPlan.content} />
+                      <p className="mt-4 pt-3 border-t border-border text-[11px] text-text-secondary">Saved as a draft recommendation. Nothing in your live budgets, accounts, or transfers was changed.</p>
+                    </div>
+                  </Card>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {/* ── CHAT TAB ── */}
@@ -628,9 +731,16 @@ export default function AiReportPage() {
             </p>
 
             {chatHistory.length > 0 && (
-              <button onClick={() => setChatHistory([])} className="text-xs text-text-secondary hover:text-text-primary transition-colors self-center">
-                Clear conversation
-              </button>
+              <div className="flex items-center justify-center gap-2">
+                {currentSessionId && chatHistory[chatHistory.length - 1]?.role === 'assistant' && (
+                  <button onClick={saveCurrentPlan} disabled={planSaving} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium disabled:opacity-50">
+                    {planSaving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />} Save as financial plan
+                  </button>
+                )}
+                <button onClick={() => setChatHistory([])} className="text-xs text-text-secondary hover:text-text-primary transition-colors">
+                  Clear conversation
+                </button>
+              </div>
             )}
           </div>
         )}

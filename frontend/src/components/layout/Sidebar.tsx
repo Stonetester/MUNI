@@ -50,7 +50,7 @@ const ALL_PRIMARY_ITEMS = [
 ]
 
 const extrasItems = [
-  { label: 'AI Report', icon: Sparkles, href: '/ai-report' },
+  { label: 'AI', icon: Sparkles, href: '/ai-report' },
   { label: 'Money Flow', icon: Workflow, href: '/flow' },
   { label: 'Insights', icon: Lightbulb, href: '/insights' },
   { label: 'Budget', icon: Target, href: '/budget' },
