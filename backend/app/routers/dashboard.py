@@ -1,9 +1,10 @@
+from calendar import monthrange
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from dateutil.relativedelta import relativedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -32,6 +33,25 @@ ASSET_TYPES = {
 LIABILITY_TYPES = {"credit_card", "student_loan", "car_loan", "mortgage"}
 
 
+def _month_bounds(month: Optional[str]) -> tuple[date, date]:
+    """Return inclusive calendar-month bounds for YYYY-MM, defaulting to today."""
+    today = date.today()
+    if month is None:
+        year, mon = today.year, today.month
+    else:
+        try:
+            if len(month) != 7 or month[4] != "-":
+                raise ValueError
+            year, mon = map(int, month.split("-"))
+            start = date(year, mon, 1)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="month must use YYYY-MM format")
+        if start > today.replace(day=1):
+            raise HTTPException(status_code=400, detail="month cannot be in the future")
+    start = date(year, mon, 1)
+    return start, date(year, mon, monthrange(year, mon)[1])
+
+
 def _month_summary(transactions: List[Transaction], categories_map: dict) -> MonthSummary:
     income = 0.0
     spending = 0.0
@@ -51,21 +71,18 @@ def _month_summary(transactions: List[Transaction], categories_map: dict) -> Mon
 
 @router.get("", response_model=DashboardResponse)
 def get_dashboard(
+    month: Optional[str] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     today = date.today()
-    this_month_start = today.replace(day=1)
-
-    # Last month boundaries
-    if today.month == 1:
-        last_month_start = date(today.year - 1, 12, 1)
-        last_month_end = date(today.year - 1, 12, 31)
-    else:
-        last_month_start = date(today.year, today.month - 1, 1)
-        import calendar
-        last_day = calendar.monthrange(today.year, today.month - 1)[1]
-        last_month_end = date(today.year, today.month - 1, last_day)
+    this_month_start, this_month_end = _month_bounds(month)
+    last_month_start = this_month_start - relativedelta(months=1)
+    last_month_end = date(
+        last_month_start.year,
+        last_month_start.month,
+        monthrange(last_month_start.year, last_month_start.month)[1],
+    )
 
     # Accounts
     accounts = db.query(Account).filter(Account.user_id == current_user.id).all()
@@ -100,7 +117,7 @@ def get_dashboard(
         .filter(
             Transaction.user_id == current_user.id,
             Transaction.date >= this_month_start,
-            Transaction.date <= today,
+            Transaction.date <= this_month_end,
             Transaction.scenario_id.is_(None),
         )
         .all()
@@ -145,7 +162,7 @@ def get_dashboard(
 
     # Replace month-0 (current month) with actual transaction data so paystub
     # income and real expenses appear in the Monthly Cash Flow chart.
-    if forecast.points:
+    if forecast.points and this_month_start == today.replace(day=1):
         p0 = forecast.points[0]
         actual_income_amt = sum(t.amount for t in this_month_txns if counts_as_income(t))
         actual_expense_amt = sum(abs(t.amount) for t in this_month_txns if counts_as_expense(t))
@@ -218,13 +235,19 @@ def get_dashboard(
     # Recent transactions (last 10)
     recent_transactions = (
         db.query(Transaction)
-        .filter(Transaction.user_id == current_user.id)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.date >= this_month_start,
+            Transaction.date <= this_month_end,
+            Transaction.scenario_id.is_(None),
+        )
         .order_by(Transaction.date.desc(), Transaction.id.desc())
         .limit(10)
         .all()
     )
 
     return DashboardResponse(
+        month=this_month_start.strftime("%Y-%m"),
         total_assets=total_assets,
         total_liabilities=total_liabilities,
         net_worth=net_worth,

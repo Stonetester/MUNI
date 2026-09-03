@@ -221,6 +221,7 @@ export interface MonthSummary {
 
 // Matches backend DashboardResponse schema exactly
 export interface DashboardData {
+  month: string
   total_assets: number
   total_liabilities: number
   net_worth: number

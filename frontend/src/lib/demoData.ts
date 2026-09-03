@@ -221,6 +221,7 @@ export const DEMO_FORECAST: ForecastResponse = {
 // ── dashboard ────────────────────────────────────────────────────────────────
 
 export const DEMO_DASHBOARD: DashboardData = {
+  month: monthsAgo(0),
   total_assets: 96470.55,
   total_liabilities: 2460.67,
   net_worth: 94009.88,

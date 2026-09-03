@@ -266,6 +266,8 @@ interface StatModal {
 
 export default function DashboardPage() {
   const { mode } = useViewMode()
+  const currentMonth = monthKey(new Date())
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth)
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -276,7 +278,9 @@ export default function DashboardPage() {
     if (mode === 'joint') return
     async function load() {
       try {
-        const [d, a] = await Promise.all([getDashboard(), getAlerts()])
+        setLoading(true)
+        setError('')
+        const [d, a] = await Promise.all([getDashboard(selectedMonth), getAlerts()])
         setData(d)
         setAlerts(a)
       } catch (e) {
@@ -286,7 +290,7 @@ export default function DashboardPage() {
       }
     }
     load()
-  }, [mode])
+  }, [mode, selectedMonth])
 
   if (mode === 'joint') {
     return (
@@ -312,7 +316,7 @@ export default function DashboardPage() {
         <div className="flex flex-col items-center justify-center h-64 gap-3 text-text-secondary">
           <p className="text-danger">{error || 'No data available'}</p>
           <button
-            onClick={() => { setError(''); setLoading(true); getDashboard().then(setData).catch(() => setError('Failed to load')).finally(() => setLoading(false)) }}
+            onClick={() => { setError(''); setLoading(true); getDashboard(selectedMonth).then(setData).catch(() => setError('Failed to load')).finally(() => setLoading(false)) }}
             className="text-sm text-primary hover:underline"
           >
             Retry
@@ -368,9 +372,8 @@ export default function DashboardPage() {
   }
 
   function openIncome() {
-    const currentMonth = new Date().toISOString().slice(0, 7)
     const incomeTxns = data!.recent_transactions
-      .filter((t) => t.date.startsWith(currentMonth) && t.amount > 0)
+      .filter((t) => t.date.startsWith(selectedMonth) && t.amount > 0)
       .sort((a, b) => b.amount - a.amount)
     const breakdown: BreakdownItem[] = incomeTxns.map((t) => ({
       label: t.description,
@@ -413,6 +416,37 @@ export default function DashboardPage() {
   return (
     <AppLayout>
       <div className="flex flex-col gap-4 md:gap-5">
+        <div className="flex items-center justify-center gap-2">
+          <button
+            type="button"
+            aria-label="Previous month"
+            onClick={() => setSelectedMonth(month => shiftMonth(month, -1))}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface text-text-secondary transition-colors hover:text-text-primary"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <label className="relative flex h-10 min-w-48 cursor-pointer items-center justify-center rounded-xl border border-border bg-surface px-5 font-semibold text-text-primary transition-colors hover:border-primary/40">
+            <span>{monthLabel(selectedMonth)}</span>
+            <input
+              type="month"
+              aria-label="Choose month and year"
+              value={selectedMonth}
+              max={currentMonth}
+              onChange={(event) => event.target.value && setSelectedMonth(event.target.value)}
+              className="absolute inset-0 cursor-pointer opacity-0"
+            />
+          </label>
+          <button
+            type="button"
+            aria-label="Next month"
+            disabled={selectedMonth >= currentMonth}
+            onClick={() => setSelectedMonth(month => shiftMonth(month, 1))}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <ChevronRight size={20} />
+          </button>
+        </div>
+
         {/* Spend Check — top of page */}
         <SpendCheckWidget />
 

@@ -91,9 +91,10 @@ export async function getJointAges(): Promise<JointAges> {
 }
 
 // Dashboard
-export async function getDashboard(): Promise<DashboardData> {
-  if (isDemoModeActive()) return demo.DEMO_DASHBOARD
-  const res: AxiosResponse<DashboardData> = await api.get('/dashboard')
+export async function getDashboard(month?: string): Promise<DashboardData> {
+  if (isDemoModeActive()) return { ...demo.DEMO_DASHBOARD, month: month || new Date().toISOString().slice(0, 7) }
+  const params = month ? `?month=${encodeURIComponent(month)}` : ''
+  const res: AxiosResponse<DashboardData> = await api.get(`/dashboard${params}`)
   return res.data
 }
 

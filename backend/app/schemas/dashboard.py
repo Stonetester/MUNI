@@ -21,6 +21,7 @@ class AccountBalanceSummary(BaseModel):
 
 
 class DashboardResponse(BaseModel):
+    month: str
     total_assets: float
     total_liabilities: float
     net_worth: float
